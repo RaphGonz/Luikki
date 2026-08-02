@@ -124,13 +124,59 @@ Which phases cover which requirements. Populated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| (pending roadmap) | — | — |
+| PROJ-01 | Phase 1 — Foundation: Project, Palette & Pipeline Backbone | Pending |
+| PROJ-02 | Phase 1 — Foundation: Project, Palette & Pipeline Backbone | Pending |
+| PROJ-03 | Phase 1 — Foundation: Project, Palette & Pipeline Backbone | Pending |
+| PROJ-04 | Phase 1 — Foundation: Project, Palette & Pipeline Backbone | Pending |
+| PROJ-05 | Phase 1 — Foundation: Project, Palette & Pipeline Backbone | Pending |
+| PAL-01 | Phase 1 — Foundation: Project, Palette & Pipeline Backbone | Pending |
+| PAL-02 | Phase 1 — Foundation: Project, Palette & Pipeline Backbone | Pending |
+| PAL-03 | Phase 1 — Foundation: Project, Palette & Pipeline Backbone | Pending |
+| PAL-04 | Phase 1 — Foundation: Project, Palette & Pipeline Backbone | Pending |
+| PAN-01 | Phase 2 — Panel Polygon Editor & Protected Masks | Pending |
+| PAN-02 | Phase 2 — Panel Polygon Editor & Protected Masks | Pending |
+| PAN-03 | Phase 2 — Panel Polygon Editor & Protected Masks | Pending |
+| PROT-01 | Phase 2 — Panel Polygon Editor & Protected Masks | Pending |
+| PROT-02 | Phase 2 — Panel Polygon Editor & Protected Masks | Pending |
+| PROT-03 | Phase 2 — Panel Polygon Editor & Protected Masks | Pending |
+| PROT-04 | Phase 2 — Panel Polygon Editor & Protected Masks | Pending |
+| ZONE-01 | Phase 3 — Zone Editor: Merge, Split, Gaps & Undo | Pending |
+| ZONE-02 | Phase 3 — Zone Editor: Merge, Split, Gaps & Undo | Pending |
+| ZONE-03 | Phase 3 — Zone Editor: Merge, Split, Gaps & Undo | Pending |
+| ZONE-04 | Phase 3 — Zone Editor: Merge, Split, Gaps & Undo | Pending |
+| ZONE-05 | Phase 3 — Zone Editor: Merge, Split, Gaps & Undo | Pending |
+| ZONE-06 | Phase 3 — Zone Editor: Merge, Split, Gaps & Undo | Pending |
+| COL-01 | Phase 4 — Cobra Worker & Isolated Colour Proposal | Pending |
+| COL-02 | Phase 5 — Mode Extraction, CIELAB Snapping & Confidence Triage | Pending |
+| COL-03 | Phase 5 — Mode Extraction, CIELAB Snapping & Confidence Triage | Pending |
+| COL-04 | Phase 5 — Mode Extraction, CIELAB Snapping & Confidence Triage | Pending |
+| MET-04 | Phase 5 — Mode Extraction, CIELAB Snapping & Confidence Triage | Pending |
+| REV-01 | Phase 6 — Review View & Metrics Instrumentation | Pending |
+| REV-02 | Phase 6 — Review View & Metrics Instrumentation | Pending |
+| REV-03 | Phase 6 — Review View & Metrics Instrumentation | Pending |
+| REV-04 | Phase 6 — Review View & Metrics Instrumentation | Pending |
+| MET-01 | Phase 6 — Review View & Metrics Instrumentation | Pending |
+| MET-02 | Phase 6 — Review View & Metrics Instrumentation | Pending |
+| MET-03 | Phase 6 — Review View & Metrics Instrumentation | Pending |
+| MET-05 | Phase 6 — Review View & Metrics Instrumentation | Pending |
+| EXP-01 | Phase 7 — Layered PSD Export | Pending |
+| EXP-02 | Phase 7 — Layered PSD Export | Pending |
+| EXP-03 | Phase 7 — Layered PSD Export | Pending |
+| EXP-04 | Phase 7 — Layered PSD Export | Pending |
+| EXP-05 | Phase 7 — Layered PSD Export | Pending |
 
 **Coverage:**
 - v1 requirements: 40 total
-- Mapped to phases: 0
-- Unmapped: 40 ⚠️
+- Mapped to phases: 40
+- Unmapped: 0 ✓
+
+**Note on metrics distribution:** MET-01..05 are deliberately spread across two phases rather
+than bundled into one. MET-04 (flagged-region precision) lands in Phase 5 because the flag
+itself is created there and needs its own instrumentation to tune the reject threshold.
+MET-01, MET-02, MET-03 and MET-05 land in Phase 6 because post-correction time, acceptance
+rate and correction counts are all produced by the review/colour-correction workflow itself
+and cannot be retrofitted onto sessions that already happened.
 
 ---
 *Requirements defined: 2026-08-02*
-*Last updated: 2026-08-02 after initial definition*
+*Last updated: 2026-08-02 after roadmap creation — traceability and coverage populated*
