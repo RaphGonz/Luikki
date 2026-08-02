@@ -208,6 +208,18 @@ There is no Save button anywhere in this app.
 - **Main content area:** full-bleed, no card padding, dominant surface colour, occupying all space right of the sidebar and below the toolbar. Phase 1 fills it with forms/lists (project picker, volume/page grid, palette grid). Phase 2/3 mount the Konva canvas edge-to-edge into this exact same region — this is the constraint that rules out a padded "dashboard card" content layout now, since retrofitting one later would mean re-laying out the shell.
 - **Screens this phase builds:** Project picker/recent-projects list (D-04's folder-pick model) → Project shell (sidebar + empty content) → Volume/Page grid (per volume) → Page detail (stage strip + upload state, no editor yet) → Palette grid (extraction result + hand edits, doubles as the character-sheet proposal review surface).
 
+**Visual anchor per screen** — what the eye lands on first. Every screen has exactly one; nothing else on that screen may compete with it for accent colour or scale.
+
+| Screen | Primary visual anchor | Why |
+|--------|----------------------|-----|
+| Project picker | The recent-projects list itself, with the most-recent row pre-selected | The artist's job on this screen is to get back into the project they were in yesterday. "Create Project" is a secondary CTA sitting below the list, not a hero button. |
+| Project shell (empty) | The empty-state prompt in the main content area | Sidebar chrome must recede; the one thing to do is add a volume or drop pages. |
+| Volume/Page grid | The page thumbnail grid — the artwork itself | The artist recognises their own pages by sight, not by filename. Thumbnails carry the scale; stage badges sit on them as small overlays and must not out-weigh the art. |
+| Page detail | The stage strip in the top toolbar | Until an editor exists (Phase 2+), the entire purpose of this screen is answering "where is this page in the pipeline and what can I do next". |
+| Palette grid | The swatch grid — the colour chips at full 120×120 | Colour is the content. Labels, controls and chrome are subordinate to the chips; nothing on this screen may carry a saturated colour except the swatches themselves and the single accent on the primary CTA. |
+
+**Accessibility — icon-only controls.** Every icon-only control in this phase (accept ✓, reject ×, delete ×, kebab menu, and any added later) MUST carry an `aria-label` naming its semantic action and its target — "Accept proposal", "Reject proposal", "Delete palette entry", "Page options". The visible label is omitted for density; the accessible name is not optional and is not the icon's name. Never label a control by its glyph ("check", "cross"); label it by what it does.
+
 ---
 
 ## Registry Safety
@@ -221,11 +233,20 @@ There is no Save button anywhere in this app.
 
 ## Checker Sign-Off
 
-- [ ] Dimension 1 Copywriting: PASS
-- [ ] Dimension 2 Visuals: PASS
-- [ ] Dimension 3 Color: PASS
-- [ ] Dimension 4 Typography: PASS
-- [ ] Dimension 5 Spacing: PASS
-- [ ] Dimension 6 Registry Safety: PASS
+- [x] Dimension 1 Copywriting: PASS
+- [x] Dimension 2 Visuals: PASS — flagged on first pass (no per-screen focal point, no `aria-label` rule for icon-only controls); both addressed in §8 and re-passed
+- [x] Dimension 3 Color: PASS
+- [x] Dimension 4 Typography: PASS
+- [x] Dimension 5 Spacing: PASS
+- [x] Dimension 6 Registry Safety: PASS
 
-**Approval:** pending
+**Approval:** APPROVED — 2026-08-02
+
+**Discretion calls made without user confirmation** (the researcher had no interactive question tool in its run). The checker reviewed each and found the stated rationale sound, but they were not chosen by the user and remain open to override before planning:
+
+| Call | Rationale given | Override cost if wrong |
+|------|----------------|----------------------|
+| Dark-neutral chrome rather than light | Photoshop and Clip Studio both default dark; neutral surround avoids biasing colour judgement | Low — token values only |
+| No shadcn; hand-rolled CSS custom properties | A React-first component model would create a paradigm seam at the Phase 2/3 Konva canvas boundary | Low now, high after Phase 2 |
+| Inter, self-hosted | Offline/self-hosted, no CDN dependency | Trivial |
+| Lucide icons | Permissive licence, no runtime dependency | Trivial |
