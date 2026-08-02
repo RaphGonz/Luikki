@@ -1,0 +1,26 @@
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+
+# Studio pages are unreleased material. Never commit them.
+data/
+workspace/
+
+# Published comic pages used as test input. Copyrighted — never commit them,
+# and especially not to a public repo.
+test_pages/
+
+# Spike output. The renders are derivative works of the copyrighted test pages,
+# so the whole directory stays local rather than trying to glob the images out.
+# Findings that matter are written up in flatting-pipeline-spec.md §2.
+reports/
+
+# Vendored upstream source and model weights. erika.pth alone is 172 MB;
+# these are fetched by setup, not carried in history.
+third_party/
+*.pth
+*.ckpt
+*.safetensors
