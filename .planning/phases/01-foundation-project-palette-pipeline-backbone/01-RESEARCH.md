@@ -626,15 +626,21 @@ def test_flat_chip_grid_recovers_exact_colours():
 
 ## Open Questions
 
+> **Both questions below were resolved by the user on 2026-08-10, during
+> `/gsd-plan-phase 1`, before the planner ran. The resolutions are binding for
+> this phase — treat them as locked decisions, not as recommendations.**
+
 1. **WAL vs. DELETE journal mode for `project.db`, given D-04's folder-portability promise.**
    - What we know: WAL is the better fit for the per-request-connection concurrency pattern (Pattern 1) and is what most modern SQLite-backed web apps use by default. DELETE mode keeps the "it's one file" mental model D-04 was written against, at a real but likely-negligible performance cost given true single-artist, largely-serial request patterns.
    - What's unclear: Whether the planner considers "artist copies the folder while the app happens to be running" a real enough scenario (versus "artist closes the app first, as any sane person would before copying a project folder") to justify the extra checkpoint-discipline WAL requires.
    - Recommendation: Default to WAL + an explicit checkpoint-on-project-close action (Pitfall 1), since it's the more standard choice and the checkpoint discipline is cheap to add; but flag this explicitly for the planner/user to confirm rather than silently deciding it.
+   - **RESOLVED (user, 2026-08-10): WAL + explicit checkpoint on project close.** The recommendation is adopted as-is. The checkpoint-on-close action is required, not optional — without it D-04's folder-portability promise is not actually kept. Plans must include it.
 
 2. **Where exactly do not-yet-accepted character-sheet reference images live between upload and accept?**
    - What we know: D-05 requires zero-prompt upload with binding deferred to accept time; the extracted *proposals* are correctly ephemeral (Pattern in this doc), but the *uploaded file itself* plausibly needs to survive a refresh (so the artist doesn't have to re-upload if they navigate away mid-review), even though the proposals it generated do not.
    - What's unclear: Whether this phase needs a lightweight `reference_image` tracking table (id, project_id, path, entity_id nullable) for auditability, or whether "save to `<project>/references/pending/<uuid>.<ext>` and only create a DB row at accept time" (file-system-as-source-of-truth for the unbound state) is sufficient. Both are internally consistent with every locked decision; neither is mandated by CONTEXT.md.
    - Recommendation: Start with the lighter file-system-only approach (no new table) since it's simpler and nothing in the requirements demands listing "pending, unreviewed sheets" anywhere in the UI (UI-SPEC's contract shows proposals immediately after upload, not as a separate persisted queue) — but flag this as a discretion call the planner should state explicitly, not one this research is locking.
+   - **RESOLVED (user, 2026-08-10): filesystem-only until accept.** Uploaded-but-unaccepted sheets live at `<project>/references/pending/<uuid>.<ext>`; a DB row is created only at accept time. No `reference_image` table this phase.
 
 ## Environment Availability
 
