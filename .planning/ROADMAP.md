@@ -41,7 +41,22 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Artist uploads a swatch image and gets named palette entries built from its colour chips; separately uploads a character sheet and accepts or rejects each app-proposed palette entry individually; and can also create, rename, recolour or delete a palette entry entirely by hand.
   4. Artist changes a palette entry's colour once and sees every page that references it update immediately, with no pipeline stage re-run.
   5. Every one of these edits persists the moment it's made — a refresh or crash immediately afterward loses no work.
-**Plans**: TBD
+**Plans**: 13 plans in 6 waves
+
+Plans:
+- [ ] 01-01-PLAN.md — Wave 0: Python dependency declarations and backend test scaffolding
+- [ ] 01-02-PLAN.md — Wave 0: Vite/TypeScript/Vitest scaffold, UI-SPEC tokens, and the screen<->label-map coordinate transform
+- [ ] 01-03-PLAN.md — Schema migration to project scope, page.stage, WAL + checkpoint
+- [ ] 01-04-PLAN.md — Pipeline stage registry, import runner, and the label-map invariant check
+- [ ] 01-05-PLAN.md — Palette extraction: quantize + CIELAB merge, sheet-aware pre-pass
+- [ ] 01-06-PLAN.md — Web contracts, per-request Store, upload choke point, app factory, `comiccolor serve`
+- [ ] 01-07-PLAN.md — Project routes: create, open, close-with-checkpoint, recents, browse
+- [ ] 01-08-PLAN.md — Volume and page routes, multipart upload, stage metadata endpoint
+- [ ] 01-09-PLAN.md — Palette routes: swatch extraction, hand CRUD, recolour propagation
+- [ ] 01-10-PLAN.md — Character-sheet routes: zero-prompt upload, ephemeral proposals, accept-time binding
+- [ ] 01-11-PLAN.md — Frontend shell: API client, router, sidebar/toolbar layout, project picker
+- [ ] 01-12-PLAN.md — Frontend page grid, page detail, and the eight-segment stage strip
+- [ ] 01-13-PLAN.md — Frontend palette grid, swatch cards, and character-sheet proposal cards
 **UI hint**: yes
 
 ### Phase 2: Panel Polygon Editor & Protected Masks
@@ -123,7 +138,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation — Project, Palette & Pipeline Backbone | 0/TBD | Not started | - |
+| 1. Foundation — Project, Palette & Pipeline Backbone | 0/13 | Planned | - |
 | 2. Panel Polygon Editor & Protected Masks | 0/TBD | Not started | - |
 | 3. Zone Editor — Merge, Split, Gaps & Undo | 0/TBD | Not started | - |
 | 4. Cobra Worker & Isolated Colour Proposal | 0/TBD | Not started | - |
