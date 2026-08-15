@@ -44,12 +44,17 @@ def _volume_response(volume: Volume, store: Store) -> VolumeResponse:
     )
 
 
-def _get_owned_volume(volume_id: int, project: Project, store: Store) -> Volume:
+def get_owned_volume(volume_id: int, project: Project, store: Store) -> Volume:
     """The volume, or a 404 if it does not belong to the current project.
 
     T-01-IDOR (accept): there is exactly one artist and one open project, so
     this check is about correctness (a stale id from a closed project) not
     cross-tenant access control.
+
+    Public rather than underscore-prefixed because ``page.py`` calls it too:
+    an upload names its target volume by raw id, and that id needs the same
+    check the volume routes give it. A second implementation over there
+    would be a second thing to keep in step.
     """
     for volume in store.volumes_for_project(project.id):
         if volume.id == volume_id:
@@ -91,7 +96,7 @@ def rename_volume(
     project: Project = Depends(get_project),
     store: Store = Depends(get_store),
 ) -> VolumeResponse:
-    volume = _get_owned_volume(volume_id, project, store)
+    volume = get_owned_volume(volume_id, project, store)
     store.rename_volume(volume.id, body.name)
     volume.name = body.name
     return _volume_response(volume, store)
@@ -106,5 +111,5 @@ def delete_volume(
     """204. ``ON DELETE CASCADE`` already removes the volume's pages —
     nothing here re-implements that. Page image files on disk are left in
     place (T-01-DISK, accepted)."""
-    _get_owned_volume(volume_id, project, store)
+    get_owned_volume(volume_id, project, store)
     store.delete_volume(volume_id)

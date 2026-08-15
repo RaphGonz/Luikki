@@ -214,3 +214,92 @@ def _png_bytes(width=8, height=8, colour=(9, 9, 9)):
     buf = io.BytesIO()
     Image.new("RGB", (width, height), colour).save(buf, "PNG")
     return buf.getvalue()
+
+
+def test_upload_to_an_unknown_volume_is_a_404_and_writes_nothing(client, project_dir):
+    """CR-03: ``volume_id`` is checked before a byte reaches ``pages/``.
+
+    ``volume_id`` arrives as a raw query parameter. Before the fix it was
+    never checked, so an unknown id reached ``store.add_page`` as a
+    foreign-key violation — a bare 500 — *after* ``save_upload`` had
+    already written the image, leaving a file with no row pointing at it.
+    """
+    response = _upload_png(client, 9999, "page.png")
+
+    assert response.status_code == 404
+    assert list((project_dir / "pages").iterdir()) == []
+
+
+def test_a_failed_batch_leaves_no_orphan_files(client, project_dir):
+    """The same guarantee across a multi-file batch.
+
+    A mid-batch abort used to persist the pages accepted earlier in the
+    request without reporting them, while later files were never processed
+    at all — the module's "a bad file in a batch is reported in `rejected`
+    without losing the good ones" promise failing in the one direction the
+    artist cannot see.
+    """
+    import io
+
+    from PIL import Image
+
+    def png(colour):
+        buf = io.BytesIO()
+        Image.new("RGB", (8, 8), colour).save(buf, "PNG")
+        return buf.getvalue()
+
+    response = client.post(
+        "/api/pages/?volume_id=9999",
+        files=[
+            ("files", ("a.png", png((1, 1, 1)), "image/png")),
+            ("files", ("b.png", png((2, 2, 2)), "image/png")),
+        ],
+    )
+
+    assert response.status_code == 404
+    assert list((project_dir / "pages").iterdir()) == []
+
+
+def test_page_image_is_a_404_when_the_file_is_gone(client, project_dir):
+    """WR-03: a page image moved or deleted outside the app is not a 500.
+
+    D-04's "copy the folder, hand it over" model actively encourages the
+    artist to touch these files directly, so this is a routine state.
+    Starlette's ``FileResponse`` raises at send time for a missing file,
+    which is why the existence check has to happen in the handler.
+    """
+    volume_id = _make_volume(client)
+    page = _upload_png(client, volume_id, "page.png").json()["accepted"][0]
+
+    assert client.get(page["image_url"]).status_code == 200
+
+    for stray in (project_dir / "pages").iterdir():
+        stray.unlink()
+
+    response = client.get(page["image_url"])
+    assert response.status_code == 404
+
+
+def test_all_rejected_batch_reports_every_file(client):
+    """WR-17: the 400 body is the declared ``PageUploadRejection`` shape."""
+    response = client.post(
+        f"/api/pages/?volume_id={_make_volume(client)}",
+        files=[("files", ("notes.txt", b"not an image", "text/plain"))],
+    )
+
+    assert response.status_code == 400
+    body = response.json()
+    assert set(body) == {"detail", "rejected"}
+    assert body["rejected"] == [
+        {"filename": "notes.txt", "detail": UPLOAD_ERROR_DETAIL}
+    ]
+
+
+def test_upload_rejection_shape_is_in_the_openapi_contract(client):
+    """The 400 shape is discoverable, not just observed in practice."""
+    schema = client.get("/openapi.json").json()
+    responses = schema["paths"]["/api/pages/"]["post"]["responses"]
+
+    assert "400" in responses
+    ref = responses["400"]["content"]["application/json"]["schema"]["$ref"]
+    assert ref.endswith("/PageUploadRejection")

@@ -130,6 +130,21 @@ class PageUploadResponse(BaseModel):
     rejected: list[RejectedUpload]
 
 
+class PageUploadRejection(BaseModel):
+    """The 400 body when nothing in an upload batch was readable.
+
+    A second declared shape for one route, which is unusual enough to say
+    why: a plain ``HTTPException`` carries only ``detail``, and the drop
+    zone needs the per-file reasons to tell the artist *which* files failed
+    and how. Declaring it here rather than building an inline dict at the
+    handler is what puts it in the OpenAPI contract, so ``uploadDrop.ts``
+    is normalising a documented shape rather than a discovered one.
+    """
+
+    detail: str
+    rejected: list[RejectedUpload]
+
+
 # ---- Pipeline -----------------------------------------------------------
 
 
