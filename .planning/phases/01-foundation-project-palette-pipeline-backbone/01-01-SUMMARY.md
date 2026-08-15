@@ -121,3 +121,11 @@ None - no external service configuration required. The new `web` and `dev` extra
 ---
 *Phase: 01-foundation-project-palette-pipeline-backbone*
 *Completed: 2026-08-15*
+
+## Self-Check: PASSED
+
+All created files verified present on disk (pyproject.toml, tests/test_pipeline.py,
+tests/test_extract.py, tests/test_web/__init__.py, tests/test_web/conftest.py,
+tests/test_web/test_project_routes.py, tests/test_web/test_page_routes.py,
+tests/test_web/test_palette_routes.py, this SUMMARY.md). All four task commits
+(fd8fca6, 1cac320, c2be4f2, 2d926b4) verified present in git log.
