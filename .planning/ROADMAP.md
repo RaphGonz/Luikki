@@ -55,8 +55,8 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 01-04-PLAN.md — Pipeline stage registry, import runner, and the label-map invariant check
-- [ ] 01-05-PLAN.md — Palette extraction: quantize + CIELAB merge, sheet-aware pre-pass
+- [x] 01-04-PLAN.md — Pipeline stage registry, import runner, and the label-map invariant check
+- [x] 01-05-PLAN.md — Palette extraction: quantize + CIELAB merge, sheet-aware pre-pass
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -177,7 +177,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation — Project, Palette & Pipeline Backbone | 3/13 | In Progress|  |
+| 1. Foundation — Project, Palette & Pipeline Backbone | 5/13 | In Progress|  |
 | 2. Panel Polygon Editor & Protected Masks | 0/TBD | Not started | - |
 | 3. Zone Editor — Merge, Split, Gaps & Undo | 0/TBD | Not started | - |
 | 4. Cobra Worker & Isolated Colour Proposal | 0/TBD | Not started | - |
