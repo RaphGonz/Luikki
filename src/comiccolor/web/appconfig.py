@@ -38,17 +38,57 @@ class RecentProject:
     opened_at: str
 
 
+class UnsafeProjectNameError(ValueError):
+    """The project name is not usable as a single folder name."""
+
+
+class ProjectFolderNotEmptyError(FileExistsError):
+    """The target folder already exists and has content that isn't a project.
+
+    A subclass of ``FileExistsError`` so a caller that only cares about
+    "couldn't create it there" still catches both cases with one clause,
+    while the route can distinguish the two to pick the right copy.
+    """
+
+
 def create_project_folder(parent: Path, name: str) -> Path:
     """Lay out a new project's folder (D-04).
 
-    Raises ``FileExistsError`` if ``project.db`` already exists at the
-    target path — this function never overwrites an existing project;
-    ``Store``'s own single-row ``project`` table constraint is the second,
-    structural line of defence against a duplicate project.
+    ``name`` is client-supplied, so it is treated as untrusted here even
+    though the schema already constrains it (defence in depth — this
+    function must be safe to call from anywhere, not only from behind that
+    one Pydantic model). ``pathlib``'s ``/`` silently accepts both
+    separators *and* absolute paths, so ``parent / name`` alone lets a name
+    like ``../secret/pwned`` escape ``parent`` and an absolute name discard
+    ``parent`` entirely. The containment assertion below is what closes
+    that: the resolved target must sit directly inside the resolved parent.
+
+    Raises:
+        UnsafeProjectNameError: ``name`` is not a single folder name
+            directly under ``parent``.
+        FileExistsError: ``project.db`` already exists at the target — this
+            function never overwrites an existing project; ``Store``'s own
+            single-row ``project`` table constraint is the second,
+            structural line of defence against a duplicate project.
+        ProjectFolderNotEmptyError: the target exists with other content.
+            Adopting a non-empty stranger directory as a project folder is
+            how a traversal lands somewhere surprising, and it silently
+            mixes a project's files in among the artist's own.
     """
-    project_dir = parent / name
+    parent = parent.expanduser().resolve()
+    project_dir = (parent / name).resolve()
+    if project_dir.parent != parent or project_dir == parent:
+        raise UnsafeProjectNameError(
+            f"project name must be a single folder name, got {name!r}"
+        )
+
     if (project_dir / PROJECT_DB_NAME).exists():
         raise FileExistsError(f"a project already exists at {project_dir}")
+    if project_dir.exists() and any(project_dir.iterdir()):
+        raise ProjectFolderNotEmptyError(
+            f"{project_dir} already exists and is not empty"
+        )
+
     (project_dir / PAGES_DIR).mkdir(parents=True, exist_ok=True)
     (project_dir / PENDING_DIR).mkdir(parents=True, exist_ok=True)
     (project_dir / LABEL_MAPS_DIR).mkdir(parents=True, exist_ok=True)

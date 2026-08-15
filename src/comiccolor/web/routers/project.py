@@ -4,10 +4,21 @@ PROJ-01 (create/open/list a project) and PROJ-05 (durable, portable project
 state — nothing here writes to the wrong database or loses an edit on a
 refresh). Registered as an empty stub by plan 01-06; filled by plan 01-07.
 
-Every path a client supplies (``POST /open``'s ``path``, and the recents
-list's own entries) goes through :func:`_resolve_project_path` before this
-process opens a database at it — RESEARCH.md § Security Domain V12: never
-trust a filesystem path string from the browser without checking it first.
+RESEARCH.md § Security Domain V12: never trust a filesystem path string
+from the browser without checking it first. There are two such strings
+here, and they get two different checks, because they are two different
+things:
+
+- **A path to an existing project** (``POST /open``'s ``path``, and the
+  recents list's own entries) goes through :func:`_resolve_project_path`,
+  which requires the resolved result to *already* be a project folder.
+- **A name for a project that does not exist yet** (``POST``'s ``name``) is
+  the input that gets *written* to, so it cannot be checked by "does it
+  already exist". It is instead constrained to a single safe path segment
+  by ``schemas.ProjectName`` and re-checked for containment inside its
+  parent by ``appconfig.create_project_folder``.
+
+Neither check substitutes for the other; a name is not a path.
 """
 
 from __future__ import annotations
@@ -47,6 +58,14 @@ PROJECT_EXISTS_DETAIL = (
 BROWSE_UNAVAILABLE_DETAIL = (
     "Couldn't open a folder picker on this machine — choose a recent"
     " project instead."
+)
+UNSAFE_NAME_DETAIL = (
+    "That project name can't be used as a folder name — use letters,"
+    " numbers and spaces, without slashes."
+)
+FOLDER_NOT_EMPTY_DETAIL = (
+    "That folder already exists and isn't empty — pick a different name,"
+    " or a different parent folder."
 )
 
 
@@ -95,6 +114,13 @@ def create_project(body: ProjectCreateRequest, request: Request) -> ProjectRespo
     ``appconfig.create_project_folder`` laying out the new project's own
     subdirectories (it creates every missing directory on its path), so
     this route never needs a directory-creation call of its own.
+
+    This is the one route that *writes* to a client-influenced path, so it
+    is the one that most needs the module docstring's rule. ``body.name``
+    is constrained to a single safe path segment by ``ProjectName`` at the
+    schema boundary and independently re-checked for containment inside
+    ``parent`` by ``create_project_folder`` — do not drop either layer on
+    the grounds that the other one covers it.
     """
     parent = (
         Path(body.parent_dir).expanduser().resolve()
@@ -103,6 +129,11 @@ def create_project(body: ProjectCreateRequest, request: Request) -> ProjectRespo
     )
     try:
         folder = appconfig.create_project_folder(parent, body.name)
+    except appconfig.UnsafeProjectNameError as exc:
+        raise HTTPException(status_code=400, detail=UNSAFE_NAME_DETAIL) from exc
+    except appconfig.ProjectFolderNotEmptyError as exc:
+        # Before FileExistsError: it is a subclass of it.
+        raise HTTPException(status_code=409, detail=FOLDER_NOT_EMPTY_DETAIL) from exc
     except FileExistsError as exc:
         raise HTTPException(status_code=409, detail=PROJECT_EXISTS_DETAIL) from exc
 

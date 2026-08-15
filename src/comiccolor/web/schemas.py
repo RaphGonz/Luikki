@@ -33,12 +33,34 @@ RGBChannel = Annotated[int, Field(ge=0, le=255)]
 RGBTuple = tuple[RGBChannel, RGBChannel, RGBChannel]
 NonEmptyStr = Annotated[str, Field(min_length=1, max_length=200)]
 
+# A project name is the one client string this app turns into a *directory
+# name*, so it gets its own type rather than reusing ``NonEmptyStr``.
+# Constrained to a single safe path segment at the boundary: no separator
+# of either flavour, none of Windows' reserved filename characters, no
+# control characters, and no leading dot (which is what rules out ``.`` and
+# ``..`` and keeps the folder visible on POSIX). ``appconfig.
+# create_project_folder`` re-asserts containment independently — this
+# pattern is the outer layer, not the only one.
+ProjectName = Annotated[
+    str,
+    Field(
+        min_length=1,
+        max_length=100,
+        pattern="^[^\\\\/:*?\"<>|\\x00-\\x1f.][^\\\\/:*?\"<>|\\x00-\\x1f]*$",
+    ),
+]
+
 
 # ---- Projects ---------------------------------------------------------------
 
 
 class ProjectCreateRequest(BaseModel):
-    name: NonEmptyStr
+    name: ProjectName
+    # Deliberately unconstrained: D-04's folder-pick model lets the artist
+    # put a project anywhere on their own machine (the native browse dialog
+    # returns arbitrary absolute paths), so there is no workspace to
+    # contain this to. It names a *parent*; ``name`` is what must never
+    # escape it.
     parent_dir: str | None = None
 
 
