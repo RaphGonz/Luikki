@@ -28,12 +28,39 @@ def test_reopen_after_close_keeps_pages_and_palette():
     ...
 
 
-@pytest.mark.skip(reason="Wave 0 scaffold — filled by plan 01-07")
 def test_requests_without_an_open_project_return_409():
     """RESEARCH.md Pitfall 2: ``current_project_path`` is process-global.
     A project-scoped request made before any project is opened returns
-    409, never a silent guess or a 500."""
-    ...
+    409, never a silent guess or a 500.
+
+    Filled by plan 01-06, ahead of every other stub in this package
+    (which stay filled by 01-07..01-10): the dependency chain
+    (``get_current_project_path`` -> ``get_store`` -> ``get_project``) is
+    this plan's own deliverable, and every later router shares it, so it
+    needs one real, passing proof before any router body exists. No
+    router has a route yet (they are empty stubs until 01-07..01-10), so
+    this registers one throwaway probe endpoint directly on the app
+    instance — never on a shared router module — depending on
+    ``get_project`` the same way every real future route will, and
+    asserts against ``/api/palette`` (RESEARCH.md Pitfall 2's own named
+    example route)."""
+    from fastapi import Depends
+    from fastapi.testclient import TestClient
+
+    from comiccolor.web.app import create_app
+    from comiccolor.web.deps import NO_PROJECT_DETAIL, get_project
+
+    app = create_app()
+
+    @app.get("/api/palette")
+    def _probe_requires_a_project(project=Depends(get_project)):
+        return {"id": project.id}
+
+    with TestClient(app) as blank_client:
+        response = blank_client.get("/api/palette")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == NO_PROJECT_DETAIL
 
 
 @pytest.mark.skip(reason="Wave 0 scaffold — filled by plan 01-07")

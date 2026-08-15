@@ -29,20 +29,29 @@ def project_dir(tmp_path):
 
 @pytest.fixture
 def client(project_dir):
-    """A TestClient with a project already open.
+    """A TestClient with a real project already open.
 
     ``TestClient`` is httpx-backed (RESEARCH.md Validation Architecture)
     — no real uvicorn process runs. The ``with`` block drives FastAPI's
-    lifespan. ``app.state.current_project_path`` is process-global
-    (RESEARCH.md Pitfall 2), which is exactly what this fixture sets up
-    per test via a fresh app instance.
+    lifespan. A ``Store`` is created at ``project_dir/project.db`` with a
+    ``Project`` row first (a request against a folder with no project row
+    should behave identically to one against no folder at all — both are
+    "no project", per ``get_project``), then ``set_current_project`` is the
+    only way ``app.state.current_project_path`` is ever written
+    (RESEARCH.md Pitfall 2).
     """
     from fastapi.testclient import TestClient
 
+    from comiccolor.model import Project, Store
     from comiccolor.web.app import create_app
+    from comiccolor.web.appconfig import PROJECT_DB_NAME
+    from comiccolor.web.deps import set_current_project
+
+    with Store(project_dir / PROJECT_DB_NAME) as store:
+        store.add_project(Project(name=project_dir.name))
 
     app = create_app()
-    app.state.current_project_path = project_dir
+    set_current_project(app, project_dir)
     with TestClient(app) as test_client:
         yield test_client
 
@@ -62,6 +71,9 @@ def blank_client():
     app = create_app()
     with TestClient(app) as test_client:
         yield test_client
+    # NOTE: app.state.current_project_path is simply never set here — no
+    # call to clear_current_project is needed, since each test gets a fresh
+    # app instance (see get_current_project_path's getattr default).
 
 
 @pytest.fixture

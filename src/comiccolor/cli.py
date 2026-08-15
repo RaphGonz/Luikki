@@ -54,6 +54,19 @@ def main(argv: list[str] | None = None) -> int:
     )
     ab.add_argument("--no-debug", action="store_true", help="skip debug renders")
 
+    serve = sub.add_parser("serve", help="start the local web app")
+    # Loopback default: PROJECT.md scopes v1 to one machine, and the app has
+    # no authentication by design, so binding a routable interface would
+    # expose an unauthenticated file-writing API to the local network.
+    serve.add_argument("--host", default="127.0.0.1", help="bind address")
+    serve.add_argument("--port", type=int, default=8000, help="bind port")
+    serve.add_argument(
+        "--project", default=None, help="project folder to open at startup"
+    )
+    serve.add_argument(
+        "--reload", action="store_true", help="reload on source changes (development)"
+    )
+
     args = parser.parse_args(argv)
 
     if args.command == "p3":
@@ -89,6 +102,22 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(format_report(report))
         print(f"\nwritten to {args.out}/ab.json and {args.out}/ab.md")
+
+    if args.command == "serve":
+        import uvicorn
+
+        from .web.app import create_app
+        from .web.appconfig import is_project_folder
+        from .web.deps import set_current_project
+
+        app = create_app()
+        if args.project:
+            project_path = Path(args.project)
+            if not is_project_folder(project_path):
+                raise SystemExit(f"not a project folder: {project_path}")
+            set_current_project(app, project_path)
+
+        uvicorn.run(app, host=args.host, port=args.port, reload=args.reload)
 
     return 0
 
