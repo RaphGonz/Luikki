@@ -49,9 +49,9 @@ Decimal phases appear between their surrounding integers in numeric order.
 Plans:
 **Wave 1**
 
-- [ ] 01-01-PLAN.md — Wave 0: Python dependency declarations and backend test scaffolding
-- [ ] 01-02-PLAN.md — Wave 0: Vite/TypeScript/Vitest scaffold, UI-SPEC tokens, and the screen<->label-map coordinate transform
-- [ ] 01-03-PLAN.md — Schema migration to project scope, page.stage, WAL + checkpoint
+- [x] 01-01-PLAN.md — Wave 0: Python dependency declarations and backend test scaffolding
+- [x] 01-02-PLAN.md — Wave 0: Vite/TypeScript/Vitest scaffold, UI-SPEC tokens, and the screen<->label-map coordinate transform
+- [x] 01-03-PLAN.md — Schema migration to project scope, page.stage, WAL + checkpoint
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -177,7 +177,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation — Project, Palette & Pipeline Backbone | 0/13 | Planned | - |
+| 1. Foundation — Project, Palette & Pipeline Backbone | 3/13 | In Progress|  |
 | 2. Panel Polygon Editor & Protected Masks | 0/TBD | Not started | - |
 | 3. Zone Editor — Merge, Split, Gaps & Undo | 0/TBD | Not started | - |
 | 4. Cobra Worker & Isolated Colour Proposal | 0/TBD | Not started | - |
