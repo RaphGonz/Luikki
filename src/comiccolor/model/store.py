@@ -130,12 +130,37 @@ CREATE INDEX IF NOT EXISTS idx_entity_project ON entity(project_id);
 
 
 class Store:
-    """Thin data-access layer. Not thread-safe; one Store per thread."""
+    """Thin data-access layer. One Store per request, never shared.
+
+    Not thread-*safe*: nothing here serialises concurrent access, so two
+    threads must never use one ``Store`` at the same time. It is thread-
+    *movable*: a single owner may hand it from one thread to the next, which
+    is exactly what FastAPI does (see ``__init__``'s
+    ``check_same_thread=False`` comment).
+    """
 
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(self.path)
+        # check_same_thread=False is required, not a shortcut. FastAPI
+        # resolves a sync generator dependency's __enter__, the endpoint
+        # itself, and the dependency's __exit__ as three *separate*
+        # run_in_threadpool calls, and anyio gives no guarantee that the
+        # same worker thread serves all three. With the default
+        # check_same_thread=True the connection raises
+        # sqlite3.ProgrammingError the moment the endpoint runs on a
+        # different worker than the one that opened it — reproducible with
+        # as few as two concurrent requests.
+        #
+        # This relaxes only sqlite3's *object-level* thread assertion. It
+        # does not make the connection shared: web/deps.py's get_store
+        # builds one Store per request and closes it at teardown, so
+        # exactly one request owns this connection at a time and no two
+        # threads ever touch it simultaneously. Do not "simplify" this into
+        # a module-level connection reused across requests — that is the
+        # genuinely unsafe shape this comment exists to distinguish itself
+        # from.
+        self.conn = sqlite3.connect(self.path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         # WAL is the user's resolution of RESEARCH.md Open Question 1: it is
         # what makes the web layer's per-request connections (Pattern 1) safe
