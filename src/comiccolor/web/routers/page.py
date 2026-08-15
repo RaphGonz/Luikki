@@ -44,7 +44,7 @@ from ..schemas import (
     PageUploadResponse,
     RejectedUpload,
 )
-from ..uploads import UPLOAD_ERROR_DETAIL, display_name, save_upload
+from ..uploads import UPLOAD_ERROR_DETAIL, display_name, read_capped, save_upload
 from .. import appconfig
 from .volume import get_owned_volume
 
@@ -124,8 +124,10 @@ def upload_pages(
 
     for file in files:
         name = display_name(file.filename)
-        data = file.file.read()
         try:
+            # Capped at read time, not after: an oversized file in a batch
+            # is one more RejectedUpload, not 64MB+ of resident bytes.
+            data = read_capped(file.file)
             saved = save_upload(
                 data, project_root / appconfig.PAGES_DIR, project_root
             )

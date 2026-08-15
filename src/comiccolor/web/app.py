@@ -32,9 +32,63 @@ from .routers import page, palette, pipeline, project, reference, volume
 # from any working directory.
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
+FOREIGN_ORIGIN_DETAIL = (
+    "That request came from another site, so it was refused — use the"
+    " ComicColor window itself."
+)
+
+
+def _allowed_origins() -> set[str]:
+    """Origins a state-changing request may legitimately come from.
+
+    Loopback on any port (the artist may run `serve` on a non-default one)
+    plus the vite dev server. ``COMICCOLOR_EXTRA_ORIGINS`` is a
+    comma-separated escape hatch for a setup this list doesn't anticipate.
+    """
+    hosts = ("127.0.0.1", "localhost", "[::1]")
+    ports = ("8000", "5173")
+    origins = {
+        f"http://{host}:{port}" for host in hosts for port in ports
+    }
+    origins |= {f"http://{host}" for host in hosts}
+    extra = os.environ.get("COMICCOLOR_EXTRA_ORIGINS", "")
+    origins |= {o.strip() for o in extra.split(",") if o.strip()}
+    return origins
+
 
 def create_app() -> FastAPI:
     app = FastAPI(title="ComicColor")
+
+    @app.middleware("http")
+    async def _reject_foreign_origins(request: Request, call_next):
+        """Refuse a state-changing request from an origin that isn't ours.
+
+        The app has no authentication by design (PROJECT.md: one machine,
+        one artist) and binds loopback, which protects it from the network
+        but not from the artist's own browser. JSON endpoints are
+        incidentally safe — an ``application/json`` body forces a CORS
+        preflight a hostile page cannot satisfy — but
+        ``multipart/form-data`` is a CORS-*simple* content type, so any page
+        the artist happens to be visiting while `comiccolor serve` runs can
+        silently POST a cross-origin form to ``/api/pages/``,
+        ``/api/palette/swatch`` or ``/api/references/sheets`` and write
+        files and rows into the open project. ``POST /api/projects/browse``
+        is worse: it pops a native dialog on the artist's desktop.
+
+        Only requests that actually carry an ``Origin`` are checked. A
+        same-origin ``GET`` from the SPA, and every non-browser caller
+        (curl, the test suite), send none — this closes the cross-origin
+        write class without inventing an auth model the project has
+        deliberately not got.
+        """
+        if request.method not in ("GET", "HEAD", "OPTIONS"):
+            origin = request.headers.get("origin")
+            if origin is not None and origin not in _allowed_origins():
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": FOREIGN_ORIGIN_DETAIL},
+                )
+        return await call_next(request)
 
     app.include_router(project.router, prefix="/api/projects", tags=["projects"])
     app.include_router(volume.router, prefix="/api/volumes", tags=["volumes"])
@@ -56,6 +110,16 @@ def create_app() -> FastAPI:
     @app.get("/api/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    # `comiccolor serve --reload` cannot hand this process an app object —
+    # uvicorn's reloader re-imports the app in a fresh process each time, so
+    # the startup project travels through the environment instead. Empty or
+    # absent means "no project open", which is the normal case.
+    startup_project = os.environ.get("COMICCOLOR_PROJECT", "").strip()
+    if startup_project:
+        from .deps import set_current_project
+
+        set_current_project(app, Path(startup_project))
 
     dist_dir = Path(
         os.environ.get("COMICCOLOR_FRONTEND_DIST", str(_REPO_ROOT / "frontend" / "dist"))

@@ -186,7 +186,7 @@ def upload_swatch(
     ``get_store`` still ran in the thread pool, handing the connection to
     a caller on the wrong thread.
     """
-    data = file.file.read()
+    data = uploads.read_capped(file.file)
     image = uploads.decode_image(data)
     extracted = extract_palette(image)
 

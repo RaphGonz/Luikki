@@ -200,7 +200,7 @@ def upload_sheet(
     every route in this module that shares that concern stays sync for
     consistency, even where (as here) no ``Store`` dependency is involved.
     """
-    data = file.file.read()
+    data = uploads.read_capped(file.file)
     image = uploads.decode_image(data)
 
     # Extraction runs *before* the file is written. An all-ink or all-paper

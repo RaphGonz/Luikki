@@ -24,6 +24,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path, PurePosixPath, PureWindowsPath
+from typing import BinaryIO
 from uuid import uuid4
 
 from fastapi import HTTPException
@@ -37,6 +38,7 @@ UPLOAD_ERROR_DETAIL = (
 
 MAX_UPLOAD_BYTES = 64 * 1024 * 1024
 MAX_DIMENSION = 20000
+READ_CHUNK_BYTES = 1024 * 1024
 ALLOWED_FORMATS = {
     "PNG": ".png",
     "JPEG": ".jpg",
@@ -46,12 +48,50 @@ ALLOWED_FORMATS = {
 }
 
 
+def read_capped(stream: BinaryIO) -> bytes:
+    """Read an upload into memory, refusing to exceed :data:`MAX_UPLOAD_BYTES`.
+
+    Every router used to call ``file.file.read()`` — an unbounded read of
+    the whole spooled upload into a single ``bytes`` — and only then hand
+    the result to :func:`decode_image` to have its length checked. The
+    limit therefore never prevented the allocation it exists to prevent.
+    Starlette spools a large upload to disk rather than holding it in RAM,
+    so this read is the moment it becomes resident, and it is the moment
+    that has to be capped.
+
+    Reads one byte past the limit before refusing, so a payload exactly at
+    the limit is accepted and anything larger is refused without having to
+    trust a ``Content-Length`` the client supplied.
+    """
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = stream.read(READ_CHUNK_BYTES)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > MAX_UPLOAD_BYTES:
+            raise HTTPException(status_code=400, detail=UPLOAD_ERROR_DETAIL)
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 def decode_image(data: bytes) -> Image.Image:
     """Validate ``data`` is a readable, reasonably sized image.
 
     Every failure — oversized payload, unparseable bytes, disallowed
     format, degenerate or absurd dimensions — raises the same structured
     400. Nothing downstream ever sees a raw Pillow exception.
+
+    Order matters here. ``Image.open`` reads only the header, so format and
+    dimensions are both known *before* ``load()`` rasterises anything. The
+    checks therefore run against the probe: a decompression-bomb-shaped
+    file (small on the wire, enormous decoded) is refused on its declared
+    dimensions rather than after hundreds of MB of pixels are already
+    resident. Checking ``image.size`` after ``load()`` left Pillow's own
+    ``MAX_IMAGE_PIXELS`` as the only thing standing in the way, which also
+    made ``MAX_DIMENSION`` (400 Mpx, above that default) unreachable in
+    practice.
     """
     if len(data) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=400, detail=UPLOAD_ERROR_DETAIL)
@@ -59,6 +99,12 @@ def decode_image(data: bytes) -> Image.Image:
     try:
         probe = Image.open(BytesIO(data))
         probe.verify()
+    except Exception as exc:  # noqa: BLE001 - every decode failure is a 400
+        raise HTTPException(status_code=400, detail=UPLOAD_ERROR_DETAIL) from exc
+
+    _check_shape(probe)
+
+    try:
         # verify() leaves the Image object unusable for further access —
         # re-open the same bytes for the real, returned handle.
         image = Image.open(BytesIO(data))
@@ -66,14 +112,21 @@ def decode_image(data: bytes) -> Image.Image:
     except Exception as exc:  # noqa: BLE001 - every decode failure is a 400
         raise HTTPException(status_code=400, detail=UPLOAD_ERROR_DETAIL) from exc
 
+    # Re-asserted on the loaded handle: the two must agree, and this is what
+    # the rest of the app actually gets back.
+    _check_shape(image)
+
+    return image
+
+
+def _check_shape(image: Image.Image) -> None:
+    """Format and dimensions, refused with the one structured 400."""
     if image.format not in ALLOWED_FORMATS:
         raise HTTPException(status_code=400, detail=UPLOAD_ERROR_DETAIL)
 
     width, height = image.size
     if not (1 <= width <= MAX_DIMENSION and 1 <= height <= MAX_DIMENSION):
         raise HTTPException(status_code=400, detail=UPLOAD_ERROR_DETAIL)
-
-    return image
 
 
 @dataclass(frozen=True)

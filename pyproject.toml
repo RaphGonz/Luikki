@@ -27,3 +27,8 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Without this, `pytest tests` on a clean checkout is nine collection
+# errors (`ModuleNotFoundError: No module named 'comiccolor'`) — the suite
+# passed only with an editable install or PYTHONPATH=src set by hand,
+# neither of which was written down anywhere.
+pythonpath = ["src"]

@@ -104,20 +104,45 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\nwritten to {args.out}/ab.json and {args.out}/ab.md")
 
     if args.command == "serve":
+        import os
+
         import uvicorn
 
-        from .web.app import create_app
         from .web.appconfig import is_project_folder
-        from .web.deps import set_current_project
 
-        app = create_app()
+        project_path = None
         if args.project:
-            project_path = Path(args.project)
+            # expanduser/resolve: `--project ~/ComicColor/Kaito` is the
+            # obvious thing to type and used to fail with "not a project
+            # folder" because the tilde was never expanded.
+            project_path = Path(args.project).expanduser().resolve()
             if not is_project_folder(project_path):
                 raise SystemExit(f"not a project folder: {project_path}")
-            set_current_project(app, project_path)
 
-        uvicorn.run(app, host=args.host, port=args.port, reload=args.reload)
+        if args.reload:
+            # uvicorn can only reload from an *import string* — handed an app
+            # instance it logs a warning and silently runs without reloading,
+            # which is what --help was advertising. Because the reloader
+            # re-imports the app in a fresh process, the project can't be set
+            # on an object here; it travels through the environment and
+            # web.app picks it up at startup.
+            if project_path is not None:
+                os.environ["COMICCOLOR_PROJECT"] = str(project_path)
+            uvicorn.run(
+                "comiccolor.web.app:create_app",
+                factory=True,
+                host=args.host,
+                port=args.port,
+                reload=True,
+            )
+        else:
+            from .web.app import create_app
+            from .web.deps import set_current_project
+
+            app = create_app()
+            if project_path is not None:
+                set_current_project(app, project_path)
+            uvicorn.run(app, host=args.host, port=args.port)
 
     return 0
 
