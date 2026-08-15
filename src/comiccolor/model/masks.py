@@ -144,3 +144,53 @@ def relabel_sequential(label_map: np.ndarray) -> np.ndarray:
     lookup = np.zeros(int(label_map.max()) + 1, dtype=np.int32)
     lookup[unique] = np.arange(1, len(unique) + 1, dtype=np.int32)
     return lookup[label_map]
+
+
+class LabelMapInvariantError(Exception):
+    """Raised when a label map violates §3 exhaustiveness.
+
+    Exclusivity is structural and cannot be violated by construction — a
+    pixel holds exactly one label, so there is no state to check for overlap
+    (see module docstring). Exhaustiveness has no such guarantee: a merge,
+    split, gap-absorb or undo step can leave a fillable pixel with no label,
+    or leak a label onto a line/protected pixel. This exception is how that
+    failure surfaces.
+    """
+
+
+def assert_invariant(
+    label_map: np.ndarray,
+    line_mask: np.ndarray,
+    protected: np.ndarray | None = None,
+) -> None:
+    """Verify §3's exhaustiveness invariant, loudly.
+
+    Delegates to ``check_coverage`` rather than reimplementing it, and raises
+    ``LabelMapInvariantError`` when the report says the map is not
+    exhaustive, or when any label has leaked onto a line/protected pixel — a
+    leak is a correctness bug the same way a gap is, even though
+    ``check_coverage`` still reports ``exhaustive: True`` for it (a leak
+    covers a pixel that should have been left at 0, it does not leave a
+    fillable pixel uncovered).
+
+    ``check_coverage`` is for reporting and metrics: a caller reads the
+    report and decides what to do with it. ``assert_invariant`` is for
+    edit-time enforcement — Phase 3's zone editor calls it after every merge,
+    split, gap-absorb and undo transition, where the only correct response to
+    a violation is to fail loudly rather than let a broken label map persist.
+
+    ``line_mask`` and ``protected`` are boolean, True where the pixel is a
+    line or protected respectively — the same convention ``check_coverage``
+    uses.
+    """
+    report = check_coverage(label_map, line_mask, protected)
+    if not report["exhaustive"]:
+        raise LabelMapInvariantError(
+            f"{report['uncovered_pixels']} fillable pixels have no region "
+            f"(coverage={report['coverage']:.4f})"
+        )
+    if report["leaked_pixels"]:
+        raise LabelMapInvariantError(
+            f"{report['leaked_pixels']} pixels carry a label but sit on a "
+            f"line or protected pixel (coverage={report['coverage']:.4f})"
+        )

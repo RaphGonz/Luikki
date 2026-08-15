@@ -15,6 +15,8 @@ from .entities import (
 )
 from .masks import (
     UNASSIGNED,
+    LabelMapInvariantError,
+    assert_invariant,
     check_coverage,
     load_binary_mask,
     load_label_map,
@@ -30,6 +32,7 @@ from .store import Store
 __all__ = [
     "UNASSIGNED",
     "Entity",
+    "LabelMapInvariantError",
     "Page",
     "PaletteEntry",
     "Panel",
@@ -41,6 +44,7 @@ __all__ = [
     "RegionStatus",
     "Store",
     "Volume",
+    "assert_invariant",
     "check_coverage",
     "load_binary_mask",
     "load_label_map",
