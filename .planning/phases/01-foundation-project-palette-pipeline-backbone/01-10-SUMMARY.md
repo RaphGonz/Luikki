@@ -144,3 +144,9 @@ None — no external service configuration required.
 ---
 *Phase: 01-foundation-project-palette-pipeline-backbone*
 *Completed: 2026-08-15*
+
+## Self-Check: PASSED
+
+All files verified present on disk (`src/comiccolor/web/routers/reference.py`,
+`tests/test_web/test_palette_routes.py`, this SUMMARY.md). All four commits
+(`12b0520`, `3745f93`, `9b79059`, `5d85dd8`) verified present in `git log`.
