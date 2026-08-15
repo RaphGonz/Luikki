@@ -1,0 +1,311 @@
+/*
+ * The app shell: a 240px sidebar, a 56px toolbar, and a full-bleed content
+ * region below and right of it. 01-UI-SPEC.md §8's canvas-ready constraint
+ * is what rules out a padded "dashboard card" content layout here: Phase
+ * 2/3 mount a Konva canvas edge to edge into .app-content, and retrofitting
+ * padding later would mean re-laying out the shell. Every value below
+ * comes from tokens.css -- no literal colour, spacing or font size lives
+ * in this file.
+ */
+
+.app-shell {
+  display: grid;
+  grid-template-columns: var(--sidebar-width) 1fr;
+  grid-template-rows: var(--toolbar-height) 1fr;
+  grid-template-areas:
+    "sidebar toolbar"
+    "sidebar content";
+  height: 100vh;
+  width: 100%;
+}
+
+/* ---- Sidebar (§8: project name, Volume -> Page tree, Palette entry) ---- */
+
+.app-sidebar {
+  grid-area: sidebar;
+  background: var(--color-surface-secondary);
+  border-right: 1px solid var(--color-border);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-lg) 0;
+}
+
+.sidebar-project-name {
+  font-size: var(--font-size-display);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-display);
+  color: var(--color-text-primary);
+  padding: 0 var(--space-lg);
+}
+
+.sidebar-section-header {
+  font-size: var(--font-size-label);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-label);
+  letter-spacing: var(--letter-spacing-label);
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  padding: 0 var(--space-lg);
+  margin-top: var(--space-md);
+}
+
+.sidebar-new-volume {
+  margin: 0 var(--space-lg);
+  background: transparent;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-primary);
+  font-family: var(--font-family);
+  font-size: var(--font-size-body);
+  padding: var(--space-xs) var(--space-sm);
+  cursor: pointer;
+}
+
+.sidebar-tree {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.sidebar-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-lg);
+}
+
+.sidebar-row-toggle,
+.sidebar-row-kebab {
+  width: var(--icon-hit);
+  height: var(--icon-hit);
+  flex: none;
+  background: transparent;
+  border: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.sidebar-row-label {
+  flex: 1;
+  font-size: var(--font-size-body);
+  color: var(--color-text-primary);
+  cursor: pointer;
+}
+
+.sidebar-row-label.is-current,
+.sidebar-page-label.is-current,
+.sidebar-palette-entry.is-current {
+  color: var(--color-accent);
+}
+
+.sidebar-row-menu {
+  display: flex;
+  gap: var(--space-sm);
+  padding: var(--space-xs) var(--space-lg) var(--space-sm) calc(var(--space-lg) + var(--icon-hit));
+}
+
+.sidebar-row-menu button {
+  background: transparent;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-primary);
+  font-family: var(--font-family);
+  font-size: var(--font-size-label);
+  padding: var(--space-xs) var(--space-sm);
+  cursor: pointer;
+}
+
+.sidebar-row-delete {
+  color: var(--color-destructive);
+  border-color: var(--color-destructive);
+}
+
+.sidebar-page-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 var(--space-xl);
+}
+
+.sidebar-page-label {
+  display: block;
+  font-size: var(--font-size-body);
+  color: var(--color-text-primary);
+  padding: var(--space-xs) var(--space-lg);
+  cursor: pointer;
+}
+
+.sidebar-palette-entry {
+  margin-top: auto;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-top: 1px solid var(--color-border);
+  color: var(--color-text-primary);
+  font-family: var(--font-family);
+  font-size: var(--font-size-body);
+  padding: var(--space-md) var(--space-lg);
+  cursor: pointer;
+}
+
+/* ---- Toolbar (§8: 56px strip, reused unchanged by Phase 2/3's canvas) ---- */
+
+.app-toolbar {
+  grid-area: toolbar;
+  height: var(--toolbar-height);
+  background: var(--color-surface-secondary);
+  border-bottom: 1px solid var(--color-border);
+  display: flex;
+  align-items: center;
+  padding: 0 var(--space-lg);
+  gap: var(--space-md);
+}
+
+.app-toolbar-title {
+  font-size: var(--font-size-heading);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-heading);
+  color: var(--color-text-primary);
+}
+
+.app-toolbar-slot {
+  flex: 1;
+}
+
+/* ---- Content (§8: full-bleed, no card, no max-width -- canvas-ready) ---- */
+
+.app-content {
+  grid-area: content;
+  background: var(--color-surface-dominant);
+  overflow: auto;
+}
+
+.view-stub {
+  padding: var(--space-2xl);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-heading);
+}
+
+/* ---- Project picker (§8: recent list is the anchor, Create Project secondary) ---- */
+
+.project-picker {
+  padding: var(--space-3xl) var(--space-2xl);
+  max-width: 640px;
+}
+
+.project-picker-error {
+  background: var(--color-surface-secondary);
+  border: 1px solid var(--color-destructive);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-body);
+  padding: var(--space-sm) var(--space-md);
+  margin-bottom: var(--space-lg);
+}
+
+.project-picker-recent-list {
+  list-style: none;
+  margin: 0 0 var(--space-2xl) 0;
+  padding: 0;
+}
+
+.project-picker-recent-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  border: 1px solid var(--color-border);
+  margin-bottom: var(--space-sm);
+  cursor: pointer;
+  font-size: var(--font-size-heading);
+  color: var(--color-text-primary);
+}
+
+.project-picker-recent-row.is-current {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.project-picker-recent-path {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-label);
+}
+
+.project-picker-empty {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-body);
+  margin-bottom: var(--space-lg);
+}
+
+.project-picker-create-heading {
+  font-size: var(--font-size-label);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-label);
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  margin-bottom: var(--space-sm);
+}
+
+.project-picker-name-field,
+.project-picker-parent-field {
+  display: block;
+  width: 100%;
+  margin-bottom: var(--space-sm);
+  padding: var(--space-sm);
+  background: var(--color-surface-secondary);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-primary);
+  font-family: var(--font-family);
+  font-size: var(--font-size-body);
+}
+
+.project-picker-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.project-picker-browse {
+  background: transparent;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-primary);
+  font-family: var(--font-family);
+  font-size: var(--font-size-body);
+  padding: var(--space-xs) var(--space-sm);
+  cursor: pointer;
+}
+
+.project-picker-create-button.accent {
+  background: var(--color-accent);
+  border: none;
+  color: var(--color-surface-dominant);
+  font-family: var(--font-family);
+  font-size: var(--font-size-body);
+  padding: var(--space-sm) var(--space-md);
+  cursor: pointer;
+}
+
+.shell-empty-heading {
+  padding: var(--space-3xl) var(--space-2xl) var(--space-sm);
+  font-size: var(--font-size-display);
+  color: var(--color-text-primary);
+}
+
+.shell-empty-body {
+  padding: 0 var(--space-2xl);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-body);
+}
+
+/* ---- Toast (shell furniture; success feedback only, §6/§7) ---- */
+
+.toast {
+  position: fixed;
+  bottom: var(--space-lg);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--color-surface-secondary);
+  color: var(--color-text-primary);
+  padding: var(--space-sm) var(--space-md);
+  font-family: var(--font-family);
+  font-size: var(--font-size-body);
+}
