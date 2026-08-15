@@ -14,12 +14,23 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from ...model import Project, Store
 from .. import appconfig
-from ..deps import get_current_project_path, get_project, set_current_project
-from ..schemas import ProjectCreateRequest, ProjectOpenRequest, ProjectResponse
+from ..deps import (
+    clear_current_project,
+    get_current_project_path,
+    get_project,
+    set_current_project,
+)
+from ..schemas import (
+    BrowseResponse,
+    ProjectCreateRequest,
+    ProjectOpenRequest,
+    ProjectResponse,
+    RecentProjectResponse,
+)
 
 router = APIRouter()
 
@@ -32,6 +43,10 @@ NOT_A_PROJECT_DETAIL = (
 PROJECT_EXISTS_DETAIL = (
     "A project already exists in that folder — open it instead, or pick a"
     " different name."
+)
+BROWSE_UNAVAILABLE_DETAIL = (
+    "Couldn't open a folder picker on this machine — choose a recent"
+    " project instead."
 )
 
 
@@ -126,3 +141,84 @@ def current_project(
     rather than a route-local special case.
     """
     return _to_response(project, path)
+
+
+@router.post("/close", status_code=204)
+def close_project(
+    request: Request, path: Path = Depends(get_current_project_path)
+) -> None:
+    """Checkpoint the WAL, then release this process's hold on the project.
+
+    D-04 promises that copying, zipping or handing over a project folder
+    afterwards yields a complete, working database. WAL mode keeps
+    recently committed rows in ``project.db-wal`` until something folds
+    them back into ``project.db`` (RESEARCH.md Pitfall 1); the resolved
+    RESEARCH.md Open Question 1 is that this checkpoint happens on every
+    close, unconditionally — this call is the whole reason this route
+    exists as more than just dropping the in-process reference, so do not
+    remove it as "redundant" with ``Store.close()``.
+    """
+    with Store(path / appconfig.PROJECT_DB_NAME) as store:
+        store.checkpoint()
+    clear_current_project(request.app)
+
+
+@router.get("/recent", response_model=list[RecentProjectResponse])
+def recent_projects() -> list[RecentProjectResponse]:
+    """The recent-projects list, most recent first.
+
+    ``appconfig.read_recents`` already drops any entry whose folder no
+    longer contains ``project.db`` — a project the artist moved or deleted
+    outside the app simply disappears from this list on the next read.
+    D-04: this index is a convenience only, so this route never attempts
+    to repair or re-create a missing folder.
+    """
+    return [
+        RecentProjectResponse(name=r.name, path=r.path, opened_at=r.opened_at)
+        for r in appconfig.read_recents()
+    ]
+
+
+@router.post("/browse", response_model=BrowseResponse)
+def browse_for_project_folder() -> BrowseResponse | Response:
+    """Open a native, host-side folder dialog and return the chosen path.
+
+    The browser and the server are the same machine by PROJECT.md
+    constraint, but a browser directory input
+    (``<input type="file" webkitdirectory>``) deliberately strips the
+    absolute path a server would need, so there is no client-side way to
+    satisfy D-04's folder-pick model. ``tkinter`` is imported lazily,
+    inside this function, so importing this router never requires a
+    display; the whole dialog is wrapped in a broad ``except Exception`` so
+    a headless or tkinter-less host degrades to a 503 with actionable copy
+    rather than a 500. A cancelled dialog (an empty chosen path) is a
+    routine outcome, not a failure, and returns 204 with no body.
+
+    The actual security control is not "the path came from a dialog" — it
+    is ``_resolve_project_path`` on ``POST /open``, which every path this
+    route can hand back must still pass. This endpoint is an ergonomics
+    feature only (RESEARCH.md § Security Domain V12); the frontend's
+    typed-path fallback goes through that exact same validator. No
+    persisted record of previously chosen directories, and no separate
+    approval code tied to a browse response, sits on top of it — for a
+    single-user local app where the caller already owns the process, that
+    extra machinery would add state without moving the real trust boundary
+    (threat register T-01-LOCALPATH).
+    """
+    try:
+        import tkinter
+        from tkinter import filedialog
+
+        root = tkinter.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        chosen = filedialog.askdirectory()
+        root.destroy()
+    except Exception as exc:  # pragma: no cover - depends on the host display
+        raise HTTPException(
+            status_code=503, detail=BROWSE_UNAVAILABLE_DETAIL
+        ) from exc
+
+    if not chosen:
+        return Response(status_code=204)
+    return BrowseResponse(path=chosen)
