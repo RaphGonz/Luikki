@@ -2,7 +2,7 @@
 
 Everything downstream assumes these shapes. Retrofitting is a rewrite.
 
-Two invariants are enforced structurally rather than by convention:
+Three invariants are enforced structurally rather than by convention:
 
 1. A Region stores ``palette_entry_id`` and has no RGB field at all. There is
    nowhere to bake a colour even by accident. Resolving a region to pixels is
@@ -14,6 +14,12 @@ Two invariants are enforced structurally rather than by convention:
    single integer *label map* and a Region is a label value within it. Overlap
    is unrepresentable; exhaustiveness is a coverage check over one array. See
    masks.py.
+
+3. Colour lives at project scope. PaletteEntry and Entity reference
+   ``project_id``, never ``volume_id``, even though an artist works inside a
+   specific volume's pages. There is no path for a palette entry to be scoped
+   to one volume even by accident — that is what makes the palette accumulate
+   across the whole project (D-02, §1.5).
 """
 
 from __future__ import annotations
@@ -40,20 +46,38 @@ class ProtectedKind(str, Enum):
     TEXT = "text"
 
 
+class PipelineStage(str, Enum):
+    """Forward-only pipeline chain, one artist confirmation gate per page
+    (D-06/D-07/D-11). Phase 1 declares all eight stages but implements only
+    the import boundary; later phases fill in the rest.
+    """
+
+    IMPORT = "import"  # uploaded, not yet auto-advanced
+    PANELS = "panels"  # panel detection is next / done
+    PROTECTED = "protected"  # bubble/SFX masking is next / done
+    ZONES = "zones"  # zone segmentation is next / done
+    PROPOSE = "propose"  # Cobra colour proposal is next / done
+    SNAP = "snap"  # CIELAB snap to palette is next / done
+    REVIEW = "review"  # artist colour-correction is next / done
+    EXPORT = "export"  # PSD export is next / done
+
+
 @dataclass
-class Series:
+class Project:
     name: str
     id: int | None = None
+    # Bumped on every palette mutation. Lets the incremental propagation in
+    # Tier 2 (§6) find stale panels without re-running the whole project.
+    # Lives here, not on Volume, because the palette accumulates at project
+    # scope (D-02) — every volume in the project shares one palette.
+    palette_revision: int = 0
 
 
 @dataclass
 class Volume:
-    series_id: int
+    project_id: int
     name: str
     id: int | None = None
-    # Bumped on every palette mutation. Lets the incremental propagation in
-    # Tier 2 (§6) find stale panels without re-running the volume.
-    palette_revision: int = 0
 
 
 @dataclass
@@ -65,6 +89,14 @@ class Page:
     id: int | None = None
     width: int = 0
     height: int = 0
+    # Forward-only pipeline position (D-06/D-07). Defaults to PANELS, not
+    # IMPORT: a successful upload auto-advances the page past the import
+    # boundary, because there is nothing there for the artist to review yet.
+    stage: PipelineStage = PipelineStage.PANELS
+    # The artist's own filename, display-only. The on-disk source_path is
+    # always server-generated (RESEARCH.md Pitfall 3); the two must never be
+    # the same string.
+    original_name: str = ""
 
 
 @dataclass
@@ -88,7 +120,7 @@ class Panel:
 class Entity:
     """Character, prop, or recurring background. §3."""
 
-    volume_id: int
+    project_id: int
     name: str
     id: int | None = None
     reference_images: list[str] = field(default_factory=list)
@@ -96,12 +128,12 @@ class Entity:
 
 @dataclass
 class PaletteEntry:
-    """Volume-scoped, versioned, editable. §1.5.
+    """Project-scoped, versioned, editable. §1.5.
 
     ``rgb`` is the single place a colour value lives in the whole system.
     """
 
-    volume_id: int
+    project_id: int
     rgb: tuple[int, int, int]
     label: str  # "Kaito / hair / base"
     id: int | None = None
