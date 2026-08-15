@@ -118,6 +118,13 @@ def update_palette_entry(
         store.update_palette_rgb(entry_id, body.rgb)
 
     updated = store.palette_entry_by_id(entry_id)
+    if updated is None:
+        # The row can disappear between the existence check above and this
+        # re-read (a concurrent DELETE). Without this the None flows into
+        # _entry_response as an AttributeError -> 500, when the route
+        # already has the right copy for exactly this situation.
+        raise HTTPException(status_code=404, detail=ENTRY_NOT_FOUND_DETAIL)
+
     pages_affected = len(store.pages_affected_by(entry_id))
     return PaletteUpdateResponse(
         entry=_entry_response(updated), pages_affected=pages_affected

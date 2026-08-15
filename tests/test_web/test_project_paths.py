@@ -155,3 +155,59 @@ def test_create_project_folder_refuses_traversal_directly(tmp_path):
 
     assert not (tmp_path / "secret").exists()
     assert UNSAFE_NAME_DETAIL  # the route's copy for this case exists
+
+
+# ---- WR-02: the recents index must never break the entry screen ---------
+
+
+CORRUPT_RECENTS = [
+    pytest.param('[{"name": "K", "path": "/x", "opened_at": "t", "extra": 1}]',
+                 id="entry-with-an-unknown-key"),
+    pytest.param("5", id="top-level-not-a-list"),
+    pytest.param('{"name": "K"}', id="top-level-an-object"),
+    pytest.param('[null, 3, "text"]', id="non-dict-entries"),
+    pytest.param('[{"name": 1, "path": 2, "opened_at": 3}]', id="non-string-values"),
+    pytest.param("not json at all", id="not-json"),
+    pytest.param("", id="empty-file"),
+]
+
+
+@pytest.mark.parametrize("content", CORRUPT_RECENTS)
+def test_corrupt_recents_never_breaks_the_entry_screen(blank_client, content):
+    """WR-02: ``GET /api/projects/recent`` degrades to ``[]``, never 500.
+
+    This is the first request the project picker makes, and the app has no
+    in-app way to repair the file — a 500 here is a dead entry screen. The
+    ``**item`` construction used to raise ``TypeError`` on any entry with
+    an extra key, and iterating a non-list top level raised too; neither is
+    a ``json.JSONDecodeError``, so neither was caught.
+    """
+    appconfig.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    appconfig.RECENTS_PATH.write_text(content, encoding="utf-8")
+
+    response = blank_client.get("/api/projects/recent")
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_a_forward_compatible_entry_is_still_read(blank_client, workspace):
+    """An unknown key is ignored, not fatal — the entry still loads.
+
+    Building from named keys rather than ``**item`` is what buys this: a
+    ``recent.json`` written by a later version stays readable by this one.
+    """
+    created = blank_client.post(
+        "/api/projects", json={"name": "Kaito", "parent_dir": str(workspace)}
+    ).json()
+
+    import json
+
+    raw = json.loads(appconfig.RECENTS_PATH.read_text(encoding="utf-8"))
+    raw[0]["colour_profile"] = "a field this version has never heard of"
+    appconfig.RECENTS_PATH.write_text(json.dumps(raw), encoding="utf-8")
+
+    response = blank_client.get("/api/projects/recent")
+
+    assert response.status_code == 200
+    assert [r["path"] for r in response.json()] == [created["path"]]

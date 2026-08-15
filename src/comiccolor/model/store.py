@@ -421,7 +421,26 @@ class Store:
     def delete_palette_entry(self, entry_id: int) -> None:
         """Relies on the existing ``region.palette_entry_id ...
         ON DELETE SET NULL`` so deleting an entry orphans its regions rather
-        than corrupting them."""
+        than corrupting them.
+
+        Bumps ``project.palette_revision``, like ``add_palette_entry`` and
+        ``update_palette_rgb`` and unlike ``update_palette_label`` (which
+        deliberately does not — a rename changes no colour). A delete very
+        much changes colour state: every region that referenced this entry
+        becomes unpainted. ``entities.py`` documents the field as bumped on
+        every palette mutation with "a renderer caches against this", so
+        skipping it here would serve stale pixels after a delete — the
+        exact §6 incremental-propagation case the field exists for.
+
+        The bump runs *before* the delete: it reads ``project_id`` off the
+        row being deleted, so afterwards there is nothing left to read it
+        from.
+        """
+        self._execute(
+            "UPDATE project SET palette_revision = palette_revision + 1 WHERE id ="
+            " (SELECT project_id FROM palette_entry WHERE id = ?)",
+            (entry_id,),
+        )
         self._execute("DELETE FROM palette_entry WHERE id = ?", (entry_id,))
         self.conn.commit()
 

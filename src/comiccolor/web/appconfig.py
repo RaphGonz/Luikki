@@ -112,6 +112,16 @@ def read_recents() -> list[RecentProject]:
     be authoritative over the folder — every entry whose folder no longer
     passes :func:`is_project_folder` is silently dropped here, which is
     what enforces that rule structurally rather than by review.
+
+    "Tolerant" has to mean tolerant of *anything*, because this backs the
+    very first request the project picker makes: if this raises, the
+    artist's entry screen is a 500 with no in-app way out. Malformed JSON
+    is not the only shape corruption takes — a top level that isn't a list,
+    or an entry carrying a key this version doesn't know about, both used
+    to escape as ``TypeError``. Entries are built from named keys rather
+    than ``**item`` so an unknown key is ignored instead of fatal, which
+    also makes the file forward-compatible with any field a later version
+    adds.
     """
     if not RECENTS_PATH.exists():
         return []
@@ -119,20 +129,48 @@ def read_recents() -> list[RecentProject]:
         raw = json.loads(RECENTS_PATH.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return []
-    entries = [RecentProject(**item) for item in raw if _looks_like_recent(item)]
+    if not isinstance(raw, list):
+        return []
+    entries = [
+        RecentProject(
+            name=item["name"], path=item["path"], opened_at=item["opened_at"]
+        )
+        for item in raw
+        if _looks_like_recent(item)
+    ]
     return [entry for entry in entries if is_project_folder(Path(entry.path))]
 
 
 def _looks_like_recent(item: object) -> bool:
-    return isinstance(item, dict) and {"name", "path", "opened_at"} <= item.keys()
+    return (
+        isinstance(item, dict)
+        and {"name", "path", "opened_at"} <= item.keys()
+        and all(isinstance(item[k], str) for k in ("name", "path", "opened_at"))
+    )
+
+
+def _write_recents(entries: list[RecentProject]) -> None:
+    """Replace ``recent.json`` atomically.
+
+    Temp file in the same directory, then ``os.replace``, so a crash
+    mid-write never leaves the index truncated or corrupt. Extracted rather
+    than inlined at both call sites: any change to this — an ``fsync``, a
+    cross-filesystem fallback — applied to only one caller would silently
+    regress the other.
+    """
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    tmp_path = RECENTS_PATH.with_suffix(".json.tmp")
+    tmp_path.write_text(
+        json.dumps([asdict(e) for e in entries], indent=2), encoding="utf-8"
+    )
+    os.replace(tmp_path, RECENTS_PATH)
 
 
 def record_recent(path: Path, name: str) -> None:
     """Upsert ``path`` to the head of the recent-projects list.
 
     Deduped by resolved path, capped at :data:`MAX_RECENTS`, written
-    atomically (temp file in the same directory, then replaced) so a crash
-    mid-write never leaves ``recent.json`` truncated or corrupt.
+    atomically by :func:`_write_recents`.
     """
     from datetime import datetime, timezone
 
@@ -145,12 +183,7 @@ def record_recent(path: Path, name: str) -> None:
     ] + existing
     entries = entries[:MAX_RECENTS]
 
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    tmp_path = RECENTS_PATH.with_suffix(".json.tmp")
-    tmp_path.write_text(
-        json.dumps([asdict(e) for e in entries], indent=2), encoding="utf-8"
-    )
-    os.replace(tmp_path, RECENTS_PATH)
+    _write_recents(entries)
 
 
 def forget_recent(path: Path) -> None:
@@ -158,9 +191,4 @@ def forget_recent(path: Path) -> None:
     resolved = str(path.resolve())
     remaining = [e for e in read_recents() if str(Path(e.path).resolve()) != resolved]
 
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    tmp_path = RECENTS_PATH.with_suffix(".json.tmp")
-    tmp_path.write_text(
-        json.dumps([asdict(e) for e in remaining], indent=2), encoding="utf-8"
-    )
-    os.replace(tmp_path, RECENTS_PATH)
+    _write_recents(remaining)

@@ -556,3 +556,35 @@ def test_a_degenerate_sheet_leaves_no_unreachable_file(client, make_png):
     assert resp.status_code == 400
     assert "sheet_id" not in resp.json()
     assert list(pending_dir.iterdir()) == []
+
+
+def test_deleting_a_colour_bumps_the_palette_revision(client, project_dir):
+    """WR-08: a delete is a palette mutation, so the revision must move.
+
+    ``add_palette_entry`` and ``update_palette_rgb`` both bump it;
+    ``update_palette_label`` deliberately does not, because a rename
+    changes no colour. A delete changes colour state materially — every
+    region that referenced the entry becomes unpainted via ``ON DELETE SET
+    NULL``. ``entities.py`` documents the field as "bumped on every palette
+    mutation ... a renderer caches against this", so leaving it unchanged
+    here would serve stale pixels after a delete.
+    """
+    from comiccolor.model import Store
+    from comiccolor.web.appconfig import PROJECT_DB_NAME
+
+    entry = client.post(
+        "/api/palette", json={"rgb": [1, 2, 3], "label": "hair"}
+    ).json()
+
+    with Store(project_dir / PROJECT_DB_NAME) as store:
+        before = store.the_project().palette_revision
+
+    # A rename in between must not move it — the contrast is the point.
+    client.patch(f"/api/palette/{entry['id']}", json={"label": "hair base"})
+    with Store(project_dir / PROJECT_DB_NAME) as store:
+        assert store.the_project().palette_revision == before
+
+    assert client.delete(f"/api/palette/{entry['id']}").status_code == 204
+
+    with Store(project_dir / PROJECT_DB_NAME) as store:
+        assert store.the_project().palette_revision == before + 1
