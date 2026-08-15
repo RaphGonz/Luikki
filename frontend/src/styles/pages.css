@@ -1,0 +1,68 @@
+/*
+ * Page grid, upload drop, stage strip and page detail rules
+ * (01-UI-SPEC.md §1, §7, §8). Every value below comes from tokens.css -- no
+ * literal colour, spacing or font size lives in this file, matching the
+ * rest of the shell's stylesheets.
+ */
+
+/* ---- Stage strip (§1: compact 4px under each thumbnail, full 24px + labels in the toolbar) ---- */
+
+.stage-strip {
+  display: flex;
+  gap: 2px;
+  width: 100%;
+}
+
+.stage-strip--full {
+  gap: var(--space-xs);
+}
+
+.stage-segment {
+  flex: 1;
+  min-width: 0;
+}
+
+.stage-strip--full .stage-segment {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.stage-segment-fill {
+  width: 100%;
+  height: 4px;
+  background: var(--color-border);
+  border-radius: 1px;
+  box-sizing: border-box;
+}
+
+.stage-strip--full .stage-segment-fill {
+  height: 24px;
+}
+
+.stage-segment--complete .stage-segment-fill {
+  background: var(--color-accent);
+}
+
+.stage-segment--current .stage-segment-fill {
+  background: var(--color-surface-secondary);
+  border: 1px solid var(--color-accent);
+}
+
+.stage-segment--not-reached .stage-segment-fill {
+  background: var(--color-border);
+}
+
+.stage-segment-label {
+  font-size: var(--font-size-label);
+  line-height: var(--line-height-label);
+  letter-spacing: var(--letter-spacing-label);
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+.stage-segment--complete .stage-segment-label,
+.stage-segment--current .stage-segment-label {
+  color: var(--color-text-primary);
+}
