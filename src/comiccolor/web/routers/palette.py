@@ -10,15 +10,21 @@ what makes the palette accumulate across every volume in the project.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from pathlib import Path
 
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
+
+from ...colour import extract_palette
 from ...model import PaletteEntry, Project, Store
-from ..deps import get_project, get_store
+from .. import uploads
+from ..appconfig import REFERENCES_DIR
+from ..deps import get_current_project_path, get_project, get_store
 from ..schemas import (
     PaletteEntryCreateRequest,
     PaletteEntryResponse,
     PaletteEntryUpdateRequest,
     PaletteUpdateResponse,
+    SwatchExtractResponse,
 )
 
 router = APIRouter()
@@ -132,3 +138,63 @@ def delete_palette_entry(entry_id: int, store: Store = Depends(get_store)) -> No
     if entry is None:
         raise HTTPException(status_code=404, detail=ENTRY_NOT_FOUND_DETAIL)
     store.delete_palette_entry(entry_id)
+
+
+@router.post(
+    "/swatch",
+    response_model=SwatchExtractResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def upload_swatch(
+    file: UploadFile,
+    store: Store = Depends(get_store),
+    project: Project = Depends(get_project),
+    project_path: Path = Depends(get_current_project_path),
+) -> SwatchExtractResponse:
+    """PAL-01: a swatch image becomes real, persisted, auto-named entries.
+
+    Unlike the character-sheet path (plan 01-10), which returns ephemeral
+    proposals for individual accept or reject, this route persists every
+    extracted colour immediately. That asymmetry is deliberate and comes
+    from the requirements themselves: PAL-01 says the app *creates* entries
+    from a swatch, while PAL-02 says the app *proposes* entries from a
+    character sheet. The two paths are not the same mechanic and must not
+    be unified later.
+
+    The swatch path never runs the character sheet's ink/paper pre-pass —
+    an artist's deliberate black or white chip on a swatch is real data,
+    not noise to filter (D-14 scopes that pre-pass to the sheet path
+    only), so the extractor is called with its default behaviour.
+
+    Entries are auto-named ``Colour 1..N``, continuing from the highest
+    existing auto-name in the project so a second upload never collides
+    with the first (D-16) — no naming prompt ever blocks a working
+    palette.
+
+    Deliberately a sync ``def``, not ``async def``: FastAPI runs a sync
+    path operation and every sync dependency it needs (``get_store``'s
+    per-request sqlite connection) on the same thread-pool thread, which
+    is what ``Store``'s "one Store per thread" contract requires. An
+    ``async def`` here would run on the event loop thread while
+    ``get_store`` still ran in the thread pool, handing the connection to
+    a caller on the wrong thread.
+    """
+    data = file.file.read()
+    image = uploads.decode_image(data)
+    extracted = extract_palette(image)
+
+    uploads.save_upload(data, project_path / REFERENCES_DIR, project_path)
+
+    existing = store.palette_for_project(project.id)
+    next_number = _next_colour_number(existing)
+    created = [
+        store.add_palette_entry(
+            PaletteEntry(
+                project_id=project.id,
+                rgb=colour.rgb,
+                label=f"{AUTO_NAME_PREFIX}{next_number + offset}",
+            )
+        )
+        for offset, colour in enumerate(extracted)
+    ]
+    return SwatchExtractResponse(entries=[_entry_response(e) for e in created])
