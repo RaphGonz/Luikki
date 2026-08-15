@@ -1,28 +1,37 @@
 /**
- * The palette screen (PAL-01, PAL-03, PAL-04): swatch upload and its
- * extraction result, plus hand create/rename/recolour/delete -- all on
- * one view, because 01-UI-SPEC.md's Phase-Specific Interaction Contracts
- * §4 is emphatic there is no separate "review extraction" screen distinct
- * from "the palette" (D-15). The swatch grid at full 120x120 is the
+ * The palette screen (PAL-01, PAL-02, PAL-03, PAL-04): swatch upload and
+ * its extraction result, hand create/rename/recolour/delete, and the
+ * character-sheet proposal review -- all on one view, because
+ * 01-UI-SPEC.md's Phase-Specific Interaction Contracts §4 is emphatic
+ * there is no separate "review extraction" screen distinct from "the
+ * palette" (D-15). §5 layers the sheet proposals onto the same screen as
+ * visually distinct dashed cards. The swatch grid at full 120x120 is the
  * screen's one visual anchor (§8) -- nothing else here carries a
- * saturated colour except the swatches themselves and the single accent
- * CTA. Plan 01-13's Task 2 layers the character-sheet proposal review
- * (PAL-02) onto this same view next.
+ * saturated colour except the swatches/proposal chips and the single
+ * accent CTA.
  *
  * T-01-XSS: every artist-supplied or server-supplied string (labels,
- * error details) is set via `.textContent`/`.value`; raw-markup insertion
- * is grep-asserted absent from this file.
+ * character names, error details) is set via `.textContent`/`.value`;
+ * raw-markup insertion is grep-asserted absent from this file.
  */
 
 import "../styles/palette.css";
 
 import { api, ApiError } from "../api/client";
-import type { PaletteEntryDto, RGBTuple } from "../api/types";
+import type { PaletteEntryDto, ProposalDto, RGBTuple } from "../api/types";
 import { showToast } from "../components/toast";
 import {
   renderSwatchCard,
   type SwatchCardHandlers,
 } from "../components/swatchCard";
+import {
+  acceptPayload,
+  entryLabel,
+  ProposalValidationError,
+  renderProposalCard,
+  type ProposalCardHandlers,
+  type ProposalSelection,
+} from "../components/proposalCard";
 
 /**
  * Pure: the Copywriting Contract's "Updated on {N} page{s}." toast copy
@@ -44,6 +53,16 @@ function hexToRgb(hex: string): RGBTuple {
     parseInt(hex.slice(3, 5), 16),
     parseInt(hex.slice(5, 7), 16),
   ];
+}
+
+function rgbToHex([r, g, b]: RGBTuple): string {
+  const channel = (n: number) => n.toString(16).padStart(2, "0");
+  return `#${channel(r)}${channel(g)}${channel(b)}`;
+}
+
+interface ProposalUIState {
+  selected: boolean;
+  part: string;
 }
 
 export function renderPalette(mount: HTMLElement): () => void {
@@ -269,6 +288,266 @@ export function renderPalette(mount: HTMLElement): () => void {
     } catch (err) {
       if (err instanceof ApiError) showPaletteError(err.detail);
     }
+  }
+
+  // ---- Character-sheet proposals (PAL-02) --------------------------------
+
+  let sheetId: string | null = null;
+  let proposals: ProposalDto[] = [];
+  const proposalState = new Map<number, ProposalUIState>();
+  const previewSpans = new Map<number, HTMLElement>();
+
+  const sheetError = document.createElement("div");
+  sheetError.className = "palette-error";
+  sheetError.hidden = true;
+
+  const sheetDrop = document.createElement("div");
+  sheetDrop.className = "palette-dropzone";
+  const sheetDropText = document.createElement("p");
+  sheetDropText.textContent =
+    "Drop a character sheet — we'll propose colours from it.";
+  const sheetInput = document.createElement("input");
+  sheetInput.type = "file";
+  sheetInput.accept = "image/*";
+  sheetInput.className = "palette-dropzone-input";
+  sheetDrop.append(sheetDropText, sheetInput);
+
+  const sheetImage = document.createElement("img");
+  sheetImage.className = "palette-sheet-image";
+  sheetImage.alt = "Uploaded character sheet";
+  sheetImage.hidden = true;
+
+  const discardSheetButton = document.createElement("button");
+  discardSheetButton.type = "button";
+  discardSheetButton.className = "palette-discard-sheet destructive";
+  discardSheetButton.textContent = "Discard sheet";
+  discardSheetButton.hidden = true;
+
+  const proposalGrid = document.createElement("div");
+  proposalGrid.className = "proposal-grid";
+
+  const acceptForm = document.createElement("div");
+  acceptForm.className = "accept-form";
+  acceptForm.hidden = true;
+
+  const characterNameInput = document.createElement("input");
+  characterNameInput.type = "text";
+  characterNameInput.className = "accept-form-character";
+  characterNameInput.placeholder = "e.g. Kaito";
+  characterNameInput.setAttribute("aria-label", "Character name");
+
+  const acceptFormEntries = document.createElement("div");
+  acceptFormEntries.className = "accept-form-entries";
+
+  const acceptSubmit = document.createElement("button");
+  acceptSubmit.type = "button";
+  acceptSubmit.className = "accept-form-submit accent";
+  acceptSubmit.textContent = "Accept";
+
+  acceptForm.append(characterNameInput, acceptFormEntries, acceptSubmit);
+
+  root.append(
+    sheetError,
+    sheetDrop,
+    sheetImage,
+    discardSheetButton,
+    proposalGrid,
+    acceptForm,
+  );
+
+  function showSheetError(detail: string): void {
+    sheetError.textContent = detail;
+    sheetError.hidden = false;
+  }
+
+  function clearSheetError(): void {
+    sheetError.hidden = true;
+    sheetError.textContent = "";
+  }
+
+  sheetInput.addEventListener("change", () => {
+    const file = sheetInput.files?.[0];
+    if (file) void uploadSheet(file);
+    sheetInput.value = "";
+  });
+  sheetDrop.addEventListener("dragover", (event) => event.preventDefault());
+  sheetDrop.addEventListener("drop", (event) => {
+    event.preventDefault();
+    const file = event.dataTransfer?.files?.[0];
+    if (file) void uploadSheet(file);
+  });
+
+  async function uploadSheet(file: File): Promise<void> {
+    try {
+      const result = await api.references.uploadSheet(file);
+      sheetId = result.sheet_id;
+      proposals = result.proposals;
+      proposalState.clear();
+      for (const proposal of proposals) {
+        proposalState.set(proposal.index, { selected: false, part: "" });
+      }
+      sheetImage.src = result.image_url;
+      sheetImage.hidden = false;
+      discardSheetButton.hidden = false;
+      renderProposalGrid();
+      updateAcceptForm();
+      clearSheetError();
+    } catch (err) {
+      if (err instanceof ApiError) showSheetError(err.detail);
+    }
+  }
+
+  const proposalHandlers: ProposalCardHandlers = {
+    onToggleSelect: (index, selected) => {
+      const state = proposalState.get(index);
+      if (state) state.selected = selected;
+      updateAcceptForm();
+    },
+    onAccept: (index) => {
+      const state = proposalState.get(index);
+      if (state) state.selected = true;
+      renderProposalGrid();
+      updateAcceptForm();
+    },
+    onReject: (index) => {
+      proposals = proposals.filter((p) => p.index !== index);
+      proposalState.delete(index);
+      renderProposalGrid();
+      updateAcceptForm();
+    },
+  };
+
+  function renderProposalGrid(): void {
+    proposalGrid.replaceChildren();
+    for (const proposal of proposals) {
+      const selected = proposalState.get(proposal.index)?.selected ?? false;
+      renderProposalCard(proposalGrid, proposal, selected, proposalHandlers);
+    }
+  }
+
+  function refreshPreviews(): void {
+    for (const [index, span] of previewSpans) {
+      const state = proposalState.get(index);
+      span.textContent = entryLabel(characterNameInput.value, state?.part ?? "");
+    }
+  }
+  characterNameInput.addEventListener("input", refreshPreviews);
+
+  function updateAcceptForm(): void {
+    const selected = proposals.filter(
+      (p) => proposalState.get(p.index)?.selected,
+    );
+    if (selected.length === 0) {
+      acceptForm.hidden = true;
+      acceptFormEntries.replaceChildren();
+      previewSpans.clear();
+      return;
+    }
+
+    acceptForm.hidden = false;
+    acceptFormEntries.replaceChildren();
+    previewSpans.clear();
+
+    for (const proposal of selected) {
+      const state = proposalState.get(proposal.index);
+      if (!state) continue;
+
+      const row = document.createElement("div");
+      row.className = "accept-form-row";
+
+      const swatch = document.createElement("span");
+      swatch.className = "accept-form-row-colour";
+      swatch.style.background = rgbToHex(proposal.rgb);
+
+      const partInput = document.createElement("input");
+      partInput.type = "text";
+      partInput.placeholder = "e.g. hair, base, eyes";
+      partInput.setAttribute(
+        "aria-label",
+        `Part for proposal ${proposal.index + 1}`,
+      );
+      partInput.value = state.part;
+      partInput.addEventListener("input", () => {
+        state.part = partInput.value;
+        preview.textContent = entryLabel(characterNameInput.value, state.part);
+      });
+
+      const preview = document.createElement("span");
+      preview.className = "accept-form-row-preview";
+      preview.textContent = entryLabel(characterNameInput.value, state.part);
+      previewSpans.set(proposal.index, preview);
+
+      row.append(swatch, partInput, preview);
+      acceptFormEntries.append(row);
+    }
+  }
+
+  acceptSubmit.addEventListener("click", () => void submitAccept());
+
+  async function submitAccept(): Promise<void> {
+    if (!sheetId) return;
+
+    const selection: ProposalSelection = {
+      characterName: characterNameInput.value,
+      entries: proposals.map((p) => {
+        const state = proposalState.get(p.index);
+        return {
+          index: p.index,
+          selected: state?.selected ?? false,
+          part: state?.part ?? "",
+        };
+      }),
+    };
+
+    let payload;
+    try {
+      payload = acceptPayload(selection);
+    } catch (err) {
+      if (err instanceof ProposalValidationError) showSheetError(err.message);
+      return;
+    }
+
+    try {
+      const result = await api.references.accept(
+        sheetId,
+        payload.character_name,
+        payload.items,
+      );
+      for (const entry of result.entries) {
+        entries.push(entry);
+        renderSwatchCard(grid, entry, swatchHandlers);
+      }
+      const acceptedIndices = new Set(payload.items.map((item) => item.index));
+      proposals = proposals.filter((p) => !acceptedIndices.has(p.index));
+      for (const index of acceptedIndices) proposalState.delete(index);
+      renderProposalGrid();
+      updateAcceptForm();
+      clearSheetError();
+    } catch (err) {
+      // The artist's typed character name and parts stay in the fields --
+      // acceptForm is not rebuilt on failure (UI-SPEC §7).
+      if (err instanceof ApiError) showSheetError(err.detail);
+    }
+  }
+
+  discardSheetButton.addEventListener("click", () => void discardSheet());
+
+  async function discardSheet(): Promise<void> {
+    if (!sheetId) return;
+    try {
+      await api.references.discard(sheetId);
+    } catch (err) {
+      if (err instanceof ApiError) showSheetError(err.detail);
+      return;
+    }
+    sheetId = null;
+    proposals = [];
+    proposalState.clear();
+    sheetImage.hidden = true;
+    discardSheetButton.hidden = true;
+    renderProposalGrid();
+    updateAcceptForm();
+    clearSheetError();
   }
 
   void loadPalette();

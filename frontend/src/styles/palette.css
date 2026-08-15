@@ -164,3 +164,141 @@
   padding: var(--space-xs) var(--space-sm);
   cursor: pointer;
 }
+
+/* ---- Character-sheet proposals (§5: dashed, provisional) --------------- */
+
+.palette-sheet-image {
+  max-width: 240px;
+  max-height: 240px;
+  display: block;
+  margin-bottom: var(--space-md);
+  border: 1px solid var(--color-border);
+}
+
+.palette-discard-sheet.destructive {
+  background: transparent;
+  border: 1px solid var(--color-destructive);
+  color: var(--color-destructive);
+  font-family: var(--font-family);
+  font-size: var(--font-size-body);
+  padding: var(--space-xs) var(--space-sm);
+  cursor: pointer;
+  margin-bottom: var(--space-lg);
+}
+
+.proposal-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, var(--swatch-cell));
+  gap: var(--space-md);
+  margin-bottom: var(--space-lg);
+}
+
+.proposal-card {
+  width: var(--swatch-cell);
+  height: var(--swatch-cell);
+  display: flex;
+  flex-direction: column;
+  border: 1px dashed var(--color-border);
+  position: relative;
+}
+
+.proposal-card--selected {
+  border-color: var(--color-accent);
+}
+
+.proposal-card__select {
+  position: absolute;
+  top: var(--space-xs);
+  left: var(--space-xs);
+}
+
+.proposal-card__colour {
+  flex: 1;
+}
+
+.proposal-card__controls {
+  display: flex;
+  height: var(--swatch-label);
+  background: var(--color-surface-secondary);
+}
+
+.proposal-card__accept.accent,
+.proposal-card__reject.destructive {
+  flex: 1;
+  width: var(--icon-hit);
+  height: var(--icon-hit);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: var(--font-size-body);
+}
+
+.proposal-card__accept.accent {
+  color: var(--color-accent);
+}
+
+.proposal-card__reject.destructive {
+  color: var(--color-destructive);
+}
+
+/* ---- Accept form (§5: inline, not a page navigation) -------------------- */
+
+.accept-form {
+  background: var(--color-surface-secondary);
+  border: 1px solid var(--color-border);
+  padding: var(--space-md);
+  margin-bottom: var(--space-lg);
+}
+
+.accept-form-character {
+  display: block;
+  width: 100%;
+  margin-bottom: var(--space-md);
+  padding: var(--space-sm);
+  background: var(--color-surface-dominant);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-primary);
+  font-family: var(--font-family);
+  font-size: var(--font-size-body);
+}
+
+.accept-form-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-sm);
+}
+
+.accept-form-row-colour {
+  width: var(--space-lg);
+  height: var(--space-lg);
+  flex: none;
+  border: 1px solid var(--color-border);
+}
+
+.accept-form-row input {
+  flex: none;
+  width: 200px;
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--color-surface-dominant);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-primary);
+  font-family: var(--font-family);
+  font-size: var(--font-size-body);
+}
+
+.accept-form-row-preview {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-label);
+}
+
+.accept-form-submit.accent {
+  background: var(--color-accent);
+  border: none;
+  color: var(--color-surface-dominant);
+  font-family: var(--font-family);
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-semibold);
+  padding: var(--space-sm) var(--space-md);
+  cursor: pointer;
+}
