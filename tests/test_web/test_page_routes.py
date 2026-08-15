@@ -9,53 +9,208 @@ HTTP. RESEARCH.md Pitfall 3 (server-generated filenames — never trust
 ``UploadFile.filename`` as a path component) and Pitfall 4 (malformed
 uploads get a structured 4xx, never a bare 500) are both named here
 because both are upload-handling mistakes this phase's threat model
-specifically calls out. These stubs are Wave 0 scaffolding for plan
-01-08.
+specifically calls out.
 """
 
-import pytest
+import io
+
+from PIL import Image
+
+from comiccolor.web.uploads import UPLOAD_ERROR_DETAIL
 
 
-@pytest.mark.skip(reason="Wave 0 scaffold — filled by plan 01-08")
-def test_upload_stores_a_server_generated_filename():
-    """PROJ-02, RESEARCH.md Pitfall 3: every uploaded page lands on disk
-    under a server-generated filename; the artist's own filename is kept
-    for display only, never as a path component."""
-    ...
+def _upload_png(client, volume_id, filename, width=8, height=8, colour=(9, 9, 9)):
+    buf = io.BytesIO()
+    Image.new("RGB", (width, height), colour).save(buf, "PNG")
+    return client.post(
+        f"/api/pages/?volume_id={volume_id}",
+        files=[("files", (filename, buf.getvalue(), "image/png"))],
+    )
 
 
-@pytest.mark.skip(reason="Wave 0 scaffold — filled by plan 01-08")
-def test_upload_rejects_a_non_image_with_4xx():
-    """PROJ-02, RESEARCH.md Pitfall 4: a file that is not a readable
-    image is rejected with a 400 carrying the UI-SPEC error sentence,
-    never a bare 500."""
-    ...
+def _make_volume(client, name="Chapter 1"):
+    return client.post("/api/volumes/", json={"name": name}).json()["id"]
 
 
-@pytest.mark.skip(reason="Wave 0 scaffold — filled by plan 01-08")
-def test_stage_field_is_panels_after_upload():
-    """PROJ-04, D-07: every page reports a single stage value, which is
-    ``panels`` the instant its upload completes."""
-    ...
+def test_upload_stores_a_server_generated_filename(client, project_dir):
+    """PROJ-02, RESEARCH.md Pitfall 3 (T-01-PATH): every uploaded page lands
+    on disk under a server-generated filename; the artist's own filename is
+    kept for display only, never as a path component."""
+    volume_id = _make_volume(client)
+
+    response = _upload_png(client, volume_id, "../../evil.png")
+
+    assert response.status_code == 201
+    body = response.json()
+    accepted = body["accepted"][0]
+    assert accepted["original_name"] == "evil.png"
+
+    pages_dir = project_dir / "pages"
+    written = list(pages_dir.iterdir())
+    assert len(written) == 1
+    assert written[0].name != "evil.png"
+    assert written[0].suffix == ".png"
+    # UUID hex (32 lowercase hex chars) plus the extension, no path segments.
+    stem = written[0].stem
+    assert len(stem) == 32
+    assert all(c in "0123456789abcdef" for c in stem)
+    assert "." not in stem
+
+    # Nothing was written outside the project's pages/ directory.
+    assert not (project_dir / "evil.png").exists()
+    assert not (project_dir.parent / "evil.png").exists()
 
 
-@pytest.mark.skip(reason="Wave 0 scaffold — filled by plan 01-08")
-def test_adding_pages_later_preserves_existing_pages():
-    """PROJ-02: uploading a second batch of pages to a volume leaves
-    every page from the first batch exactly where it was."""
-    ...
+def test_upload_rejects_a_non_image_with_4xx(client):
+    """PROJ-02, RESEARCH.md Pitfall 4 (T-01-IMG): a file that is not a
+    readable image is rejected with a 400 carrying the UI-SPEC error
+    sentence, never a bare 500."""
+    volume_id = _make_volume(client)
+
+    response = client.post(
+        f"/api/pages/?volume_id={volume_id}",
+        files=[("files", ("notes.png", b"this is not an image", "image/png"))],
+    )
+
+    assert response.status_code == 400
+    body = response.json()
+    assert body["rejected"][0]["detail"] == UPLOAD_ERROR_DETAIL
 
 
-@pytest.mark.skip(reason="Wave 0 scaffold — filled by plan 01-08")
-def test_volume_crud_round_trip():
-    """D-03: an artist creates, renames and deletes volumes and files
-    pages into them."""
-    ...
+def test_stage_field_is_panels_after_upload(client):
+    """PROJ-04, D-07, D-11: every page reports a single stage value, which
+    is ``panels`` the instant its upload completes."""
+    volume_id = _make_volume(client)
+
+    upload = _upload_png(client, volume_id, "page-01.png")
+    accepted = upload.json()["accepted"][0]
+    assert accepted["stage"] == "panels"
+
+    detail = client.get(f"/api/pages/{accepted['id']}")
+    assert detail.status_code == 200
+    assert detail.json()["stage"] == "panels"
 
 
-@pytest.mark.skip(reason="Wave 0 scaffold — filled by plan 01-08")
-def test_pipeline_stages_endpoint_lists_eight_stages():
-    """PROJ-04, D-11: the eight-stage chain and each stage's runner
-    availability are served from the registry, never hardcoded in the
-    frontend."""
-    ...
+def test_adding_pages_later_preserves_existing_pages(client):
+    """PROJ-02: uploading a second batch of pages to a volume leaves every
+    page from the first batch exactly where it was."""
+    volume_id = _make_volume(client)
+
+    first_batch = client.post(
+        f"/api/pages/?volume_id={volume_id}",
+        files=[
+            ("files", ("p1.png", _png_bytes(), "image/png")),
+            ("files", ("p2.png", _png_bytes(), "image/png")),
+        ],
+    ).json()["accepted"]
+
+    second_batch = client.post(
+        f"/api/pages/?volume_id={volume_id}",
+        files=[
+            ("files", ("p3.png", _png_bytes(), "image/png")),
+            ("files", ("p4.png", _png_bytes(), "image/png")),
+        ],
+    ).json()["accepted"]
+
+    listing = client.get(f"/api/pages/?volume_id={volume_id}").json()
+    assert len(listing) == 4
+    assert [p["index"] for p in listing] == [0, 1, 2, 3]
+
+    for original, listed in zip(first_batch + second_batch, listing):
+        assert original["id"] == listed["id"]
+        assert original["index"] == listed["index"]
+        assert original["original_name"] == listed["original_name"]
+
+
+def test_volume_crud_round_trip(client):
+    """D-03: an artist creates, renames and deletes volumes and files pages
+    into them."""
+    create = client.post("/api/volumes/", json={"name": "Chapter 1"})
+    assert create.status_code == 201
+    volume_id = create.json()["id"]
+
+    duplicate = client.post("/api/volumes/", json={"name": "Chapter 1"})
+    assert duplicate.status_code == 409
+
+    rename = client.patch(f"/api/volumes/{volume_id}", json={"name": "Chapter 1 (final)"})
+    assert rename.status_code == 200
+    assert rename.json()["name"] == "Chapter 1 (final)"
+
+    listing = client.get("/api/volumes/").json()
+    assert any(v["name"] == "Chapter 1 (final)" for v in listing)
+
+    delete = client.delete(f"/api/volumes/{volume_id}")
+    assert delete.status_code == 204
+
+    listing_after = client.get("/api/volumes/").json()
+    assert all(v["id"] != volume_id for v in listing_after)
+
+
+def test_pipeline_stages_endpoint_lists_eight_stages(blank_client):
+    """PROJ-04, D-11, RESEARCH.md § Architecture Patterns Pattern 5: the
+    eight-stage chain and each stage's runner availability are served from
+    the registry, never hardcoded in the frontend, and the endpoint answers
+    with no project open."""
+    response = blank_client.get("/api/pipeline/stages")
+
+    assert response.status_code == 200
+    stages = response.json()
+    assert [s["name"] for s in stages] == [
+        "import",
+        "panels",
+        "protected",
+        "zones",
+        "propose",
+        "snap",
+        "review",
+        "export",
+    ]
+    assert sum(1 for s in stages if s["has_runner"]) == 1
+    assert stages[0]["has_runner"] is True
+
+
+def test_a_bad_file_does_not_lose_the_good_ones(client):
+    """PROJ-02, RESEARCH.md Pitfall 4: a mixed batch returns both accepted
+    and rejected populated, and the good page is persisted."""
+    volume_id = _make_volume(client)
+
+    response = client.post(
+        f"/api/pages/?volume_id={volume_id}",
+        files=[
+            ("files", ("good.png", _png_bytes(), "image/png")),
+            ("files", ("bad.png", b"not an image", "image/png")),
+        ],
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert len(body["accepted"]) == 1
+    assert len(body["rejected"]) == 1
+
+    listing = client.get(f"/api/pages/?volume_id={volume_id}").json()
+    assert len(listing) == 1
+    assert listing[0]["id"] == body["accepted"][0]["id"]
+
+
+def test_page_image_is_served_from_inside_the_project_folder(client):
+    """T-01-SERVE: ``GET /api/pages/{id}/image`` returns 200 and the bytes
+    round-trip through Pillow; a nonexistent id returns 404 with
+    PAGE_NOT_FOUND_DETAIL."""
+    volume_id = _make_volume(client)
+    accepted = _upload_png(client, volume_id, "page.png").json()["accepted"][0]
+
+    response = client.get(f"/api/pages/{accepted['id']}/image")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("image/")
+    image = Image.open(io.BytesIO(response.content))
+    image.verify()
+
+    missing = client.get("/api/pages/999999/image")
+    assert missing.status_code == 404
+    assert missing.json()["detail"] == "That page no longer exists — refresh and try again."
+
+
+def _png_bytes(width=8, height=8, colour=(9, 9, 9)):
+    buf = io.BytesIO()
+    Image.new("RGB", (width, height), colour).save(buf, "PNG")
+    return buf.getvalue()
