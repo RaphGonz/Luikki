@@ -8,10 +8,12 @@ dependencies = [
     "opencv-python-headless>=4.10",
     "scipy>=1.14",
     "pillow>=11.0",
+    "scikit-image>=0.26",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "httpx>=0.28"]
+web = ["fastapi>=0.141", "uvicorn[standard]>=0.52", "python-multipart>=0.0.32"]
 
 [project.scripts]
 comiccolor = "comiccolor.cli:main"
