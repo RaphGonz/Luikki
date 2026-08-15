@@ -223,9 +223,14 @@ def test_sheet_upload_returns_unpersisted_proposals(client, make_png):
 def test_accept_creates_entity_and_labelled_entries(client, make_png):
     """PAL-02, D-05: the artist accepts two proposals under one character
     name; that creates exactly one Entity and two labelled PaletteEntry
-    rows, moves the sheet file out of pending/ into references/ with the
-    path recorded on the entity, and a second sheet for the same character
-    reuses that entity rather than duplicating it."""
+    rows, copies the sheet file into references/ with the path recorded on
+    the entity, and a second sheet for the same character reuses that
+    entity rather than duplicating it.
+
+    The file is *copied*, not moved: the pending sheet stays available so a
+    partial accept can be followed by another one (see
+    ``test_partial_accept_leaves_the_rest_acceptable``). ``DELETE
+    /sheets/{id}`` is what clears pending/."""
     sheet = client.post(
         "/api/references/sheets",
         files={"file": ("sheet.png", _sheet_bytes(), "image/png")},
@@ -254,7 +259,13 @@ def test_accept_creates_entity_and_labelled_entries(client, make_png):
     from comiccolor.web.appconfig import PROJECT_DB_NAME
 
     project_dir = client.app.state.current_project_path
-    assert not list((project_dir / "references" / "pending").iterdir())
+    # Copied, not moved: the pending sheet survives the accept, and the
+    # bound reference image exists independently in references/.
+    assert len(list((project_dir / "references" / "pending").iterdir())) == 1
+    references = [
+        p for p in (project_dir / "references").iterdir() if p.is_file()
+    ]
+    assert len(references) == 1
     with Store(project_dir / PROJECT_DB_NAME) as store:
         project = store.the_project()
         entities = store.entities_for_project(project.id)
@@ -387,3 +398,161 @@ def test_proposals_are_stable_across_two_uploads_of_the_same_file(client, make_p
     assert [p["rgb"] for p in first["proposals"]] == [
         p["rgb"] for p in second["proposals"]
     ]
+
+
+def test_partial_accept_leaves_the_rest_acceptable(client, make_png):
+    """CR-04: accepting 1 of 2 proposals must not consume the sheet.
+
+    ``accept_sheet`` can only re-derive proposals from the *pending* file,
+    so moving that file out of ``pending/`` on the first accept made the
+    second one 404 — while ``palette.ts`` went on rendering the remaining
+    proposal as a live, clickable card. Reproduced before the fix as
+    201 then 404.
+    """
+    sheet = client.post(
+        "/api/references/sheets",
+        files={"file": ("sheet.png", _sheet_bytes(), "image/png")},
+    ).json()
+    assert len(sheet["proposals"]) >= 2
+
+    first = client.post(
+        f"/api/references/sheets/{sheet['sheet_id']}/accept",
+        json={"character_name": "Kaito", "items": [{"index": 0, "part": "hair"}]},
+    )
+    assert first.status_code == 201
+
+    second = client.post(
+        f"/api/references/sheets/{sheet['sheet_id']}/accept",
+        json={"character_name": "Kaito", "items": [{"index": 1, "part": "eyes"}]},
+    )
+    assert second.status_code == 201
+
+    listed = client.get("/api/palette").json()
+    assert sorted(e["label"] for e in listed) == ["Kaito / eyes", "Kaito / hair"]
+
+    # One entity, and the same reference image recorded once — not once
+    # per partial accept.
+    from comiccolor.model import Store
+    from comiccolor.web.appconfig import PROJECT_DB_NAME
+
+    project_dir = client.app.state.current_project_path
+    with Store(project_dir / PROJECT_DB_NAME) as store:
+        entities = store.entities_for_project(store.the_project().id)
+        assert len(entities) == 1
+        assert len(entities[0].reference_images) == 1
+
+    # The sheet image is still served, and discard is still what clears it.
+    assert client.get(f"/api/references/sheets/{sheet['sheet_id']}/image").status_code == 200
+    assert client.delete(f"/api/references/sheets/{sheet['sheet_id']}").status_code == 204
+    assert not list((project_dir / "references" / "pending").iterdir())
+
+
+def test_accepting_nothing_is_refused(client, make_png):
+    """CR-04: an empty ``items`` list used to consume the sheet silently.
+
+    It returned 201, created an ``Entity`` with zero palette entries, and
+    emptied ``pending/`` — the artist's uploaded sheet gone with nothing to
+    show for it. "I don't want any of these" is ``DELETE /sheets/{id}``.
+    """
+    from comiccolor.web.routers.reference import NO_ITEMS_DETAIL
+
+    sheet = client.post(
+        "/api/references/sheets",
+        files={"file": ("sheet.png", _sheet_bytes(), "image/png")},
+    ).json()
+
+    resp = client.post(
+        f"/api/references/sheets/{sheet['sheet_id']}/accept",
+        json={"character_name": "Kaito", "items": []},
+    )
+
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == NO_ITEMS_DETAIL
+    assert client.get("/api/palette").json() == []
+
+    project_dir = client.app.state.current_project_path
+    assert len(list((project_dir / "references" / "pending").iterdir())) == 1
+
+    from comiccolor.model import Store
+    from comiccolor.web.appconfig import PROJECT_DB_NAME
+
+    with Store(project_dir / PROJECT_DB_NAME) as store:
+        assert store.entities_for_project(store.the_project().id) == []
+
+
+def test_duplicate_proposal_index_is_refused(client, make_png):
+    """WR-18: two items with the same index wrote two identical entries.
+
+    Same rgb, same label, same entity_id, and no uniqueness constraint on
+    ``palette_entry`` to catch it. Reproduced before the fix as a 201 with
+    two ``Kaito / hair`` rows.
+    """
+    from comiccolor.web.routers.reference import DUPLICATE_INDEX_DETAIL
+
+    sheet = client.post(
+        "/api/references/sheets",
+        files={"file": ("sheet.png", _sheet_bytes(), "image/png")},
+    ).json()
+
+    resp = client.post(
+        f"/api/references/sheets/{sheet['sheet_id']}/accept",
+        json={
+            "character_name": "Kaito",
+            "items": [{"index": 0, "part": "hair"}, {"index": 0, "part": "fringe"}],
+        },
+    )
+
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == DUPLICATE_INDEX_DETAIL
+    assert client.get("/api/palette").json() == []
+
+
+def test_duplicate_part_name_is_refused(client, make_png):
+    """WR-18: two different colours must not become the same label.
+
+    ``_entry_label``'s docstring promises "two distinct labels under one
+    entity, never a collision" — that only holds if the parts differ, which
+    is what this checks. Case and surrounding whitespace do not make two
+    parts distinct.
+    """
+    from comiccolor.web.routers.reference import DUPLICATE_PART_DETAIL
+
+    sheet = client.post(
+        "/api/references/sheets",
+        files={"file": ("sheet.png", _sheet_bytes(), "image/png")},
+    ).json()
+
+    resp = client.post(
+        f"/api/references/sheets/{sheet['sheet_id']}/accept",
+        json={
+            "character_name": "Kaito",
+            "items": [{"index": 0, "part": "hair"}, {"index": 1, "part": " Hair "}],
+        },
+    )
+
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == DUPLICATE_PART_DETAIL
+    assert client.get("/api/palette").json() == []
+
+
+def test_a_degenerate_sheet_leaves_no_unreachable_file(client, make_png):
+    """WR-06: a rejected sheet must not strand bytes in ``pending/``.
+
+    ``save_upload`` used to run before ``extract_palette``. An all-ink or
+    all-paper sheet raises ``EmptyImageError`` -> 400, and that response
+    carries no ``sheet_id``, so the client could never name the file in a
+    ``DELETE``. The file was unreachable and permanent. Reproduced before
+    the fix as pending/ going 0 -> 1 on a 400.
+    """
+    project_dir = client.app.state.current_project_path
+    pending_dir = project_dir / "references" / "pending"
+    assert list(pending_dir.iterdir()) == []
+
+    flat = make_png(32, 32, [(255, 255, 255)])
+    resp = client.post(
+        "/api/references/sheets", files={"file": ("blank.png", flat, "image/png")}
+    )
+
+    assert resp.status_code == 400
+    assert "sheet_id" not in resp.json()
+    assert list(pending_dir.iterdir()) == []

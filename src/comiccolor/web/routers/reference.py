@@ -28,6 +28,7 @@ Two binding resolutions this module holds to, not re-opens (see
 from __future__ import annotations
 
 import re
+import shutil
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
@@ -60,6 +61,17 @@ SHEET_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 SHEET_NOT_FOUND_DETAIL = "That character sheet is no longer available — upload it again."
 BAD_PROPOSAL_INDEX_DETAIL = (
     "Those proposals are out of date — re-upload the sheet and try again."
+)
+NO_ITEMS_DETAIL = (
+    "Pick at least one colour to accept, or discard the sheet instead."
+)
+DUPLICATE_INDEX_DETAIL = (
+    "That accept lists the same colour twice — remove the duplicate and try"
+    " again."
+)
+DUPLICATE_PART_DETAIL = (
+    "Two colours have the same part name — give each one its own name, so"
+    " they don't both become the same palette entry."
 )
 
 
@@ -109,12 +121,49 @@ def _pending_path(project_root: Path, sheet_id: str) -> Path:
     return found
 
 
+def _validate_items(body: SheetAcceptRequest, proposal_count: int) -> None:
+    """Everything an accept request must satisfy before anything is written.
+
+    Range-checking the indices was already here. The other three checks are
+    what stop a well-formed request from producing state the artist cannot
+    make sense of afterwards:
+
+    - **An empty ``items`` list** used to succeed: it created an ``Entity``
+      with zero palette entries and consumed the sheet, so the artist's
+      upload was gone with nothing to show for it. There is a route for
+      "I don't want any of these" and it is ``DELETE /sheets/{id}``.
+    - **A repeated index** wrote two identical ``PaletteEntry`` rows —
+      same rgb, same label, same entity — with nothing at the schema level
+      to catch it.
+    - **A repeated part** does the same thing by a different route: two
+      different colours both labelled ``Kaito / hair``, which is exactly
+      the collision :func:`_entry_label`'s docstring promises cannot
+      happen.
+    """
+    if not body.items:
+        raise HTTPException(status_code=400, detail=NO_ITEMS_DETAIL)
+
+    for item in body.items:
+        if not (0 <= item.index < proposal_count):
+            raise HTTPException(status_code=400, detail=BAD_PROPOSAL_INDEX_DETAIL)
+
+    indices = [item.index for item in body.items]
+    if len(set(indices)) != len(indices):
+        raise HTTPException(status_code=400, detail=DUPLICATE_INDEX_DETAIL)
+
+    parts = [item.part.strip().casefold() for item in body.items]
+    if len(set(parts)) != len(parts):
+        raise HTTPException(status_code=400, detail=DUPLICATE_PART_DETAIL)
+
+
 def _entry_label(character_name: str, part: str) -> str:
     """``{character} / {part}`` — 01-UI-SPEC.md §5's label shape.
 
     Accepting a second sheet for the same character with a different part
     (``hair``, then later ``eyes``) produces two distinct labels under one
-    entity, never a collision.
+    entity. Distinctness comes from ``part`` being distinct, which is not
+    a property of this function — :func:`_validate_items` is what enforces
+    it, by refusing a request that lists the same part twice.
     """
     return f"{character_name} / {part}"
 
@@ -154,10 +203,17 @@ def upload_sheet(
     data = file.file.read()
     image = uploads.decode_image(data)
 
+    # Extraction runs *before* the file is written. An all-ink or all-paper
+    # sheet raises EmptyImageError, which the app-level handler turns into a
+    # 400 carrying no sheet_id — so if the bytes had already been saved, the
+    # client would have no way to name that file in a DELETE and it would
+    # sit in pending/ unreachable and permanent. Nothing is persisted until
+    # there is something to persist it for.
+    proposals = extract_palette(image, sheet_mode=True)
+
     saved = uploads.save_upload(data, project_root / PENDING_DIR, project_root)
     sheet_id = Path(saved.relative_path).stem
 
-    proposals = extract_palette(image, sheet_mode=True)
     return SheetProposalResponse(
         sheet_id=sheet_id,
         image_url=f"/api/references/sheets/{sheet_id}/image",
@@ -175,10 +231,10 @@ def get_sheet_image(
 ) -> FileResponse:
     """The sheet's own image, so the artist can see it beside the proposal
     cards. Looks in ``references/pending/`` first (the common case — a
-    sheet not yet accepted or rejected), then falls back to
-    ``references/`` for a sheet already accepted and moved out of pending
-    by the accept route below. Both lookups are id-validated and
-    containment-asserted the same way (T-01-SHEETID).
+    sheet still being worked through), then falls back to ``references/``
+    for a sheet that was accepted and has since been discarded from
+    pending. Both lookups are id-validated and containment-asserted the
+    same way (T-01-SHEETID).
     """
     sheet_id = _validate_sheet_id(sheet_id)
     found = _locate(project_root / PENDING_DIR, sheet_id) or _locate(
@@ -216,22 +272,34 @@ def accept_sheet(
     accepting a subset.
 
     Then, in one request: the named character is reused if it already
-    exists (``entity_by_name``) or created; the pending file is moved out
-    of ``pending/`` into ``references/`` — the moment a reference image
-    actually binds to a character — and its project-relative path is
-    appended to the entity's reference images; and one ``PaletteEntry`` is
+    exists (``entity_by_name``) or created; the pending file is **copied**
+    into ``references/`` — the moment a reference image actually binds to a
+    character — and its project-relative path is added to the entity's
+    reference images if it isn't already there; and one ``PaletteEntry`` is
     written per accepted item, labelled ``{character} / {part}``
     (:func:`_entry_label`). Any proposal index the artist does not list is
     simply never turned into a row — that omission *is* the reject path
     PAL-02 asks for, not a separate mechanism.
+
+    **Accepting does not consume the sheet, and that is the whole design.**
+    This route can only re-derive proposals from the *pending* file, so
+    moving that file out of ``pending/`` made accepting 1 of 2 proposals
+    404 the second one — while the palette screen went on rendering it as a
+    live, clickable card. Accepting part of a sheet, looking at the result,
+    then accepting the rest is the obvious way to work, so it has to be the
+    supported one. ``DELETE /sheets/{id}`` is the only thing that consumes
+    a pending sheet.
+
+    Copying rather than moving also removes the atomicity hazard: every
+    write below is retryable because the source file never leaves
+    ``pending/``, so a failure part-way through cannot strand the sheet
+    somewhere the accept route can no longer find it.
     """
     pending = _pending_path(project_root, sheet_id)
     image = uploads.decode_image(pending.read_bytes())
     proposals = extract_palette(image, sheet_mode=True)
 
-    for item in body.items:
-        if not (0 <= item.index < len(proposals)):
-            raise HTTPException(status_code=400, detail=BAD_PROPOSAL_INDEX_DETAIL)
+    _validate_items(body, len(proposals))
 
     entity = store.entity_by_name(project.id, body.character_name)
     if entity is None:
@@ -242,11 +310,15 @@ def accept_sheet(
     references_dir = project_root / REFERENCES_DIR
     references_dir.mkdir(parents=True, exist_ok=True)
     dest = references_dir / pending.name
-    pending.replace(dest)
+    shutil.copyfile(pending, dest)
     relative_path = str(dest.relative_to(project_root))
-    store.set_entity_reference_images(
-        entity.id, [*entity.reference_images, relative_path]
-    )
+    if relative_path not in entity.reference_images:
+        # A second accept against the same sheet must not append the same
+        # path again — the entity would accumulate one duplicate reference
+        # per partial accept.
+        store.set_entity_reference_images(
+            entity.id, [*entity.reference_images, relative_path]
+        )
 
     created = [
         store.add_palette_entry(
@@ -271,11 +343,17 @@ def discard_sheet(
 ) -> None:
     """Discard every proposal on this sheet — "reject all," in one call.
 
+    **The only thing that consumes a pending sheet.** Accepting proposals
+    copies the file into ``references/`` and leaves ``pending/`` alone, so
+    that a partial accept can be followed by another one; this is what
+    finally clears it. A reference image already bound to an entity by an
+    earlier accept is untouched — that copy lives in ``references/`` and
+    belongs to the character now, not to the pending sheet.
+
     Deletes the pending file if it is still there and is idempotent: a
-    second call against a sheet already discarded (or already accepted, and
-    therefore no longer in ``pending/``) still returns 204 rather than 404,
-    because from the artist's point of view "make sure this sheet is gone"
-    already holds true either way. Nothing here uses the destructive-action
+    second call against a sheet already discarded still returns 204 rather
+    than 404, because from the artist's point of view "make sure this sheet
+    is gone" already holds true either way. Nothing here uses the destructive-action
     dialog PAL-03's delete-by-hand flow uses (D-08) — a proposal was never
     real data, so discarding one costs nothing and needs no extra step; a
     fresh upload reproduces it exactly (extraction is deterministic).
