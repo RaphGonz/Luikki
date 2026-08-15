@@ -60,7 +60,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 01-06-PLAN.md — Web contracts, per-request Store, upload choke point, app factory, `comiccolor serve`
+- [x] 01-06-PLAN.md — Web contracts, per-request Store, upload choke point, app factory, `comiccolor serve`
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
@@ -177,7 +177,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation — Project, Palette & Pipeline Backbone | 5/13 | In Progress|  |
+| 1. Foundation — Project, Palette & Pipeline Backbone | 6/13 | In Progress|  |
 | 2. Panel Polygon Editor & Protected Masks | 0/TBD | Not started | - |
 | 3. Zone Editor — Merge, Split, Gaps & Undo | 0/TBD | Not started | - |
 | 4. Cobra Worker & Isolated Colour Proposal | 0/TBD | Not started | - |
