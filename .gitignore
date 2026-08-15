@@ -5,6 +5,11 @@ __pycache__/
 build/
 dist/
 
+# Frontend (Vite + TypeScript) build output and dependencies. package-lock.json
+# is committed so the resolved dependency tree stays reviewable.
+frontend/node_modules/
+frontend/dist/
+
 # Studio pages are unreleased material. Never commit them.
 data/
 workspace/
