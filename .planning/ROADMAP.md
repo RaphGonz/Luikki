@@ -22,7 +22,7 @@ lands in the phase that owns the feature producing its data, not in a single lat
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Foundation — Project, Palette & Pipeline Backbone** - Artist creates a persistent project, accumulates pages and a palette, on top of a stage-registry backbone and invariant-checked coordinate infrastructure the editors will share.
+- [x] **Phase 1: Foundation — Project, Palette & Pipeline Backbone** - Artist creates a persistent project, accumulates pages and a palette, on top of a stage-registry backbone and invariant-checked coordinate infrastructure the editors will share. (completed 2026-08-15)
 - [ ] **Phase 2: Panel Polygon Editor & Protected Masks** - Artist corrects detected panel polygons and masks bubbles/SFX as protected regions that no later stage ever touches.
 - [ ] **Phase 3: Zone Editor — Merge, Split, Gaps & Undo** - Artist merges, splits, and gap-fixes colour zones with undo/redo that can never produce an invalid label map.
 - [ ] **Phase 4: Cobra Worker & Isolated Colour Proposal** - Cobra proposes colours per panel from an isolated, VRAM-measured worker process, never shown raw to the artist.
@@ -75,8 +75,8 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 6** *(blocked on Wave 5 completion)*
 
-- [ ] 01-12-PLAN.md — Frontend page grid, page detail, and the eight-segment stage strip
-- [ ] 01-13-PLAN.md — Frontend palette grid, swatch cards, and character-sheet proposal cards
+- [x] 01-12-PLAN.md — Frontend page grid, page detail, and the eight-segment stage strip
+- [x] 01-13-PLAN.md — Frontend palette grid, swatch cards, and character-sheet proposal cards
 
 **UI hint**: yes
 
@@ -177,7 +177,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation — Project, Palette & Pipeline Backbone | 11/13 | In Progress|  |
+| 1. Foundation — Project, Palette & Pipeline Backbone | 13/13 | Complete   | 2026-08-15 |
 | 2. Panel Polygon Editor & Protected Masks | 0/TBD | Not started | - |
 | 3. Zone Editor — Merge, Split, Gaps & Undo | 0/TBD | Not started | - |
 | 4. Cobra Worker & Isolated Colour Proposal | 0/TBD | Not started | - |
