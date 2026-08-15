@@ -170,3 +170,31 @@ def _merge_similar(
         else:
             kept.append([count, rgb, lab])
     return [(count, rgb) for count, rgb, _ in kept]
+
+
+def _drop_ink_and_paper(image: Image.Image) -> Image.Image:
+    """Drop near-black ink and near-white paper before quantizing (D-14).
+
+    Ink and paper are not colour: a character sheet's real palette lives
+    only in the pixels between those bands. Filtering the survivors and
+    reshaping them into a synthetic ``N x 1`` strip is equivalent for
+    palette purposes — median cut reads the colour distribution, not the
+    spatial arrangement — and it sidesteps Pillow's unverified RGBA/alpha
+    handling entirely (RESEARCH.md Pattern 4), which is why this is a pixel
+    filter and not an alpha-channel trick.
+
+    ``INK_MAX`` and ``PAPER_MIN`` are hypotheses, not yet validated against
+    real character sheets from this project's artists — expected to be
+    tuned during the supervised video-call sessions (RESEARCH.md Pitfall 5,
+    Assumptions Log A1).
+    """
+    arr = np.asarray(image.convert("RGB"))
+    near_black = (arr < INK_MAX).all(axis=-1)
+    near_white = (arr > PAPER_MIN).all(axis=-1)
+    kept = arr[~(near_black | near_white)]
+    if kept.size == 0:
+        raise EmptyImageError(
+            "This sheet is entirely near-black or near-white — nothing "
+            "survived the ink/paper pre-pass to extract a palette from."
+        )
+    return Image.fromarray(kept.reshape(-1, 1, 3), "RGB")
