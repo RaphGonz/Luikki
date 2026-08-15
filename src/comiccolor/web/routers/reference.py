@@ -34,10 +34,17 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 
 from ...colour import extract_palette
+from ...model import Entity, PaletteEntry, Project, Store
 from .. import uploads
 from ..appconfig import PENDING_DIR, REFERENCES_DIR
-from ..deps import get_current_project_path
-from ..schemas import ProposalResponse, SheetProposalResponse
+from ..deps import get_current_project_path, get_project, get_store
+from ..schemas import (
+    ProposalResponse,
+    SheetAcceptRequest,
+    SheetAcceptResponse,
+    SheetProposalResponse,
+)
+from .palette import _entry_response
 
 router = APIRouter()
 
@@ -100,6 +107,16 @@ def _pending_path(project_root: Path, sheet_id: str) -> Path:
     if found is None:
         raise HTTPException(status_code=404, detail=SHEET_NOT_FOUND_DETAIL)
     return found
+
+
+def _entry_label(character_name: str, part: str) -> str:
+    """``{character} / {part}`` — 01-UI-SPEC.md §5's label shape.
+
+    Accepting a second sheet for the same character with a different part
+    (``hair``, then later ``eyes``) produces two distinct labels under one
+    entity, never a collision.
+    """
+    return f"{character_name} / {part}"
 
 
 @router.post(
@@ -170,3 +187,100 @@ def get_sheet_image(
     if found is None:
         raise HTTPException(status_code=404, detail=SHEET_NOT_FOUND_DETAIL)
     return FileResponse(found)
+
+
+@router.post(
+    "/sheets/{sheet_id}/accept",
+    response_model=SheetAcceptResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def accept_sheet(
+    sheet_id: str,
+    body: SheetAcceptRequest,
+    store: Store = Depends(get_store),
+    project: Project = Depends(get_project),
+    project_root: Path = Depends(get_current_project_path),
+) -> SheetAcceptResponse:
+    """Bind a character to the sheet's colours (D-05's whole point).
+
+    Because a proposal is never persisted, this cannot look one up by id —
+    it re-derives the full proposal list by reloading the pending file and
+    running the same extraction again (``sheet_mode=True``), then indexes
+    into that list by the ``index`` values the client sends. This only
+    holds together because extraction is deterministic (median cut with
+    dithering off, a fixed ``K_MAX``, and a deterministic merge order): the
+    same file always yields the same proposals in the same order, so the
+    indices the artist saw on upload still point at the same colours here.
+    An out-of-range index means the file changed or the sheet is stale —
+    this rejects the whole request with a 400 rather than silently
+    accepting a subset.
+
+    Then, in one request: the named character is reused if it already
+    exists (``entity_by_name``) or created; the pending file is moved out
+    of ``pending/`` into ``references/`` — the moment a reference image
+    actually binds to a character — and its project-relative path is
+    appended to the entity's reference images; and one ``PaletteEntry`` is
+    written per accepted item, labelled ``{character} / {part}``
+    (:func:`_entry_label`). Any proposal index the artist does not list is
+    simply never turned into a row — that omission *is* the reject path
+    PAL-02 asks for, not a separate mechanism.
+    """
+    pending = _pending_path(project_root, sheet_id)
+    image = uploads.decode_image(pending.read_bytes())
+    proposals = extract_palette(image, sheet_mode=True)
+
+    for item in body.items:
+        if not (0 <= item.index < len(proposals)):
+            raise HTTPException(status_code=400, detail=BAD_PROPOSAL_INDEX_DETAIL)
+
+    entity = store.entity_by_name(project.id, body.character_name)
+    if entity is None:
+        entity = store.add_entity(
+            Entity(project_id=project.id, name=body.character_name)
+        )
+
+    references_dir = project_root / REFERENCES_DIR
+    references_dir.mkdir(parents=True, exist_ok=True)
+    dest = references_dir / pending.name
+    pending.replace(dest)
+    relative_path = str(dest.relative_to(project_root))
+    store.set_entity_reference_images(
+        entity.id, [*entity.reference_images, relative_path]
+    )
+
+    created = [
+        store.add_palette_entry(
+            PaletteEntry(
+                project_id=project.id,
+                rgb=proposals[item.index].rgb,
+                label=_entry_label(body.character_name, item.part),
+                entity_id=entity.id,
+            )
+        )
+        for item in body.items
+    ]
+    return SheetAcceptResponse(
+        entity_id=entity.id, entries=[_entry_response(e) for e in created]
+    )
+
+
+@router.delete("/sheets/{sheet_id}", status_code=status.HTTP_204_NO_CONTENT)
+def discard_sheet(
+    sheet_id: str,
+    project_root: Path = Depends(get_current_project_path),
+) -> None:
+    """Discard every proposal on this sheet — "reject all," in one call.
+
+    Deletes the pending file if it is still there and is idempotent: a
+    second call against a sheet already discarded (or already accepted, and
+    therefore no longer in ``pending/``) still returns 204 rather than 404,
+    because from the artist's point of view "make sure this sheet is gone"
+    already holds true either way. Nothing here uses the destructive-action
+    dialog PAL-03's delete-by-hand flow uses (D-08) — a proposal was never
+    real data, so discarding one costs nothing and needs no extra step; a
+    fresh upload reproduces it exactly (extraction is deterministic).
+    """
+    sheet_id = _validate_sheet_id(sheet_id)
+    found = _locate(project_root / PENDING_DIR, sheet_id)
+    if found is not None:
+        found.unlink()
