@@ -181,3 +181,52 @@
   color: var(--color-text-muted);
   font-size: var(--font-size-label);
 }
+
+/* ---- Page detail (§8: full-bleed, unpadded content -- canvas-ready) ---- */
+
+.page-detail {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.page-detail-meta {
+  padding: var(--space-sm) var(--space-lg);
+  font-size: var(--font-size-label);
+  letter-spacing: var(--letter-spacing-label);
+  color: var(--color-text-muted);
+}
+
+.page-detail-content {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  overflow: auto;
+}
+
+.page-detail-image {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.page-detail-toolbar-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  width: 100%;
+}
+
+.page-detail-back {
+  background: transparent;
+  border: none;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-heading);
+  cursor: pointer;
+  width: var(--icon-hit);
+  height: var(--icon-hit);
+}
+
+.page-detail-strip {
+  flex: 1;
+}

@@ -10,6 +10,8 @@ export interface ToolbarHandle {
   readonly slot: HTMLElement;
 }
 
+let currentHandle: ToolbarHandle | null = null;
+
 export function renderToolbar(mount: HTMLElement): ToolbarHandle {
   const root = document.createElement("div");
   root.className = "app-toolbar";
@@ -24,10 +26,26 @@ export function renderToolbar(mount: HTMLElement): ToolbarHandle {
 
   mount.append(root);
 
-  return {
+  const handle: ToolbarHandle = {
     setTitle(text: string) {
       title.textContent = text;
     },
     slot,
   };
+  currentHandle = handle;
+  return handle;
+}
+
+/**
+ * The most recently rendered toolbar handle. `main.ts` mounts exactly one
+ * toolbar for the app's whole lifetime and does not thread the returned
+ * handle through the router, so a view that needs the stage-strip slot
+ * (plan 01-12's page detail) reads it here instead of `renderToolbar`
+ * gaining a second call site.
+ */
+export function getToolbarHandle(): ToolbarHandle {
+  if (!currentHandle) {
+    throw new Error("Toolbar has not been rendered yet — renderToolbar() must run first.");
+  }
+  return currentHandle;
 }
