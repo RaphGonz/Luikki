@@ -18,10 +18,10 @@ to colourists over video call. Each maps to exactly one roadmap phase.
 
 ### Palette
 
-- [ ] **PAL-01**: User can upload a swatch image and the app creates named palette entries from its colour chips
-- [ ] **PAL-02**: User can have the app propose palette entries from an uploaded character sheet and accept or reject each proposal individually
-- [ ] **PAL-03**: User can create, rename, recolour and delete palette entries by hand
-- [ ] **PAL-04**: User can change a palette entry's colour and see every affected page update without re-running the pipeline
+- [x] **PAL-01**: User can upload a swatch image and the app creates named palette entries from its colour chips
+- [x] **PAL-02**: User can have the app propose palette entries from an uploaded character sheet and accept or reject each proposal individually
+- [x] **PAL-03**: User can create, rename, recolour and delete palette entries by hand
+- [x] **PAL-04**: User can change a palette entry's colour and see every affected page update without re-running the pipeline
 
 ### Panels
 
@@ -129,10 +129,10 @@ Which phases cover which requirements. Populated during roadmap creation.
 | PROJ-03 | Phase 1 — Foundation: Project, Palette & Pipeline Backbone | Pending |
 | PROJ-04 | Phase 1 — Foundation: Project, Palette & Pipeline Backbone | Pending |
 | PROJ-05 | Phase 1 — Foundation: Project, Palette & Pipeline Backbone | Complete |
-| PAL-01 | Phase 1 — Foundation: Project, Palette & Pipeline Backbone | Pending |
-| PAL-02 | Phase 1 — Foundation: Project, Palette & Pipeline Backbone | Pending |
-| PAL-03 | Phase 1 — Foundation: Project, Palette & Pipeline Backbone | Pending |
-| PAL-04 | Phase 1 — Foundation: Project, Palette & Pipeline Backbone | Pending |
+| PAL-01 | Phase 1 — Foundation: Project, Palette & Pipeline Backbone | Complete |
+| PAL-02 | Phase 1 — Foundation: Project, Palette & Pipeline Backbone | Complete |
+| PAL-03 | Phase 1 — Foundation: Project, Palette & Pipeline Backbone | Complete |
+| PAL-04 | Phase 1 — Foundation: Project, Palette & Pipeline Backbone | Complete |
 | PAN-01 | Phase 2 — Panel Polygon Editor & Protected Masks | Pending |
 | PAN-02 | Phase 2 — Panel Polygon Editor & Protected Masks | Pending |
 | PAN-03 | Phase 2 — Panel Polygon Editor & Protected Masks | Pending |
