@@ -153,3 +153,10 @@ None. Both `pageGrid.ts` and `pageDetail.ts` are full implementations; no hardco
 ---
 *Phase: 01-foundation-project-palette-pipeline-backbone*
 *Completed: 2026-08-15*
+
+## Self-Check: PASSED
+
+All 9 files listed in the plan's `files_modified` frontmatter (plus the
+Task-3-modified `shell/toolbar.ts`) are present on disk. All 4 commits
+referenced above (`276123b`, `1c3374b`, `99d7e3f`, `4173549`) are present in
+`git log --oneline --all`.
