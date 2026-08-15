@@ -11,9 +11,9 @@ to colourists over video call. Each maps to exactly one roadmap phase.
 ### Project
 
 - [x] **PROJ-01**: User can create a named project and reopen it later with its pages, palette and edits intact
-- [ ] **PROJ-02**: User can upload line art pages to a project and add more pages over time
-- [ ] **PROJ-03**: User can upload character sheet images to a project as colour references
-- [ ] **PROJ-04**: User can see each page's stage in the pipeline and open any page for editing
+- [x] **PROJ-02**: User can upload line art pages to a project and add more pages over time
+- [x] **PROJ-03**: User can upload character sheet images to a project as colour references
+- [x] **PROJ-04**: User can see each page's stage in the pipeline and open any page for editing
 - [x] **PROJ-05**: User's edits persist as they are made, so a refresh or crash loses no work
 
 ### Palette
@@ -125,9 +125,9 @@ Which phases cover which requirements. Populated during roadmap creation.
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | PROJ-01 | Phase 1 — Foundation: Project, Palette & Pipeline Backbone | Complete |
-| PROJ-02 | Phase 1 — Foundation: Project, Palette & Pipeline Backbone | Pending |
-| PROJ-03 | Phase 1 — Foundation: Project, Palette & Pipeline Backbone | Pending |
-| PROJ-04 | Phase 1 — Foundation: Project, Palette & Pipeline Backbone | Pending |
+| PROJ-02 | Phase 1 — Foundation: Project, Palette & Pipeline Backbone | Complete |
+| PROJ-03 | Phase 1 — Foundation: Project, Palette & Pipeline Backbone | Complete |
+| PROJ-04 | Phase 1 — Foundation: Project, Palette & Pipeline Backbone | Complete |
 | PROJ-05 | Phase 1 — Foundation: Project, Palette & Pipeline Backbone | Complete |
 | PAL-01 | Phase 1 — Foundation: Project, Palette & Pipeline Backbone | Complete |
 | PAL-02 | Phase 1 — Foundation: Project, Palette & Pipeline Backbone | Complete |
