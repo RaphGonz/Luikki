@@ -70,8 +70,8 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
-- [ ] 01-10-PLAN.md — Character-sheet routes: zero-prompt upload, ephemeral proposals, accept-time binding
-- [ ] 01-11-PLAN.md — Frontend shell: API client, router, sidebar/toolbar layout, project picker
+- [x] 01-10-PLAN.md — Character-sheet routes: zero-prompt upload, ephemeral proposals, accept-time binding
+- [x] 01-11-PLAN.md — Frontend shell: API client, router, sidebar/toolbar layout, project picker
 
 **Wave 6** *(blocked on Wave 5 completion)*
 
@@ -177,7 +177,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation — Project, Palette & Pipeline Backbone | 9/13 | In Progress|  |
+| 1. Foundation — Project, Palette & Pipeline Backbone | 11/13 | In Progress|  |
 | 2. Panel Polygon Editor & Protected Masks | 0/TBD | Not started | - |
 | 3. Zone Editor — Merge, Split, Gaps & Undo | 0/TBD | Not started | - |
 | 4. Cobra Worker & Isolated Colour Proposal | 0/TBD | Not started | - |
