@@ -128,3 +128,17 @@ None - no external service configuration required.
 ---
 *Phase: 01-foundation-project-palette-pipeline-backbone*
 *Completed: 2026-08-15*
+
+## Self-Check: PASSED
+
+- FOUND: src/comiccolor/pipeline/__init__.py
+- FOUND: src/comiccolor/pipeline/stages.py
+- FOUND: src/comiccolor/pipeline/runner.py
+- FOUND: src/comiccolor/model/masks.py
+- FOUND: tests/test_pipeline.py
+- FOUND: tests/test_masks.py
+- FOUND: .planning/phases/01-foundation-project-palette-pipeline-backbone/01-04-SUMMARY.md
+- FOUND: 65aff51 (feat(01-04) label-map invariant)
+- FOUND: 86a39d4 (feat(01-04) pipeline registry)
+- FOUND: d20880a (test(01-04) pipeline tests)
+- FOUND: 3404e1a (docs(01-04) summary commit)
