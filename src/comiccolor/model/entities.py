@@ -46,20 +46,6 @@ class ProtectedKind(str, Enum):
     TEXT = "text"
 
 
-class PipelineStage(str, Enum):
-    """Forward-only pipeline chain, one artist confirmation gate per page
-    (D-06/D-07/D-11). Phase 1 declares all eight stages but implements only
-    the import boundary; later phases fill in the rest.
-    """
-
-    IMPORT = "import"  # uploaded, not yet auto-advanced
-    PANELS = "panels"  # panel detection is next / done
-    PROTECTED = "protected"  # bubble/SFX masking is next / done
-    ZONES = "zones"  # zone segmentation is next / done
-    PROPOSE = "propose"  # Cobra colour proposal is next / done
-    SNAP = "snap"  # CIELAB snap to palette is next / done
-    REVIEW = "review"  # artist colour-correction is next / done
-    EXPORT = "export"  # PSD export is next / done
 
 
 @dataclass
@@ -89,10 +75,6 @@ class Page:
     id: int | None = None
     width: int = 0
     height: int = 0
-    # Forward-only pipeline position (D-06/D-07). Defaults to PANELS, not
-    # IMPORT: a successful upload auto-advances the page past the import
-    # boundary, because there is nothing there for the artist to review yet.
-    stage: PipelineStage = PipelineStage.PANELS
     # The artist's own filename, display-only. The on-disk source_path is
     # always server-generated (RESEARCH.md Pitfall 3); the two must never be
     # the same string.

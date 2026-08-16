@@ -14,7 +14,6 @@ from comiccolor.model import (
     Page,
     PaletteEntry,
     Panel,
-    PipelineStage,
     ProtectedKind,
     ProtectedMask,
     Project,
@@ -96,14 +95,6 @@ def test_a_project_db_holds_one_project(store, project):
         store.add_project(Project(name="Second Project"))
 
 
-def test_page_stage_defaults_to_panels(store, volume):
-    """D-07: a successful upload auto-advances a page past import — there is
-    nothing for the artist to review at that boundary yet."""
-    page = store.add_page(Page(volume_id=volume.id, source_path="p1.png", index=0))
-    reread = store.page_by_id(page.id)
-    assert reread.stage is PipelineStage.PANELS
-
-
 def test_palette_edit_is_a_single_row_update(store, project, panel):
     entry = store.add_palette_entry(
         PaletteEntry(project_id=project.id, rgb=(200, 150, 90), label="Kaito / hair / base")
@@ -181,13 +172,6 @@ def test_next_page_index_appends_after_existing_pages(store, volume):
     store.add_page(Page(volume_id=volume.id, source_path="p1.png", index=0))
     store.add_page(Page(volume_id=volume.id, source_path="p2.png", index=1))
     assert store.next_page_index(volume.id) == 2
-
-
-def test_set_page_stage_persists_and_reads_back_as_enum(store, volume):
-    page = store.add_page(Page(volume_id=volume.id, source_path="p1.png", index=0))
-    store.set_page_stage(page.id, PipelineStage.ZONES)
-    reread = store.page_by_id(page.id)
-    assert reread.stage is PipelineStage.ZONES
 
 
 def test_pages_affected_by_counts_pages_not_panels(store, project, volume):

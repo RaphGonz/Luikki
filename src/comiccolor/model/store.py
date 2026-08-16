@@ -24,7 +24,6 @@ from .entities import (
     Page,
     PaletteEntry,
     Panel,
-    PipelineStage,
     ProtectedKind,
     ProtectedMask,
     Project,
@@ -56,7 +55,6 @@ CREATE TABLE IF NOT EXISTS page (
     idx           INTEGER NOT NULL,
     width         INTEGER NOT NULL DEFAULT 0,
     height        INTEGER NOT NULL DEFAULT 0,
-    stage         TEXT NOT NULL DEFAULT 'panels',
     original_name TEXT NOT NULL DEFAULT '',
     UNIQUE (volume_id, idx)
 );
@@ -293,15 +291,14 @@ class Store:
 
     def add_page(self, page: Page) -> Page:
         cur = self._execute(
-            "INSERT INTO page (volume_id, source_path, idx, width, height, stage,"
-            " original_name) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO page (volume_id, source_path, idx, width, height,"
+            " original_name) VALUES (?, ?, ?, ?, ?, ?)",
             (
                 page.volume_id,
                 page.source_path,
                 page.index,
                 page.width,
                 page.height,
-                page.stage.value,
                 page.original_name,
             ),
         )
@@ -329,12 +326,6 @@ class Store:
             "SELECT MAX(idx) AS max_idx FROM page WHERE volume_id = ?", (volume_id,)
         ).fetchone()
         return 0 if row["max_idx"] is None else int(row["max_idx"]) + 1
-
-    def set_page_stage(self, page_id: int, stage: PipelineStage) -> None:
-        self._execute(
-            "UPDATE page SET stage = ? WHERE id = ?", (stage.value, page_id)
-        )
-        self.conn.commit()
 
     def delete_page(self, page_id: int) -> None:
         self._execute("DELETE FROM page WHERE id = ?", (page_id,))
@@ -701,7 +692,6 @@ def _page(row: sqlite3.Row) -> Page:
         index=row["idx"],
         width=row["width"],
         height=row["height"],
-        stage=PipelineStage(row["stage"]),
         original_name=row["original_name"],
     )
 
