@@ -31,7 +31,7 @@ to colourists over video call. Each maps to exactly one roadmap phase.
 
 ### Protected Masks
 
-- [ ] **PROT-01**: App detects speech bubbles and SFX lettering and proposes them as protected masks
+- [x] **PROT-01**: App detects speech bubbles and SFX lettering and proposes them as protected masks
 - [x] **PROT-02**: User can draw a protected mask by hand where detection missed one
 - [x] **PROT-03**: User can reshape or delete a proposed protected mask
 - [x] **PROT-04**: Protected regions are excluded from every fill and colour stage and reach export untouched
@@ -136,7 +136,7 @@ Which phases cover which requirements. Populated during roadmap creation.
 | PAN-01 | Phase 2 — Panel Polygon Editor & Protected Masks | Complete |
 | PAN-02 | Phase 2 — Panel Polygon Editor & Protected Masks | Complete |
 | PAN-03 | Phase 2 — Panel Polygon Editor & Protected Masks | Complete |
-| PROT-01 | Phase 2 — Panel Polygon Editor & Protected Masks | Pending |
+| PROT-01 | Phase 2 — Panel Polygon Editor & Protected Masks | Complete |
 | PROT-02 | Phase 2 — Panel Polygon Editor & Protected Masks | Complete |
 | PROT-03 | Phase 2 — Panel Polygon Editor & Protected Masks | Complete |
 | PROT-04 | Phase 2 — Panel Polygon Editor & Protected Masks | Complete |

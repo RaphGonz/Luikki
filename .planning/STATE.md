@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 02-02-PLAN.md
-last_updated: "2026-08-16T12:13:44.849Z"
+stopped_at: Completed 02-13-PLAN.md
+last_updated: "2026-08-16T15:14:05.734Z"
 last_activity: 2026-08-16 -- Phase 02 execution started
 progress:
   total_phases: 7
   completed_phases: 1
   total_plans: 27
-  completed_plans: 16
+  completed_plans: 26
   percent: 14
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-08-16)
 ## Current Position
 
 Phase: 02 (panel-polygon-editor-protected-masks) — EXECUTING
-Plan: 4 of 14
+Plan: 5 of 14
 Status: Ready to execute
 Last activity: 2026-08-16 -- Phase 02 execution started
 
@@ -55,6 +55,7 @@ Progress: [█░░░░░░░░░] 14%
 | Phase 02 P01 | 35 | 3 tasks | 7 files |
 | Phase 02 P02 | 45min | 3 tasks | 6 files |
 | Phase 02 P03 | 35min | 3 tasks | 3 files |
+| Phase 02 P13 | 50min | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -73,6 +74,7 @@ Recent decisions affecting current work:
 - Phase 02: D-17/D-18/D-20/D-21 implemented as specified in 02-CONTEXT.md; no reinterpretation.
 - Phase 02: [Rule 1 - Bug] expand_under_lines gained an optional protected= parameter after the boundary-crossing test caught it painting a protected-but-inked pixel (bubble across a panel's frame border).
 - [Phase ?]: Phase 02: D-17/D-18/D-20/D-21 implemented as specified in 02-CONTEXT.md (02-03); protected_for_panel deleted outright rather than kept alongside protected_for_page.
+- [Phase 02]: Phase 02 Plan 13: Delete is a single toolbar button (aria-label swaps by tool mode) that dispatches a synthetic Delete keydown at canvasEditor.ts's own canvas, not a floating per-shape bbox icon -- canvasEditor.ts's fixed API boundary from plan 02-10 exposes no per-shape screen-space bbox or deleteSelected() method. — Reuses canvasEditor.ts's existing vertex-vs-shape delete/refusal logic verbatim rather than duplicating it, without needing to widen a plan-02-10 file this plan does not modify.
 
 ### Pending Todos
 
@@ -96,6 +98,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-08-16T12:11:51.985Z
-Stopped at: Completed 02-02-PLAN.md
+Last session: 2026-08-16T15:09:35.234Z
+Stopped at: Completed 02-13-PLAN.md
 Resume file: None

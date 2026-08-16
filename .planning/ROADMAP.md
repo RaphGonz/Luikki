@@ -121,7 +121,7 @@ Plans:
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
-- [ ] 02-13-PLAN.md — `pageEditor` view: one screen, two tool modes, two gates, session undo
+- [x] 02-13-PLAN.md — `pageEditor` view: one screen, two tool modes, two gates, session undo
 
 **Wave 6** *(blocked on Wave 5 completion)*
 
@@ -212,7 +212,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation — Project, Palette & Pipeline Backbone | 13/13 | Complete    | 2026-08-16 |
-| 2. Panel Polygon Editor & Protected Masks | 12/14 | In Progress|  |
+| 2. Panel Polygon Editor & Protected Masks | 13/14 | In Progress|  |
 | 3. Zone Editor — Merge, Split, Gaps & Undo | 0/TBD | Not started | - |
 | 4. Cobra Worker & Isolated Colour Proposal | 0/TBD | Not started | - |
 | 5. Mode Extraction, CIELAB Snapping & Confidence Triage | 0/TBD | Not started | - |
