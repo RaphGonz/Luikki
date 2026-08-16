@@ -103,9 +103,9 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 02-04-PLAN.md — Bubble detection: text-seeded flood fill, area cap, contour trace (D-22/D-23/D-24/D-25)
-- [ ] 02-05-PLAN.md — Web geometry contracts: bounded vertex/polygon schemas, both router modules, app registration
-- [ ] 02-06-PLAN.md — Frontend pure editor modules: zoom-invariant hitTest, polygonState reducer, 20-op undo stack (D-26)
+- [x] 02-04-PLAN.md — Bubble detection: text-seeded flood fill, area cap, contour trace (D-22/D-23/D-24/D-25)
+- [x] 02-05-PLAN.md — Web geometry contracts: bounded vertex/polygon schemas, both router modules, app registration
+- [x] 02-06-PLAN.md — Frontend pure editor modules: zoom-invariant hitTest, polygonState reducer, 20-op undo stack (D-26)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -212,7 +212,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation — Project, Palette & Pipeline Backbone | 13/13 | Complete    | 2026-08-16 |
-| 2. Panel Polygon Editor & Protected Masks | 3/14 | In Progress|  |
+| 2. Panel Polygon Editor & Protected Masks | 6/14 | In Progress|  |
 | 3. Zone Editor — Merge, Split, Gaps & Undo | 0/TBD | Not started | - |
 | 4. Cobra Worker & Isolated Colour Proposal | 0/TBD | Not started | - |
 | 5. Mode Extraction, CIELAB Snapping & Confidence Triage | 0/TBD | Not started | - |
