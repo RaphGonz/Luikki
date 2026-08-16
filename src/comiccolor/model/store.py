@@ -108,21 +108,22 @@ CREATE TABLE IF NOT EXISTS region (
 );
 
 CREATE TABLE IF NOT EXISTS protected_mask (
-    id        INTEGER PRIMARY KEY AUTOINCREMENT,
-    panel_id  INTEGER NOT NULL REFERENCES panel(id) ON DELETE CASCADE,
-    kind      TEXT NOT NULL,
-    mask_path TEXT NOT NULL,
-    area      INTEGER NOT NULL DEFAULT 0,
-    bbox_x    INTEGER NOT NULL DEFAULT 0,
-    bbox_y    INTEGER NOT NULL DEFAULT 0,
-    bbox_w    INTEGER NOT NULL DEFAULT 0,
-    bbox_h    INTEGER NOT NULL DEFAULT 0
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    page_id  INTEGER NOT NULL REFERENCES page(id) ON DELETE CASCADE,
+    kind     TEXT NOT NULL,
+    polygon  TEXT NOT NULL DEFAULT '[]',
+    touched  INTEGER NOT NULL DEFAULT 0,
+    area     INTEGER NOT NULL DEFAULT 0,
+    bbox_x   INTEGER NOT NULL DEFAULT 0,
+    bbox_y   INTEGER NOT NULL DEFAULT 0,
+    bbox_w   INTEGER NOT NULL DEFAULT 0,
+    bbox_h   INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_panel_page ON panel(page_id);
 CREATE INDEX IF NOT EXISTS idx_region_panel ON region(panel_id);
 CREATE INDEX IF NOT EXISTS idx_region_palette ON region(palette_entry_id);
-CREATE INDEX IF NOT EXISTS idx_protected_panel ON protected_mask(panel_id);
+CREATE INDEX IF NOT EXISTS idx_protected_page ON protected_mask(page_id);
 CREATE INDEX IF NOT EXISTS idx_palette_project ON palette_entry(project_id);
 CREATE INDEX IF NOT EXISTS idx_volume_project ON volume(project_id);
 CREATE INDEX IF NOT EXISTS idx_entity_project ON entity(project_id);
@@ -171,6 +172,29 @@ class Store:
         self.conn.execute("PRAGMA busy_timeout=5000;")
         self.conn.executescript(SCHEMA)
         self.conn.commit()
+        self._check_protected_mask_schema()
+
+    def _check_protected_mask_schema(self) -> None:
+        """Fail loudly on a pre-Phase-2 database (RESEARCH.md Pitfall 5).
+
+        ``CREATE TABLE IF NOT EXISTS`` never alters an existing table, so a
+        database written by Phase 1 code (``panel_id``/``mask_path`` columns)
+        would silently keep that shape forever, and every write after this
+        point would target columns that no longer mean what the code thinks
+        they mean. v1 has not shipped, so there is no artist-facing data in
+        that old shape worth migrating — the fix is deleting the file, not
+        writing a migration.
+        """
+        columns = {row[1] for row in self.conn.execute("PRAGMA table_info(protected_mask)")}
+        if "page_id" not in columns:
+            raise RuntimeError(
+                f"{self.path} has a pre-Phase-2 protected_mask table (missing"
+                " 'page_id'). This database predates the page-scoped,"
+                " polygonal protected-mask schema. There is no artist-facing"
+                " data to preserve here — v1 has not shipped — so the fix is"
+                f" to delete {self.path} (and its -wal/-shm siblings) and let"
+                " it be recreated, not to write a migration."
+            )
 
     def close(self) -> None:
         """Checkpoint the WAL, then close the connection.
@@ -537,19 +561,20 @@ class Store:
 
     def add_protected_mask(self, mask: ProtectedMask) -> ProtectedMask:
         cur = self._execute(
-            "INSERT INTO protected_mask (panel_id, kind, mask_path, area,"
-            " bbox_x, bbox_y, bbox_w, bbox_h) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (mask.panel_id, mask.kind.value, mask.mask_path, mask.area, *mask.bbox),
+            "INSERT INTO protected_mask (page_id, kind, polygon, touched, area,"
+            " bbox_x, bbox_y, bbox_w, bbox_h) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                mask.page_id,
+                mask.kind.value,
+                json.dumps(mask.polygon),
+                int(mask.touched),
+                mask.area,
+                *mask.bbox,
+            ),
         )
         self.conn.commit()
         mask.id = cur.lastrowid
         return mask
-
-    def protected_for_panel(self, panel_id: int) -> list[ProtectedMask]:
-        rows = self.conn.execute(
-            "SELECT * FROM protected_mask WHERE panel_id = ?", (panel_id,)
-        ).fetchall()
-        return [_protected(r) for r in rows]
 
 
 # ---- Row adapters ---------------------------------------------------------
@@ -634,9 +659,10 @@ def _region(row: sqlite3.Row) -> Region:
 def _protected(row: sqlite3.Row) -> ProtectedMask:
     return ProtectedMask(
         id=row["id"],
-        panel_id=row["panel_id"],
+        page_id=row["page_id"],
         kind=ProtectedKind(row["kind"]),
-        mask_path=row["mask_path"],
+        polygon=[tuple(p) for p in json.loads(row["polygon"])],
+        touched=bool(row["touched"]),
         area=row["area"],
         bbox=(row["bbox_x"], row["bbox_y"], row["bbox_w"], row["bbox_h"]),
     )
