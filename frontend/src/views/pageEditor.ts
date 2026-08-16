@@ -239,12 +239,19 @@ export function renderPageEditor(mount: HTMLElement, params: { pageId: number })
   undoButton.className = "page-editor-undo";
   undoButton.setAttribute("aria-label", UNDO_ARIA_LABEL);
   undoButton.textContent = "↺";
+  // Starts disabled and stays that way until the first `syncToolbar()` call
+  // at the end of `boot()` -- otherwise a click landing in the window
+  // between DOM construction and boot completion would race `boot()`'s own
+  // state-setting tail (Rule 1: both paths write `activeTool`/undo state
+  // unconditionally, so whichever finishes last would silently win).
+  undoButton.disabled = true;
 
   const deleteButton = document.createElement("button");
   deleteButton.type = "button";
   deleteButton.className = "page-editor-delete";
   deleteButton.setAttribute("aria-label", DELETE_PANEL_ARIA_LABEL);
   deleteButton.textContent = "🗑";
+  deleteButton.disabled = true;
 
   // UI-SPEC §8: low-emphasis destructive-coloured text link, positioned
   // before (visually subordinate to) the primary Confirm button. Plan
@@ -262,6 +269,9 @@ export function renderPageEditor(mount: HTMLElement, params: { pageId: number })
   const confirmButton = document.createElement("button");
   confirmButton.type = "button";
   confirmButton.className = "page-editor-confirm accent";
+  // Same race-prevention as the undo/delete buttons above: disabled until
+  // boot() completes and the real page/panel-count data decide its state.
+  confirmButton.disabled = true;
 
   toolbarRow.append(
     breadcrumb,
