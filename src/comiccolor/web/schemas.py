@@ -25,13 +25,28 @@ from typing import Annotated
 
 from pydantic import BaseModel, Field
 
-from ..model import PipelineStage
+from ..model import PipelineStage, ProtectedKind
 
 # ---- Shared constrained field types ---------------------------------------
 
 RGBChannel = Annotated[int, Field(ge=0, le=255)]
 RGBTuple = tuple[RGBChannel, RGBChannel, RGBChannel]
 NonEmptyStr = Annotated[str, Field(min_length=1, max_length=200)]
+
+# No comic page raster approaches 100k pixels on a side, and the artist's own
+# UI produces tens of polygon vertices — a request carrying more of either is
+# either a bug or hostile input, and the honest answer either way is a
+# refusal before it ever reaches ``cv2.fillPoly`` (02-RESEARCH.md Security
+# Domain, the two Denial-of-Service rows).
+MAX_PAGE_PIXEL = 100_000
+MAX_POLYGON_VERTICES = 512
+
+PixelCoord = Annotated[int, Field(ge=0, le=MAX_PAGE_PIXEL)]
+Vertex = tuple[PixelCoord, PixelCoord]
+# ``min_length=3``: a polygon with fewer than three vertices has no interior
+# to protect or to fill, and ``Store.update_panel_polygon`` would fail on the
+# bbox recompute — the boundary refuses it so the store never has to.
+Polygon = Annotated[list[Vertex], Field(min_length=3, max_length=MAX_POLYGON_VERTICES)]
 
 # A project name is the one client string this app turns into a *directory
 # name*, so it gets its own type rather than reusing ``NonEmptyStr``.
@@ -225,3 +240,99 @@ class SheetAcceptRequest(BaseModel):
 class SheetAcceptResponse(BaseModel):
     entity_id: int
     entries: list[PaletteEntryResponse]
+
+
+# ---- Panels ---------------------------------------------------------------
+
+
+class VertexUpdateRequest(BaseModel):
+    x: PixelCoord
+    y: PixelCoord
+
+
+class PolygonUpdateRequest(BaseModel):
+    polygon: Polygon
+
+
+class PanelCreateRequest(BaseModel):
+    polygon: Polygon
+
+
+class PanelResponse(BaseModel):
+    id: int
+    page_id: int
+    x: int
+    y: int
+    width: int
+    height: int
+    reading_order: int
+    polygon: list[tuple[int, int]]
+
+
+class PanelListResponse(BaseModel):
+    """A page's panels, always the whole list.
+
+    The server recomputes reading order and returns the whole page's panel
+    list on every mutating panel request, so ``_reading_order()``'s tiering
+    logic is never ported to TypeScript and there is never a second source
+    of truth for reading order.
+    """
+
+    panels: list[PanelResponse]
+
+
+# ---- Protected masks --------------------------------------------------------
+
+
+class ProtectedMaskCreateRequest(BaseModel):
+    kind: ProtectedKind
+    polygon: Polygon
+
+
+class ProtectedMaskResponse(BaseModel):
+    id: int
+    page_id: int
+    kind: ProtectedKind
+    polygon: list[tuple[int, int]]
+    # UI-SPEC §3: False renders a dashed outline (detector-proposed and
+    # untouched), True renders solid.
+    touched: bool
+    area: int
+    bbox: tuple[int, int, int, int]
+
+
+class ProtectedMaskListResponse(BaseModel):
+    masks: list[ProtectedMaskResponse]
+    # UI-SPEC §4's copy: bubble detection failing is a non-blocking inline
+    # banner, never a blocking error, because PROT-02's hand-drawing is the
+    # guaranteed fallback.
+    detection_failed: bool = False
+    detection_message: str | None = None
+
+
+# ---- Pipeline stage confirmation -------------------------------------------
+
+
+class StageConfirmResponse(BaseModel):
+    page: PageResponse
+    detection_failed: bool = False
+    detection_message: str | None = None
+
+
+class GoBackTargetResponse(BaseModel):
+    """01-UI-SPEC.md §3: every one of these strings is computed server-side
+    from real counts at the moment the dialog opens; a target whose count
+    cannot be computed is simply not returned, and the client never
+    assembles a sentence itself."""
+
+    stage: PipelineStage
+    display_name: str
+    heading: str
+    body: str
+    confirm_label: str
+    cancel_label: str
+    discarded_count: int
+
+
+class GoBackRequest(BaseModel):
+    target: PipelineStage
