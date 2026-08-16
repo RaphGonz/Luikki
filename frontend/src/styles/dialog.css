@@ -1,0 +1,94 @@
+/*
+ * The standing destructive-confirmation dialog (01-UI-SPEC.md §3,
+ * 02-UI-SPEC.md §8/§10): centred `--color-surface-secondary` panel over a
+ * scrim, at z-index 100 -- above the floating zoom pill (z10) and every
+ * canvas layer, since it must interrupt whatever tool mode is active.
+ * Tokens only, same governing constraint as every other stylesheet in this
+ * project -- no colour literal, no new hue.
+ */
+
+.go-back-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: var(--color-surface-dominant);
+  opacity: 0.9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.go-back-dialog {
+  position: relative;
+  background: var(--color-surface-secondary);
+  border: 1px solid var(--color-border);
+  padding: var(--space-lg);
+  max-width: 420px;
+  opacity: 1;
+}
+
+.go-back-dialog-heading {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-heading);
+  margin: 0 0 var(--space-md);
+}
+
+.go-back-dialog-targets {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin-bottom: var(--space-md);
+}
+
+.go-back-dialog-target {
+  background: transparent;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-primary);
+  font-family: var(--font-family);
+  font-size: var(--font-size-body);
+  padding: var(--space-xs) var(--space-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.go-back-dialog-target.is-selected {
+  border-color: var(--color-accent);
+}
+
+.go-back-dialog-body {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-body);
+  line-height: var(--line-height-body);
+  margin: 0 0 var(--space-lg);
+}
+
+.go-back-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+}
+
+.go-back-dialog-cancel {
+  background: transparent;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-primary);
+  font-family: var(--font-family);
+  font-size: var(--font-size-body);
+  padding: var(--space-xs) var(--space-sm);
+  cursor: pointer;
+}
+
+.go-back-dialog-confirm.destructive {
+  background: var(--color-destructive);
+  border: none;
+  color: var(--color-text-primary);
+  font-family: var(--font-family);
+  font-size: var(--font-size-body);
+  padding: var(--space-xs) var(--space-sm);
+  cursor: pointer;
+}
+
+.go-back-dialog-confirm.destructive:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
