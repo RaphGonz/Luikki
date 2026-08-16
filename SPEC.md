@@ -76,8 +76,8 @@ That is the whole product. Everything else is an improvement to one of those ste
 ### Generation
 22. **Generate flats** button. Cobra colours each panel using the character
     sheets as reference.
-23. Each zone takes the average colour of Cobra's output inside it, then snaps
-    to the nearest palette colour.
+23. Each zone takes the *mode* — the most common colour — of Cobra's output
+    inside it, then snaps to the nearest palette colour.
 24. Cobra's raw output is never shown. The artist sees flat, palette-bound
     zones or nothing.
 25. Click a zone and reassign it to a different palette colour.
@@ -169,20 +169,30 @@ Not built yet. This is the centre of the product.
 - **The output is never shown.** It is an intermediate that exists only to be
   reduced to palette colours. Showing it would promise a fidelity the flats
   cannot keep.
-- **Per zone:** take the average colour of Cobra's output inside the zone's
-  mask, then snap it to the nearest palette entry in CIELAB.
+- **Per zone:** take the **mode** of Cobra's output inside the zone's mask —
+  the most frequently occurring colour, not the average — then snap it to the
+  nearest palette entry in CIELAB.
+
+  Mode, not average, because a zone is rarely one clean colour in Cobra's
+  output: it has an anti-aliased rim, a gradient, maybe a stray highlight. An
+  average is pulled by all of it and lands on a colour that appears nowhere in
+  the zone — skin next to a dark outline averages muddy. The mode is the colour
+  the zone actually mostly *is*, and outliers cannot drag it.
+
 - **Snapping is by palette entry id, never RGB** — see rule 1.
 
-Notes carried from earlier research, to apply when this is built:
+Two things to get right when building the snap:
 
-- Downweight `L*` when matching. Two zones of the same material under different
-  lighting must land on the same entry; that is the whole point of flats.
-- If nothing in the palette is close enough, create a new entry and flag it
-  rather than snapping to something wrong. Silent snapping to a distant colour
-  is worse than an extra entry.
-- Mode-per-zone was the earlier choice over average, because an average smears
-  across an anti-aliased edge or a gradient. Start with average as specified
-  here; if flats come out muddy, mode is a drop-in replacement.
+- **Downweight `L*`.** CIELAB has three axes: `L*` (lightness, 0 black → 100
+  white), `a*` (green↔red) and `b*` (blue↔yellow). Weighted equally, the same
+  skin in shadow and in light reads as two different colours, because only `L*`
+  moved — and they snap to two different palette entries when the colourist
+  wanted one flat. Weight `L*` less than `a*`/`b*` so matching goes on hue and
+  saturation and forgives brightness. Shading is a later layer's job, never the
+  flat's.
+- **Reject before snapping.** If nothing in the palette is close enough, create
+  a new entry and flag it rather than snapping to something wrong. Silently
+  snapping a distant colour is worse than an extra entry the artist can merge.
 
 **Licence:** Cobra is OpenRAIL++-M via its runtime PixArt pull. Keep the
 dependency pinned to the diffusers repo — the raw `.pth` mirror is AGPL and
