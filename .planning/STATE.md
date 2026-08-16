@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: planning
+status: executing
 stopped_at: Phase 2 UI-SPEC approved
-last_updated: "2026-08-16T10:02:19.930Z"
-last_activity: 2026-08-16 -- Phase 01 complete (verified, UAT 5/5, threat-secure)
+last_updated: "2026-08-16T11:07:27.226Z"
+last_activity: 2026-08-16 -- Phase 02 execution started
 progress:
   total_phases: 7
   completed_phases: 1
-  total_plans: 13
-  completed_plans: 13
+  total_plans: 27
+  completed_plans: 14
   percent: 14
 ---
 
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-08-16)
 
 **Core value:** An artist gets flats they can actually use, and every place the machine got it wrong is one click to fix.
-**Current focus:** Phase 2 — Panel Polygon Editor & Protected Masks
+**Current focus:** Phase 02 — panel-polygon-editor-protected-masks
 
 ## Current Position
 
-Phase: 2 (panel-polygon-editor-&-protected-masks) — READY TO PLAN
-Plan: Not started
-Status: Ready to plan Phase 2. Phase 01 closed 2026-08-16: 13/13 plans, code review (4 Critical + 15/20 Warning fixed, WR-10..WR-14 deferred), 144 py + 61 fe tests green, verifier 9/9 must-haves, UAT 5/5 passed, security 49/49 threats closed.
-Last activity: 2026-08-16 -- Phase 01 complete (verified, UAT 5/5, threat-secure)
+Phase: 02 (panel-polygon-editor-protected-masks) — EXECUTING
+Plan: 2 of 14
+Status: Ready to execute
+Last activity: 2026-08-16 -- Phase 02 execution started
 
 Progress: [█░░░░░░░░░] 14%
 
@@ -52,6 +52,7 @@ Progress: [█░░░░░░░░░] 14%
 - Trend: -
 
 *Updated after each plan completion*
+| Phase 02 P01 | 35 | 3 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -66,6 +67,7 @@ Recent decisions affecting current work:
 - Phase 1 (D-09): a palette recolour is a non-event for the pipeline — enforced structurally, not by convention. `routers/palette.py` and the palette views import nothing from `comiccolor.pipeline`, so the screen literally cannot move a page's stage.
 - Phase 1 (D-11): only `import` has a runner; the other seven stages are declared in `STAGES` with `runner=None` and refuse to run. The registry declares, it never orchestrates — `run_stage` never walks the chain.
 - Phase 1 (UI-SPEC §1): "no runner exists" and "reachable in a later phase" must render identically in the stage strip. `segmentStates` deliberately ignores `has_runner`; do not "fix" this in Phase 2.
+- Phase 02: jsdom legitimacy checkpoint auto-discharged per workflow.human_verify_mode: end-of-phase; evidence recorded in 02-01-SUMMARY.md, sign-off deferred to end-of-phase UAT
 
 ### Pending Todos
 
@@ -89,6 +91,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-08-16T08:07:43.876Z
+Last session: 2026-08-16T11:04:34.729Z
 Stopped at: Phase 2 UI-SPEC approved
 Resume file: .planning/phases/02-panel-polygon-editor-protected-masks/02-UI-SPEC.md
