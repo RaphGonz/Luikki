@@ -54,7 +54,18 @@ export function renderPageDetail(mount: HTMLElement, params: { pageId: number })
   const stripMount = document.createElement("div");
   stripMount.className = "page-detail-strip";
 
-  toolbarRow.append(backButton, stripMount);
+  // The door into the Phase 2 editor. `#/page/{id}/edit` and the editor
+  // behind it both shipped without any affordance that reaches them, which
+  // left the whole editor unreachable from the UI. Enabled only once the
+  // page has actually reached a stage the editor owns -- Import is still
+  // running until the page advances to `panels`.
+  const editButton = document.createElement("button");
+  editButton.type = "button";
+  editButton.className = "page-detail-edit";
+  editButton.textContent = "Edit panels";
+  editButton.disabled = true;
+
+  toolbarRow.append(backButton, stripMount, editButton);
   toolbar.slot.append(toolbarRow);
 
   let disposed = false;
@@ -62,6 +73,10 @@ export function renderPageDetail(mount: HTMLElement, params: { pageId: number })
 
   backButton.addEventListener("click", () => {
     if (volumeId !== null) navigate({ kind: "volume", volumeId });
+  });
+
+  editButton.addEventListener("click", () => {
+    navigate({ kind: "pageEditor", pageId: params.pageId });
   });
 
   void boot();
@@ -73,6 +88,13 @@ export function renderPageDetail(mount: HTMLElement, params: { pageId: number })
     toolbar.setTitle(page.original_name);
     meta.textContent = `Page ${page.index + 1}`;
     renderStageStrip(stripMount, segmentStates(stages, page.stage), "full");
+    // `import` is the only stage the editor cannot open: panels do not exist
+    // yet. Every later stage can, read-only past `protected` -- the editor
+    // decides that itself from `page.stage`, this screen only opens the door.
+    editButton.disabled = page.stage === "import";
+    editButton.title = editButton.disabled
+      ? "Available once the page has finished importing"
+      : "Edit panels and protected masks";
     renderImage(page);
   }
 

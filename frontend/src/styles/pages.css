@@ -230,3 +230,25 @@
 .page-detail-strip {
   flex: 1;
 }
+
+/* The entry point into the Phase 2 editor. Accent-filled because it is the
+   forward action on this screen -- UI-SPEC §3's rule that forward motion is
+   the path of least resistance, and the only reserved-accent use here. */
+.page-detail-edit {
+  background: var(--color-accent);
+  border: none;
+  color: var(--color-surface-dominant);
+  font-family: var(--font-family);
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-semibold);
+  height: var(--icon-hit);
+  padding: 0 var(--space-md);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.page-detail-edit:disabled {
+  background: var(--color-border);
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+}
