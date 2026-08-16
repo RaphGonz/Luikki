@@ -222,10 +222,19 @@ export function mountCanvasEditor(mount: HTMLElement, options: CanvasEditorOptio
   let hoveredEdge: HoveredEdge | null = null;
   let draftCursor: Point | null = null;
   let rafHandle: number | null = null;
+  // Tracks "a frame is pending" independently of `rafHandle`'s assignment,
+  // because a synchronous `requestAnimationFrame` stub (as jsdom tests use)
+  // runs the callback before `requestAnimationFrame(...)` itself returns --
+  // the callback's `rafHandle = null` would otherwise be clobbered by the
+  // outer `rafHandle = requestAnimationFrame(...)` assignment completing
+  // afterward, permanently blocking every later redraw.
+  let rafScheduled = false;
 
   function scheduleRedraw(): void {
-    if (rafHandle !== null) return;
+    if (rafScheduled) return;
+    rafScheduled = true;
     rafHandle = requestAnimationFrame(() => {
+      rafScheduled = false;
       rafHandle = null;
       draw();
     });
@@ -754,6 +763,7 @@ export function mountCanvasEditor(mount: HTMLElement, options: CanvasEditorOptio
       cancelAnimationFrame(rafHandle);
     }
     rafHandle = null;
+    rafScheduled = false;
     canvas.removeEventListener("pointerdown", onPointerDown);
     canvas.removeEventListener("pointermove", onPointerMove);
     canvas.removeEventListener("pointerup", onPointerUp);
