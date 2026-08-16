@@ -15,6 +15,8 @@ from comiccolor.model import (
     PaletteEntry,
     Panel,
     PipelineStage,
+    ProtectedKind,
+    ProtectedMask,
     Project,
     Region,
     RegionStatus,
@@ -40,8 +42,12 @@ def volume(store, project):
 
 
 @pytest.fixture
-def panel(store, volume):
-    page = store.add_page(Page(volume_id=volume.id, source_path="p1.png", index=0))
+def page(store, volume):
+    return store.add_page(Page(volume_id=volume.id, source_path="p1.png", index=0))
+
+
+@pytest.fixture
+def panel(store, page):
     return store.add_panel(
         Panel(page_id=page.id, x=0, y=0, width=100, height=100, reading_order=0)
     )
@@ -288,3 +294,149 @@ def test_an_uncommitted_process_death_loses_nothing(tmp_path):
         # Deliberately not calling first.close() — that would checkpoint and
         # defeat the point of this test. Just release the raw connection.
         first.conn.close()
+
+
+# ---- Panel and protected-mask CRUD (plan 02-03) ----------------------------
+
+
+def test_panel_by_id_returns_the_panel_or_none(store, panel):
+    assert store.panel_by_id(panel.id).id == panel.id
+    assert store.panel_by_id(panel.id + 999) is None
+
+
+def test_update_panel_polygon_rewrites_vertices_and_recomputes_bbox(store, panel):
+    new_polygon = [(5, 10), (55, 10), (55, 40), (5, 40)]
+
+    store.update_panel_polygon(panel.id, new_polygon)
+
+    reread = store.panel_by_id(panel.id)
+    assert reread.polygon == new_polygon
+    assert (reread.x, reread.y, reread.width, reread.height) == (5, 10, 50, 30)
+
+
+def test_update_panel_polygon_rejects_fewer_than_three_vertices(store, panel):
+    with pytest.raises(ValueError):
+        store.update_panel_polygon(panel.id, [(0, 0), (1, 1)])
+
+
+def test_update_panel_vertex_moves_one_vertex_only(store, panel):
+    store.update_panel_polygon(panel.id, [(0, 0), (10, 0), (10, 10), (0, 10)])
+
+    store.update_panel_vertex(panel.id, 1, (20, 5))
+
+    reread = store.panel_by_id(panel.id)
+    assert reread.polygon == [(0, 0), (20, 5), (10, 10), (0, 10)]
+
+
+def test_update_panel_vertex_out_of_range_raises_index_error(store, panel):
+    store.update_panel_polygon(panel.id, [(0, 0), (10, 0), (10, 10), (0, 10)])
+    with pytest.raises(IndexError):
+        store.update_panel_vertex(panel.id, 7, (0, 0))
+
+
+def test_delete_panel_leaves_other_panels_on_the_page_intact(store, page):
+    a = store.add_panel(Panel(page_id=page.id, x=0, y=0, width=10, height=10, reading_order=0))
+    b = store.add_panel(Panel(page_id=page.id, x=10, y=0, width=10, height=10, reading_order=1))
+
+    store.delete_panel(a.id)
+
+    remaining = store.panels_for_page(page.id)
+    assert [p.id for p in remaining] == [b.id]
+
+
+def test_delete_panels_for_page_removes_all_and_returns_count(store, page):
+    store.add_panel(Panel(page_id=page.id, x=0, y=0, width=10, height=10, reading_order=0))
+    store.add_panel(Panel(page_id=page.id, x=10, y=0, width=10, height=10, reading_order=1))
+
+    deleted = store.delete_panels_for_page(page.id)
+
+    assert deleted == 2
+    assert store.panels_for_page(page.id) == []
+
+
+def test_set_panel_reading_order_updates_one_row(store, page):
+    a = store.add_panel(Panel(page_id=page.id, x=0, y=0, width=10, height=10, reading_order=0))
+    b = store.add_panel(Panel(page_id=page.id, x=10, y=0, width=10, height=10, reading_order=1))
+
+    store.set_panel_reading_order(a.id, 5)
+
+    assert store.panel_by_id(a.id).reading_order == 5
+    assert store.panel_by_id(b.id).reading_order == 1
+
+
+def test_protected_for_page_orders_by_id_and_by_id_returns_one_or_none(store, page):
+    first = store.add_protected_mask(
+        ProtectedMask(page_id=page.id, kind=ProtectedKind.BUBBLE, polygon=[(0, 0), (1, 0), (1, 1)])
+    )
+    second = store.add_protected_mask(
+        ProtectedMask(page_id=page.id, kind=ProtectedKind.SFX, polygon=[(2, 2), (3, 2), (3, 3)])
+    )
+
+    masks = store.protected_for_page(page.id)
+
+    assert [m.id for m in masks] == [first.id, second.id]
+    assert store.protected_mask_by_id(first.id).id == first.id
+    assert store.protected_mask_by_id(first.id + second.id + 999) is None
+
+
+def test_update_protected_mask_polygon_rewrites_and_marks_touched(store, page):
+    mask = store.add_protected_mask(
+        ProtectedMask(
+            page_id=page.id,
+            kind=ProtectedKind.BUBBLE,
+            polygon=[(0, 0), (1, 0), (1, 1)],
+            touched=False,
+        )
+    )
+
+    store.update_protected_mask_polygon(
+        mask.id, [(0, 0), (10, 0), (10, 10), (0, 10)], area=100, bbox=(0, 0, 10, 10)
+    )
+
+    reread = store.protected_mask_by_id(mask.id)
+    assert reread.polygon == [(0, 0), (10, 0), (10, 10), (0, 10)]
+    assert reread.area == 100
+    assert reread.bbox == (0, 0, 10, 10)
+    assert reread.touched is True
+
+
+def test_delete_protected_mask_removes_one(store, page):
+    a = store.add_protected_mask(
+        ProtectedMask(page_id=page.id, kind=ProtectedKind.BUBBLE, polygon=[(0, 0), (1, 0), (1, 1)])
+    )
+    b = store.add_protected_mask(
+        ProtectedMask(page_id=page.id, kind=ProtectedKind.SFX, polygon=[(2, 2), (3, 2), (3, 3)])
+    )
+
+    store.delete_protected_mask(a.id)
+
+    remaining = store.protected_for_page(page.id)
+    assert [m.id for m in remaining] == [b.id]
+
+
+def test_delete_protected_for_page_removes_all_and_returns_count(store, page):
+    store.add_protected_mask(
+        ProtectedMask(page_id=page.id, kind=ProtectedKind.BUBBLE, polygon=[(0, 0), (1, 0), (1, 1)])
+    )
+    store.add_protected_mask(
+        ProtectedMask(page_id=page.id, kind=ProtectedKind.SFX, polygon=[(2, 2), (3, 2), (3, 3)])
+    )
+
+    deleted = store.delete_protected_for_page(page.id)
+
+    assert deleted == 2
+    assert store.protected_for_page(page.id) == []
+
+
+def test_deleting_a_page_cascades_panels_and_protected_masks(store, page):
+    panel_row = store.add_panel(
+        Panel(page_id=page.id, x=0, y=0, width=10, height=10, reading_order=0)
+    )
+    mask = store.add_protected_mask(
+        ProtectedMask(page_id=page.id, kind=ProtectedKind.BUBBLE, polygon=[(0, 0), (1, 0), (1, 1)])
+    )
+
+    store.delete_page(page.id)
+
+    assert store.panel_by_id(panel_row.id) is None
+    assert store.protected_mask_by_id(mask.id) is None
