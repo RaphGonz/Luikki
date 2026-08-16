@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: Completed 02-02-PLAN.md
-last_updated: "2026-08-16T11:44:41.602Z"
+last_updated: "2026-08-16T12:13:44.849Z"
 last_activity: 2026-08-16 -- Phase 02 execution started
 progress:
   total_phases: 7
   completed_phases: 1
   total_plans: 27
-  completed_plans: 15
+  completed_plans: 16
   percent: 14
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-08-16)
 ## Current Position
 
 Phase: 02 (panel-polygon-editor-protected-masks) — EXECUTING
-Plan: 3 of 14
+Plan: 4 of 14
 Status: Ready to execute
 Last activity: 2026-08-16 -- Phase 02 execution started
 
@@ -54,6 +54,7 @@ Progress: [█░░░░░░░░░] 14%
 *Updated after each plan completion*
 | Phase 02 P01 | 35 | 3 tasks | 7 files |
 | Phase 02 P02 | 45min | 3 tasks | 6 files |
+| Phase 02 P03 | 35min | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -71,6 +72,7 @@ Recent decisions affecting current work:
 - Phase 02: jsdom legitimacy checkpoint auto-discharged per workflow.human_verify_mode: end-of-phase; evidence recorded in 02-01-SUMMARY.md, sign-off deferred to end-of-phase UAT
 - Phase 02: D-17/D-18/D-20/D-21 implemented as specified in 02-CONTEXT.md; no reinterpretation.
 - Phase 02: [Rule 1 - Bug] expand_under_lines gained an optional protected= parameter after the boundary-crossing test caught it painting a protected-but-inked pixel (bubble across a panel's frame border).
+- [Phase ?]: Phase 02: D-17/D-18/D-20/D-21 implemented as specified in 02-CONTEXT.md (02-03); protected_for_panel deleted outright rather than kept alongside protected_for_page.
 
 ### Pending Todos
 
@@ -94,6 +96,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-08-16T11:44:41.590Z
+Last session: 2026-08-16T12:11:51.985Z
 Stopped at: Completed 02-02-PLAN.md
 Resume file: None
