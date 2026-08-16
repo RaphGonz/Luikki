@@ -1,0 +1,70 @@
+/*
+ * Canvas surround and floating zoom pill for the Phase 2/3 hand-rolled
+ * editor (D-26 -- no Konva, no canvas library). Every value below comes
+ * from an existing tokens.css custom property; this file declares no new
+ * colour, per UI-SPEC §10's full-bleed, no-card-padding content region.
+ */
+
+.canvas-editor {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: var(--color-surface-dominant);
+  overflow: hidden;
+}
+
+.canvas-editor__surface {
+  display: block;
+  width: 100%;
+  height: 100%;
+  /* Pointer Events drive every gesture (drag, insert, draw, pan) -- the
+     browser must not intercept touch/pen scroll or zoom gestures itself. */
+  touch-action: none;
+}
+
+.canvas-editor__surface:focus {
+  outline: none;
+}
+
+.canvas-editor__surface.tool-select {
+  cursor: default;
+}
+
+.canvas-editor__surface.tool-draw {
+  cursor: crosshair;
+}
+
+.canvas-editor__surface.is-panning {
+  cursor: grab;
+}
+
+/* ---- Floating zoom pill (UI-SPEC §9: bottom-right, offset --space-lg) ---- */
+
+.canvas-editor__zoom-pill {
+  position: absolute;
+  right: var(--space-lg);
+  bottom: var(--space-lg);
+  z-index: 10;
+  display: flex;
+  gap: var(--space-xs);
+  background: var(--color-surface-secondary);
+  border: 1px solid var(--color-border);
+  padding: var(--space-xs);
+}
+
+.canvas-editor__zoom-button {
+  width: var(--icon-hit);
+  height: var(--icon-hit);
+  flex: none;
+  background: transparent;
+  border: none;
+  color: var(--color-text-muted);
+  font-family: var(--font-family);
+  font-size: var(--font-size-body);
+  cursor: pointer;
+}
+
+.canvas-editor__zoom-button:hover,
+.canvas-editor__zoom-button:focus-visible {
+  color: var(--color-text-primary);
+}
