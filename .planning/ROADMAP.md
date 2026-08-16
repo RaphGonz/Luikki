@@ -46,7 +46,8 @@ Decimal phases appear between their surrounding integers in numeric order.
   5. Every one of these edits persists the moment it's made — a refresh or crash immediately afterward loses no work.
 
 **Plans**: 13 plans in 6 waves
-Plans:
+
+Plans:
 **Wave 1**
 
 - [x] 01-01-PLAN.md — Wave 0: Python dependency declarations and backend test scaffolding
@@ -92,7 +93,40 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Artist sees speech bubbles and SFX lettering proposed automatically as protected masks, draws one by hand wherever detection missed, and reshapes or deletes a proposed mask.
   4. Protected regions are excluded from every fill and colour stage and reach export completely untouched — verified on a page where art or an SFX crosses a panel boundary, not only on a clean test page.
 
-**Plans**: TBD
+**Plans**: 14 plans in 6 waves
+Plans:
+**Wave 1**
+
+- [ ] 02-01-PLAN.md — Wave 0 test harness: jsdom path in vitest, synthetic bubble/boundary-crossing page builders, persisted-page route fixture
+- [ ] 02-02-PLAN.md — Segmentation geometry: `box_to_polygon` panel seeding (D-17), lowered solidity floor (D-18), rasterize-at-use for protected masks (D-21)
+- [ ] 02-03-PLAN.md — ProtectedMask moves to page scope with polygon and touched (D-20); panel/protected store CRUD
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 02-04-PLAN.md — Bubble detection: text-seeded flood fill, area cap, contour trace (D-22/D-23/D-24/D-25)
+- [ ] 02-05-PLAN.md — Web geometry contracts: bounded vertex/polygon schemas, both router modules, app registration
+- [ ] 02-06-PLAN.md — Frontend pure editor modules: zoom-invariant hitTest, polygonState reducer, 20-op undo stack (D-26)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 02-07-PLAN.md — Stage runners `run_panels` and `run_protected`, wired into the registry
+- [ ] 02-08-PLAN.md — Panel routes: list, create, move-vertex, replace-polygon, delete with server-recomputed reading order
+- [ ] 02-09-PLAN.md — Protected-mask routes: list, hand-draw, reshape with touched transition, delete
+- [ ] 02-10-PLAN.md — `canvasEditor.ts`: hand-rolled layered draw loop, pointer interaction, pan/zoom
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 02-11-PLAN.md — Stage gate confirm and Go-Back routes with server-computed cost sentences
+- [ ] 02-12-PLAN.md — Frontend API client, DTO types, and the `#/page/{id}/edit` route
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
+- [ ] 02-13-PLAN.md — `pageEditor` view: one screen, two tool modes, two gates, session undo
+
+**Wave 6** *(blocked on Wave 5 completion)*
+
+- [ ] 02-14-PLAN.md — Go-Back dialog, toolbar wiring, and end-of-phase human verification
+
 **UI hint**: yes
 
 ### Phase 3: Zone Editor — Merge, Split, Gaps & Undo
@@ -178,7 +212,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation — Project, Palette & Pipeline Backbone | 13/13 | Complete    | 2026-08-16 |
-| 2. Panel Polygon Editor & Protected Masks | 0/TBD | Not started | - |
+| 2. Panel Polygon Editor & Protected Masks | 0/14 | Planned     | - |
 | 3. Zone Editor — Merge, Split, Gaps & Undo | 0/TBD | Not started | - |
 | 4. Cobra Worker & Isolated Colour Proposal | 0/TBD | Not started | - |
 | 5. Mode Extraction, CIELAB Snapping & Confidence Triage | 0/TBD | Not started | - |
