@@ -371,6 +371,65 @@ class Store:
         self._execute("UPDATE panel SET label_map_path = ? WHERE id = ?", (path, panel_id))
         self.conn.commit()
 
+    def panel_by_id(self, panel_id: int) -> Panel | None:
+        row = self.conn.execute("SELECT * FROM panel WHERE id = ?", (panel_id,)).fetchone()
+        return _panel(row) if row else None
+
+    def update_panel_polygon(self, panel_id: int, polygon: list[tuple[int, int]]) -> None:
+        """Rewrite a panel's vertex list and recompute its bounding box.
+
+        ``Panel.x/y/width/height`` is documented as "panel bounds in page
+        pixel coordinates", and every downstream consumer (label maps, panel
+        clipping, export grouping) reads the box, not the polygon — so a
+        polygon edit that left the box stale would corrupt those consumers
+        silently. Recomputing here, the one place a polygon is written, keeps
+        the box and the polygon from ever drifting apart (T-2-15: rejects a
+        degenerate polygon rather than computing ``min()``/``max()`` over an
+        empty sequence).
+        """
+        if len(polygon) < 3:
+            raise ValueError("a panel polygon needs at least 3 vertices")
+        xs = [p[0] for p in polygon]
+        ys = [p[1] for p in polygon]
+        x, y = min(xs), min(ys)
+        width, height = max(xs) - x, max(ys) - y
+        self._execute(
+            "UPDATE panel SET polygon = ?, x = ?, y = ?, width = ?, height = ?"
+            " WHERE id = ?",
+            (json.dumps(polygon), x, y, width, height, panel_id),
+        )
+        self.conn.commit()
+
+    def update_panel_vertex(
+        self, panel_id: int, vertex_index: int, point: tuple[int, int]
+    ) -> None:
+        """Move exactly one vertex, leaving the rest byte-identical.
+
+        Delegates to ``update_panel_polygon`` so the bbox recompute happens
+        in exactly one place.
+        """
+        panel = self.panel_by_id(panel_id)
+        if panel is None or not (0 <= vertex_index < len(panel.polygon)):
+            raise IndexError(f"vertex index {vertex_index} out of range")
+        polygon = list(panel.polygon)
+        polygon[vertex_index] = point
+        self.update_panel_polygon(panel_id, polygon)
+
+    def delete_panel(self, panel_id: int) -> None:
+        self._execute("DELETE FROM panel WHERE id = ?", (panel_id,))
+        self.conn.commit()
+
+    def delete_panels_for_page(self, page_id: int) -> int:
+        cur = self._execute("DELETE FROM panel WHERE page_id = ?", (page_id,))
+        self.conn.commit()
+        return cur.rowcount
+
+    def set_panel_reading_order(self, panel_id: int, reading_order: int) -> None:
+        self._execute(
+            "UPDATE panel SET reading_order = ? WHERE id = ?", (reading_order, panel_id)
+        )
+        self.conn.commit()
+
     # ---- Palette / Entity ------------------------------------------------
 
     def add_entity(self, entity: Entity) -> Entity:
@@ -575,6 +634,44 @@ class Store:
         self.conn.commit()
         mask.id = cur.lastrowid
         return mask
+
+    def protected_for_page(self, page_id: int) -> list[ProtectedMask]:
+        rows = self.conn.execute(
+            "SELECT * FROM protected_mask WHERE page_id = ? ORDER BY id", (page_id,)
+        ).fetchall()
+        return [_protected(r) for r in rows]
+
+    def protected_mask_by_id(self, mask_id: int) -> ProtectedMask | None:
+        row = self.conn.execute(
+            "SELECT * FROM protected_mask WHERE id = ?", (mask_id,)
+        ).fetchone()
+        return _protected(row) if row else None
+
+    def update_protected_mask_polygon(
+        self,
+        mask_id: int,
+        polygon: list[tuple[int, int]],
+        area: int,
+        bbox: tuple[int, int, int, int],
+    ) -> None:
+        """UI-SPEC §3: any reshape is by definition an artist touch — there is
+        no path that rewrites a polygon without the mask becoming artist-
+        owned, so ``touched`` is unconditionally set to 1 here."""
+        self._execute(
+            "UPDATE protected_mask SET polygon = ?, area = ?, bbox_x = ?,"
+            " bbox_y = ?, bbox_w = ?, bbox_h = ?, touched = 1 WHERE id = ?",
+            (json.dumps(polygon), area, *bbox, mask_id),
+        )
+        self.conn.commit()
+
+    def delete_protected_mask(self, mask_id: int) -> None:
+        self._execute("DELETE FROM protected_mask WHERE id = ?", (mask_id,))
+        self.conn.commit()
+
+    def delete_protected_for_page(self, page_id: int) -> int:
+        cur = self._execute("DELETE FROM protected_mask WHERE page_id = ?", (page_id,))
+        self.conn.commit()
+        return cur.rowcount
 
 
 # ---- Row adapters ---------------------------------------------------------
