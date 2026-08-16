@@ -69,7 +69,6 @@ Recent decisions affecting current work:
 
 ### Pending Todos
 
-- `01-UI-SPEC.md:150` says "Import as Completed and all seven remaining segments neutral", which is self-contradictory — with `Import` complete the pointer is on `Panels`, which renders as Current. Correct to "Import Completed, Panels Current, the remaining six neutral" before Phase 2 builds the panel editor against this text.
 - `01-03-PLAN.md`'s `T-01-PATH-DB` transfer text cites plan 01-06 for the receiving control; it actually ships in 01-07 (`routers/project.py:72-86`). Cross-reference only — the control is present and verified closed.
 - `REQUIREMENTS.md` Traceability is missing 8 REQ-IDs that appear in the body: SHAD-01, IDENT-01, IDENT-02, ZONE-07, PAN-04, LOG-01, HOST-01, HOST-02.
 
