@@ -6,6 +6,7 @@
  */
 
 import { renderPageDetail } from "../views/pageDetail";
+import { renderPageEditor } from "../views/pageEditor";
 import { renderPageGrid } from "../views/pageGrid";
 import { renderPalette } from "../views/palette";
 import { renderProjectPicker } from "../views/projectPicker";
@@ -14,6 +15,7 @@ export type Route =
   | { kind: "picker" }
   | { kind: "volume"; volumeId: number }
   | { kind: "page"; pageId: number }
+  | { kind: "pageEditor"; pageId: number }
   | { kind: "palette" };
 
 /**
@@ -28,7 +30,7 @@ export function parseRoute(hash: string): Route {
 
   if (parts.length === 0) return { kind: "picker" };
 
-  const [kind, idPart] = parts;
+  const [kind, idPart, thirdPart] = parts;
 
   if (kind === "picker") return { kind: "picker" };
   if (kind === "palette") return { kind: "palette" };
@@ -36,6 +38,15 @@ export function parseRoute(hash: string): Route {
   if ((kind === "volume" || kind === "page") && idPart !== undefined) {
     const id = Number(idPart);
     if (Number.isInteger(id) && id >= 0) {
+      // `#/page/{id}/edit` is the page-editor route (02-UI-SPEC.md §1: one
+      // route per page, independent of which of the two Phase 2 stages is
+      // current -- the tool mode keys off `page.stage`, not the URL).
+      // A malformed id falls all the way through to the picker fallback
+      // below, same as every other route -- this is T-01-HASH's mitigation
+      // reused, not re-derived, for the new `edit` form.
+      if (kind === "page" && thirdPart === "edit") {
+        return { kind: "pageEditor", pageId: id };
+      }
       return kind === "volume"
         ? { kind: "volume", volumeId: id }
         : { kind: "page", pageId: id };
@@ -54,6 +65,8 @@ export function buildHash(route: Route): string {
       return `#/volume/${route.volumeId}`;
     case "page":
       return `#/page/${route.pageId}`;
+    case "pageEditor":
+      return `#/page/${route.pageId}/edit`;
     case "palette":
       return "#/palette";
   }
@@ -72,6 +85,8 @@ function dispatch(route: Route, mount: HTMLElement): () => void {
       return renderPageGrid(mount, { volumeId: route.volumeId });
     case "page":
       return renderPageDetail(mount, { pageId: route.pageId });
+    case "pageEditor":
+      return renderPageEditor(mount, { pageId: route.pageId });
     case "palette":
       return renderPalette(mount);
   }
