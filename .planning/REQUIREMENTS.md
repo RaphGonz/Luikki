@@ -25,7 +25,7 @@ to colourists over video call. Each maps to exactly one roadmap phase.
 
 ### Panels
 
-- [ ] **PAN-01**: App detects panels on a page and presents them as polygons in reading order
+- [x] **PAN-01**: App detects panels on a page and presents them as polygons in reading order
 - [ ] **PAN-02**: User can drag, add and delete a polygon's vertices to correct a detected panel
 - [ ] **PAN-03**: User can draw a panel the detector missed, and delete one it invented
 
@@ -34,7 +34,7 @@ to colourists over video call. Each maps to exactly one roadmap phase.
 - [ ] **PROT-01**: App detects speech bubbles and SFX lettering and proposes them as protected masks
 - [ ] **PROT-02**: User can draw a protected mask by hand where detection missed one
 - [ ] **PROT-03**: User can reshape or delete a proposed protected mask
-- [ ] **PROT-04**: Protected regions are excluded from every fill and colour stage and reach export untouched
+- [x] **PROT-04**: Protected regions are excluded from every fill and colour stage and reach export untouched
 
 ### Zones
 
@@ -133,13 +133,13 @@ Which phases cover which requirements. Populated during roadmap creation.
 | PAL-02 | Phase 1 — Foundation: Project, Palette & Pipeline Backbone | Complete |
 | PAL-03 | Phase 1 — Foundation: Project, Palette & Pipeline Backbone | Complete |
 | PAL-04 | Phase 1 — Foundation: Project, Palette & Pipeline Backbone | Complete |
-| PAN-01 | Phase 2 — Panel Polygon Editor & Protected Masks | Pending |
+| PAN-01 | Phase 2 — Panel Polygon Editor & Protected Masks | Complete |
 | PAN-02 | Phase 2 — Panel Polygon Editor & Protected Masks | Pending |
 | PAN-03 | Phase 2 — Panel Polygon Editor & Protected Masks | Pending |
 | PROT-01 | Phase 2 — Panel Polygon Editor & Protected Masks | Pending |
 | PROT-02 | Phase 2 — Panel Polygon Editor & Protected Masks | Pending |
 | PROT-03 | Phase 2 — Panel Polygon Editor & Protected Masks | Pending |
-| PROT-04 | Phase 2 — Panel Polygon Editor & Protected Masks | Pending |
+| PROT-04 | Phase 2 — Panel Polygon Editor & Protected Masks | Complete |
 | ZONE-01 | Phase 3 — Zone Editor: Merge, Split, Gaps & Undo | Pending |
 | ZONE-02 | Phase 3 — Zone Editor: Merge, Split, Gaps & Undo | Pending |
 | ZONE-03 | Phase 3 — Zone Editor: Merge, Split, Gaps & Undo | Pending |

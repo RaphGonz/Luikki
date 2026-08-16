@@ -98,7 +98,7 @@ Plans:
 **Wave 1**
 
 - [x] 02-01-PLAN.md — Wave 0 test harness: jsdom path in vitest, synthetic bubble/boundary-crossing page builders, persisted-page route fixture
-- [ ] 02-02-PLAN.md — Segmentation geometry: `box_to_polygon` panel seeding (D-17), lowered solidity floor (D-18), rasterize-at-use for protected masks (D-21)
+- [x] 02-02-PLAN.md — Segmentation geometry: `box_to_polygon` panel seeding (D-17), lowered solidity floor (D-18), rasterize-at-use for protected masks (D-21)
 - [ ] 02-03-PLAN.md — ProtectedMask moves to page scope with polygon and touched (D-20); panel/protected store CRUD
 
 **Wave 2** *(blocked on Wave 1 completion)*
@@ -212,7 +212,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation — Project, Palette & Pipeline Backbone | 13/13 | Complete    | 2026-08-16 |
-| 2. Panel Polygon Editor & Protected Masks | 1/14 | In Progress|  |
+| 2. Panel Polygon Editor & Protected Masks | 2/14 | In Progress|  |
 | 3. Zone Editor — Merge, Split, Gaps & Undo | 0/TBD | Not started | - |
 | 4. Cobra Worker & Isolated Colour Proposal | 0/TBD | Not started | - |
 | 5. Mode Extraction, CIELAB Snapping & Confidence Triage | 0/TBD | Not started | - |
