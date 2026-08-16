@@ -1,11 +1,14 @@
+import cv2
 import numpy as np
 
 from comiccolor.model.masks import check_coverage, region_count, region_stats
+from comiccolor.segmentation.protected import rasterize_protected_for_panel
 from comiccolor.segmentation.trappedball import (
     SegmentationParams,
     expand_under_lines,
     trapped_ball_segment,
 )
+from tests.conftest import boundary_crossing_page
 
 
 def _box_page(gap: int = 0) -> np.ndarray:
@@ -97,3 +100,43 @@ def test_labels_are_positive_and_stats_agree_with_pixels():
     stats = region_stats(labels)
     assert all(label > 0 for label in stats)
     assert sum(area for area, _ in stats.values()) == int(np.count_nonzero(labels))
+
+
+def test_protected_pixels_stay_unassigned_across_a_panel_boundary():
+    """PROT-04 / success criterion 4, unit-level half.
+
+    A page-scoped bubble (D-20) that straddles the gutter between two panels
+    must leave zero protected pixels carrying a non-zero label in EITHER
+    panel's own segmentation, before and after `expand_under_lines` -- the
+    step most likely to leak a label into a protected area. The manual
+    end-to-end UAT pass on a real page with real ink is the other half,
+    recorded in 02-VALIDATION.md's Manual-Only table.
+    """
+    _, line_mask, panel_boxes = boundary_crossing_page()
+    height, _ = line_mask.shape
+    gutter = 30
+    panel1_x, panel_y, panel_w, _ = panel_boxes[0]
+
+    # The bubble's page-space polygon, derived from boundary_crossing_page's
+    # own known geometry (same centre/axes it drew its ellipse outline with).
+    gutter_mid_x = panel1_x + panel_w + gutter // 2
+    centre = (gutter_mid_x, height // 2)
+    axes = (gutter + 20, 40)
+    polygon = [(int(x), int(y)) for x, y in cv2.ellipse2Poly(centre, axes, 0, 0, 360, 5)]
+
+    for panel_x, panel_y, panel_w, panel_h in panel_boxes:
+        panel_line = line_mask[panel_y : panel_y + panel_h, panel_x : panel_x + panel_w]
+        panel_protected = rasterize_protected_for_panel(
+            [polygon], panel_x, panel_y, panel_w, panel_h
+        )
+
+        # Assert non-vacuity first: the clip must actually land something.
+        assert panel_protected.any(), "bubble should reach this panel's interior"
+
+        labels = trapped_ball_segment(
+            panel_line, protected=panel_protected, params=SegmentationParams(min_area=4)
+        )
+        assert not labels[panel_protected].any()
+
+        expanded = expand_under_lines(labels, panel_line, protected=panel_protected)
+        assert not expanded[panel_protected].any()

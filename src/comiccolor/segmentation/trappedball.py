@@ -258,14 +258,24 @@ def merge_small_regions(labels: np.ndarray, params: SegmentationParams) -> np.nd
     return labels
 
 
-def expand_under_lines(labels: np.ndarray, line_mask: np.ndarray) -> np.ndarray:
+def expand_under_lines(
+    labels: np.ndarray,
+    line_mask: np.ndarray,
+    protected: np.ndarray | None = None,
+) -> np.ndarray:
     """Grow each region under the ink so flats composite without fringing.
 
     §10: anti-aliased line art needs the flat colour to continue *beneath* the
     line, otherwise the AA edge blends toward paper white and haloes. Every
     line pixel takes the label of its nearest region.
 
-    Protected pixels are left at 0 — bubbles must stay unpainted.
+    Protected pixels are left at 0 — bubbles must stay unpainted. A protected
+    polygon can overlap an ink pixel (e.g. a bubble drawn across a panel
+    frame border), and a pixel that is both "line" and "protected" must stay
+    protected: expansion is a line-art fix, and PROT-04 (D-21) always wins
+    that conflict. Without ``protected`` this can only key off ``line_mask``,
+    which is correct whenever protection and ink never overlap — pass
+    ``protected`` explicitly whenever that is not guaranteed.
     """
     from scipy import ndimage
 
@@ -279,5 +289,7 @@ def expand_under_lines(labels: np.ndarray, line_mask: np.ndarray) -> np.ndarray:
 
     out = labels.copy()
     target = line_mask & (labels == UNASSIGNED)
+    if protected is not None:
+        target &= ~protected
     out[target] = expanded[target]
     return out
