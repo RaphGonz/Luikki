@@ -14,18 +14,26 @@
 
 import type {
   BrowseDto,
+  GoBackTargetDto,
   PageDto,
   PageUploadDto,
   PaletteEntryDto,
   PaletteUpdateDto,
+  PanelListDto,
+  PipelineStageName,
   ProjectDto,
+  ProtectedKindDto,
+  ProtectedMaskDto,
+  ProtectedMaskListDto,
   RecentProjectDto,
   RGBTuple,
   SheetAcceptDto,
   SheetAcceptItemDto,
   SheetProposalDto,
+  StageConfirmDto,
   StageDto,
   SwatchExtractDto,
+  VertexDto,
   VolumeDto,
 } from "./types";
 
@@ -124,8 +132,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
  * `api` groups typed functions for every route the phase exposes:
  * `projects.create/open/current/close/recent/browse`,
  * `volumes.list/create/rename/remove`,
- * `pages.upload/list/get/remove/imageUrl`,
+ * `pages.upload/list/get/remove/imageUrl/confirmStage/goBackTargets/goBack`,
  * `pipeline.stages`,
+ * `panels.list/create/moveVertex/setPolygon/remove`,
+ * `protected.list/create/moveVertex/setPolygon/remove`,
  * `palette.list/create/update/remove/swatch`,
  * `references.uploadSheet/accept/discard/sheetImageUrl`.
  *
@@ -169,9 +179,68 @@ export const api = {
     remove: (pageId: number): Promise<void> =>
       request(apiUrl(`/pages/${pageId}`), { method: "DELETE" }),
     imageUrl: (pageId: number): string => apiUrl(`/pages/${pageId}/image`),
+    // The three stage-gate routes (D-06/D-07 forward-only, D-08 costed
+    // go-back). `confirmStage` runs the arriving stage's runner server-side
+    // and reports its outcome; `goBackTargets`/`goBack` are 01-UI-SPEC.md
+    // §3's costed confirmation dialog made real for Panels and Protected.
+    confirmStage: (pageId: number): Promise<StageConfirmDto> =>
+      request(apiUrl(`/pages/${pageId}/stage/confirm`), { method: "POST" }),
+    goBackTargets: (pageId: number): Promise<GoBackTargetDto[]> =>
+      request(apiUrl(`/pages/${pageId}/stage/go-back-targets`)),
+    goBack: (pageId: number, target: PipelineStageName): Promise<StageConfirmDto> =>
+      request(apiUrl(`/pages/${pageId}/stage/go-back`), jsonRequest("POST", { target })),
   },
   pipeline: {
     stages: (): Promise<StageDto[]> => request(apiUrl("/pipeline/stages")),
+  },
+  // PAN-01/02/03. Every mutation returns the whole page's panel list (never
+  // the single changed panel) because the server recomputes reading order
+  // on each write and the client must never renumber locally.
+  panels: {
+    list: (pageId: number): Promise<PanelListDto> =>
+      request(apiUrl(`/pages/${pageId}/panels`)),
+    create: (pageId: number, polygon: VertexDto[]): Promise<PanelListDto> =>
+      request(apiUrl(`/pages/${pageId}/panels`), jsonRequest("POST", { polygon })),
+    moveVertex: (
+      panelId: number,
+      index: number,
+      point: VertexDto,
+    ): Promise<PanelListDto> =>
+      request(
+        apiUrl(`/panels/${panelId}/vertex/${index}`),
+        jsonRequest("PATCH", { x: point[0], y: point[1] }),
+      ),
+    setPolygon: (panelId: number, polygon: VertexDto[]): Promise<PanelListDto> =>
+      request(apiUrl(`/panels/${panelId}/polygon`), jsonRequest("PATCH", { polygon })),
+    remove: (panelId: number): Promise<PanelListDto> =>
+      request(apiUrl(`/panels/${panelId}`), { method: "DELETE" }),
+  },
+  // PROT-01/02/03. D-20: page-scoped, never panel-scoped -- there is no
+  // per-panel listing route. `remove` resolves to void because the delete
+  // route answers 204, unlike a panel delete which renumbers and must
+  // return the list.
+  protected: {
+    list: (pageId: number): Promise<ProtectedMaskListDto> =>
+      request(apiUrl(`/pages/${pageId}/protected`)),
+    create: (
+      pageId: number,
+      kind: ProtectedKindDto,
+      polygon: VertexDto[],
+    ): Promise<ProtectedMaskDto> =>
+      request(apiUrl(`/pages/${pageId}/protected`), jsonRequest("POST", { kind, polygon })),
+    moveVertex: (
+      maskId: number,
+      index: number,
+      point: VertexDto,
+    ): Promise<ProtectedMaskDto> =>
+      request(
+        apiUrl(`/protected/${maskId}/vertex/${index}`),
+        jsonRequest("PATCH", { x: point[0], y: point[1] }),
+      ),
+    setPolygon: (maskId: number, polygon: VertexDto[]): Promise<ProtectedMaskDto> =>
+      request(apiUrl(`/protected/${maskId}/polygon`), jsonRequest("PATCH", { polygon })),
+    remove: (maskId: number): Promise<void> =>
+      request(apiUrl(`/protected/${maskId}`), { method: "DELETE" }),
   },
   palette: {
     list: (): Promise<PaletteEntryDto[]> => request(apiUrl("/palette")),

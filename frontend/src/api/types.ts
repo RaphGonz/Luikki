@@ -131,3 +131,78 @@ export interface SheetAcceptDto {
   entity_id: number;
   entries: PaletteEntryDto[];
 }
+
+// ---- Panels -----------------------------------------------------------
+
+/** A single `[x, y]` page-space pixel coordinate, matching `schemas.py`'s `Vertex`. */
+export type VertexDto = [number, number];
+
+export interface PanelDto {
+  id: number;
+  page_id: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  reading_order: number;
+  polygon: VertexDto[];
+}
+
+/**
+ * A page's whole panel list. Every mutating panel route returns this rather
+ * than the single changed panel -- the server owns reading order and
+ * recomputes it on each mutation (`_recompute_reading_order`), so the client
+ * renders what it is given and never renumbers locally.
+ */
+export interface PanelListDto {
+  panels: PanelDto[];
+}
+
+// ---- Protected masks ----------------------------------------------------
+
+export type ProtectedKindDto = "bubble" | "sfx";
+
+export interface ProtectedMaskDto {
+  id: number;
+  page_id: number;
+  kind: ProtectedKindDto;
+  polygon: VertexDto[];
+  // UI-SPEC §3: false renders a dashed outline (detector-proposed and
+  // untouched), true renders solid (hand-drawn or reshaped).
+  touched: boolean;
+  area: number;
+  bbox: [number, number, number, number];
+}
+
+export interface ProtectedMaskListDto {
+  masks: ProtectedMaskDto[];
+  // UI-SPEC §4's copy: bubble detection failing is a non-blocking inline
+  // banner, never a blocking error -- PROT-02's hand-drawing is the
+  // guaranteed fallback.
+  detection_failed: boolean;
+  detection_message: string | null;
+}
+
+// ---- Pipeline stage confirmation -----------------------------------------
+
+export interface StageConfirmDto {
+  page: PageDto;
+  detection_failed: boolean;
+  detection_message: string | null;
+}
+
+/**
+ * 01-UI-SPEC.md §3: every one of these strings is server-computed from real
+ * counts at the moment the dialog opens; a target whose count cannot be
+ * computed is simply not returned, and the client never assembles a
+ * sentence itself.
+ */
+export interface GoBackTargetDto {
+  stage: PipelineStageName;
+  display_name: string;
+  heading: string;
+  body: string;
+  confirm_label: string;
+  cancel_label: string;
+  discarded_count: number;
+}
