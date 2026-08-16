@@ -43,17 +43,23 @@ wrong is one click to fix.
   persisted reports — existing (`spike/p3.py`, `spike/ab.py`, `reports/`)
 - ✓ P1–P4 prerequisites resolved — licence chain clear of AGPL, export format
   and structure decided, segmentation viability proven
+- ✓ Artist creates a persistent project and adds pages to it over time, with
+  the palette accumulating across pages — Phase 1 (PROJ-01..05)
+- ✓ Artist uploads a swatch image and the app builds palette entries from it —
+  Phase 1 (PAL-01)
+- ✓ App proposes palette entries extracted from an uploaded character sheet;
+  artist accepts, rejects or edits each one — Phase 1 (PAL-02), proposals
+  ephemeral and re-derived server-side, bound only at accept time
+- ✓ Artist adds or edits palette entries by hand, and names them — Phase 1
+  (PAL-03/PAL-04); a recolour propagates without re-running any stage
+- ✓ Pipeline stage registry, screen↔label-map coordinate transform, and the
+  label-map exclusivity/exhaustiveness invariant check — Phase 1, built and
+  unit-tested before any editor depends on them
 
 ### Active
 
 <!-- v1 scope. Hypotheses until a colourist uses them on a real page. -->
 
-- [ ] Artist creates a persistent project and adds pages to it over time, with
-      the palette accumulating across pages
-- [ ] Artist uploads a swatch image and the app builds palette entries from it
-- [ ] App proposes palette entries extracted from an uploaded character sheet;
-      artist accepts, rejects or edits each one
-- [ ] Artist adds or edits palette entries by hand, and names them
 - [ ] App detects panels as polygons and the artist can drag, add and delete
       vertices, or draw a panel from scratch
 - [ ] App masks speech bubbles and SFX lettering as protected regions, with
@@ -166,7 +172,11 @@ implementation.
 | Local web app rather than desktop or hosted | Same codebase deploys to a server later without a rewrite; hosting stays trivial by construction | — Pending |
 | Single machine, supervised video-call testing | "Let's keep it ultra simple" — removes auth, uploads, tester hardware and remote inference from v1 entirely | — Pending |
 | Two editing surfaces, not one | Geometry editor before colourisation, colour-correction view after; cleaner flow at the cost of more UI | — Pending |
-| Persistent project as the unit of work | Palette accumulates across pages, which is what makes the §5 hint-collapse metric measurable at all | — Pending |
+| Persistent project as the unit of work | Palette accumulates across pages, which is what makes the §5 hint-collapse metric measurable at all | ✓ Good — Phase 1; one project per folder, enforced by `project.id CHECK (id = 1)` |
+| One SQLite database per project folder, WAL + checkpoint on close | A project is a folder the artist can copy, and a checkpointed WAL means the copy is never a partial database | ✓ Good — Phase 1 |
+| No Save button anywhere; every edit commits synchronously | PROJ-05 is "a refresh or crash loses no work"; a write buffer is the thing that would break it | ✓ Good — Phase 1 |
+| Character-sheet proposals are ephemeral, re-derived server-side | The client sends an index, never an RGB value, so it cannot inject a colour under a character's name; nothing persists until accept | ✓ Good — Phase 1 (D-05) |
+| Stage registry declares, never orchestrates | `run_stage` refuses unimplemented stages and never walks the chain, so forward-only-with-confirmation stays true by construction | ✓ Good — Phase 1 (D-10/D-11) |
 | Palette from a separate swatch image upload | Artists already have a palette prepared for the whole project; extraction from character sheets is a proposal layer on top, not the source | — Pending |
 | Panel polygons are editable by the artist | Open panels and border-crossing art are unsolved; making the boundary editable sidesteps the research problem | — Pending |
 | Traced splits cut the label map only | The artist's line art is returned untouched; `masks.py` already makes split a relabel | — Pending |
@@ -194,4 +204,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-08-02 after initialization*
+*Last updated: 2026-08-16 after Phase 1*

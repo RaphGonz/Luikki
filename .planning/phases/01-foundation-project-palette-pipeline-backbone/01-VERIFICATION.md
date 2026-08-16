@@ -1,7 +1,8 @@
 ---
 phase: 01-foundation-project-palette-pipeline-backbone
 verified: 2026-08-15T22:46:38Z
-status: human_needed
+status: passed
+human_verification_resolved: 2026-08-16 — all 5 items passed UAT (01-UAT.md, 5 passed / 0 issues)
 score: 9/9 must-haves verified (roadmap success criteria); 9/9 requirement IDs SATISFIED
 overrides_applied: 0
 human_verification:
@@ -27,8 +28,15 @@ human_verification:
 **Phase Goal:** An artist can create a persistent project, add pages and reference images to it over time, and build a palette by hand, from a swatch, or from a proposed character-sheet extraction — with every edit surviving a refresh or crash. Underneath, the pipeline stage registry, the shared screen↔label-map coordinate transform, and the label-map exclusivity/exhaustiveness invariant check are built and unit-tested as the foundation every later editor and stage depends on.
 
 **Verified:** 2026-08-15T22:46:38Z
-**Status:** human_needed
+**Status:** passed (2026-08-16 — human verification items resolved)
 **Re-verification:** No — initial verification
+
+> **Human verification closed 2026-08-16.** All five items in the `human_verification`
+> frontmatter were walked manually against the running app (`/gsd-verify-work 1`):
+> 5 passed, 0 issues — see `01-UAT.md`. One question was raised on item 5 (stage strip
+> rendering Import filled and Panels outlined); confirmed correct against
+> `01-UI-SPEC.md:145-146` and `pipeline/runner.py:39`, and logged there as a
+> documentation defect in `01-UI-SPEC.md:150`, not a code defect.
 
 ## Goal Achievement
 
