@@ -165,8 +165,12 @@ def test_pipeline_stages_endpoint_lists_eight_stages(blank_client):
         "review",
         "export",
     ]
-    assert sum(1 for s in stages if s["has_runner"]) == 1
+    # Phase 2 (02-07) fills in panels and protected alongside import.
+    assert sum(1 for s in stages if s["has_runner"]) == 3
     assert stages[0]["has_runner"] is True
+    assert stages[1]["has_runner"] is True
+    assert stages[2]["has_runner"] is True
+    assert all(s["has_runner"] is False for s in stages[3:])
 
 
 def test_a_bad_file_does_not_lose_the_good_ones(client):

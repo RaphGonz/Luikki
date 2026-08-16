@@ -89,13 +89,16 @@ def test_stage_chain_is_declared_in_order():
     ]
 
 
-def test_only_import_has_a_runner():
-    """D-11: exactly one Stage in the registry has a non-None runner —
-    every later stage is a declared destination, not yet an implemented
-    transition."""
-    with_runner = [stage for stage in STAGES if stage.runner is not None]
-    assert len(with_runner) == 1
-    assert with_runner[0].name is PipelineStage.IMPORT
+def test_exactly_three_stages_have_a_runner():
+    """Phase 2 fills in ``panels`` and ``protected`` alongside ``import``
+    (D-11) — every later stage is still a declared destination, not yet an
+    implemented transition."""
+    with_runner = {stage.name for stage in STAGES if stage.runner is not None}
+    assert with_runner == {
+        PipelineStage.IMPORT,
+        PipelineStage.PANELS,
+        PipelineStage.PROTECTED,
+    }
 
 
 def test_every_stage_except_import_has_an_upstream():
@@ -255,3 +258,14 @@ def test_run_protected_raises_typed_error_and_preserves_prior_masks(
 def test_run_protected_raises_file_not_found_when_source_path_missing(store, page):
     with pytest.raises(FileNotFoundError):
         run_protected(store, page)
+
+
+def test_run_stage_for_panels_does_not_walk_the_chain(store, bubble_page_page):
+    """D-10: ``run_stage`` calls exactly the named stage's runner and stops.
+    Running ``PANELS`` through the registry must not also run ``protected``
+    and must not advance ``page.stage`` on its own."""
+    run_stage(store, bubble_page_page, PipelineStage.PANELS)
+
+    assert bubble_page_page.stage is PipelineStage.PANELS
+    assert store.page_by_id(bubble_page_page.id).stage is PipelineStage.PANELS
+    assert store.protected_for_page(bubble_page_page.id) == []

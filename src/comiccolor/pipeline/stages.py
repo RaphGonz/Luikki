@@ -41,7 +41,7 @@ from typing import Callable
 
 from ..model.entities import Page, PipelineStage
 from ..model.store import Store
-from .runner import run_import
+from .runner import run_import, run_panels, run_protected
 
 # A stage runner mutates the page/store to advance past its own gate. It
 # never walks the chain — see the module docstring's point 2 (D-10).
@@ -53,8 +53,10 @@ class Stage:
     """One entry in the declared chain.
 
     ``runner`` is ``None`` for every stage that has no implementation yet
-    (D-11) — a declared-but-unimplemented stage is a normal, expected state
-    this phase, not an error condition.
+    (D-11) — a declared-but-unimplemented stage is a normal, expected state.
+    Six of the eight stages are still declared without a runner as of
+    Phase 2 (only ``import``, ``panels`` and ``protected`` are live); that
+    remains normal, not stale, until a later phase fills in the rest.
     """
 
     name: PipelineStage
@@ -79,14 +81,14 @@ STAGES: list[Stage] = [
         display_name="Panels",
         upstream=PipelineStage.IMPORT,
         produces="panel polygons",
-        runner=None,
+        runner=run_panels,
     ),
     Stage(
         name=PipelineStage.PROTECTED,
         display_name="Protected",
         upstream=PipelineStage.PANELS,
         produces="protected masks (bubbles, SFX, borders, text)",
-        runner=None,
+        runner=run_protected,
     ),
     Stage(
         name=PipelineStage.ZONES,
