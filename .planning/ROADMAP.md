@@ -109,10 +109,10 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 02-07-PLAN.md — Stage runners `run_panels` and `run_protected`, wired into the registry
-- [ ] 02-08-PLAN.md — Panel routes: list, create, move-vertex, replace-polygon, delete with server-recomputed reading order
-- [ ] 02-09-PLAN.md — Protected-mask routes: list, hand-draw, reshape with touched transition, delete
-- [ ] 02-10-PLAN.md — `canvasEditor.ts`: hand-rolled layered draw loop, pointer interaction, pan/zoom
+- [x] 02-07-PLAN.md — Stage runners `run_panels` and `run_protected`, wired into the registry
+- [x] 02-08-PLAN.md — Panel routes: list, create, move-vertex, replace-polygon, delete with server-recomputed reading order
+- [x] 02-09-PLAN.md — Protected-mask routes: list, hand-draw, reshape with touched transition, delete
+- [x] 02-10-PLAN.md — `canvasEditor.ts`: hand-rolled layered draw loop, pointer interaction, pan/zoom
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
@@ -212,7 +212,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation — Project, Palette & Pipeline Backbone | 13/13 | Complete    | 2026-08-16 |
-| 2. Panel Polygon Editor & Protected Masks | 6/14 | In Progress|  |
+| 2. Panel Polygon Editor & Protected Masks | 10/14 | In Progress|  |
 | 3. Zone Editor — Merge, Split, Gaps & Undo | 0/TBD | Not started | - |
 | 4. Cobra Worker & Isolated Colour Proposal | 0/TBD | Not started | - |
 | 5. Mode Extraction, CIELAB Snapping & Confidence Triage | 0/TBD | Not started | - |
