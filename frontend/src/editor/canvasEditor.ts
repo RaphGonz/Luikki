@@ -728,12 +728,25 @@ export function mountCanvasEditor(mount: HTMLElement, options: CanvasEditorOptio
   // editor's box without changing the window's (sidebar collapse, gate banner
   // appearing, the toolbar wrapping). Observe the mount itself, and treat the
   // first observation with a real box as the true initial fit.
+  //
+  // The size check is not an optimisation, it is what stops the observer
+  // feeding itself: reacting writes `canvas.width/height`, which relayouts
+  // the mount, which fires the observer again. Only act when the box really
+  // changed. jsdom has no ResizeObserver, so no test can cover this path --
+  // it is browser-only by construction.
+  let observedWidth = -1;
+  let observedHeight = -1;
   const resizeObserver =
     typeof ResizeObserver === "undefined"
       ? null
       : new ResizeObserver(() => {
           const rect = mount.getBoundingClientRect();
-          if (rect.width < 1 || rect.height < 1) return;
+          const width = Math.round(rect.width);
+          const height = Math.round(rect.height);
+          if (width < 1 || height < 1) return;
+          if (width === observedWidth && height === observedHeight) return;
+          observedWidth = width;
+          observedHeight = height;
           if (!hasFitted) {
             hasFitted = true;
             fitToScreen();
@@ -813,6 +826,10 @@ export function mountCanvasEditor(mount: HTMLElement, options: CanvasEditorOptio
   {
     const rect = mount.getBoundingClientRect();
     hasFitted = rect.width >= 1 && rect.height >= 1;
+    if (hasFitted) {
+      observedWidth = Math.round(rect.width);
+      observedHeight = Math.round(rect.height);
+    }
   }
 
   return {
