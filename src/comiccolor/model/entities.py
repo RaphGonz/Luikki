@@ -165,12 +165,27 @@ class Region:
 
 @dataclass
 class ProtectedMask:
-    """§1.2. Frame as protection, not detection."""
+    """§1.2. Frame as protection, not detection.
 
-    panel_id: int
+    Page-scoped, not panel-scoped (D-20): a bubble straddling two panels is
+    one row, and each stage clips this page-space ``polygon`` down to a
+    panel's local frame at use via ``rasterize_protected_for_panel``, rather
+    than the mask itself being split or duplicated per panel.
+
+    Protection means "never coloured", not "content preserved" (D-21) —
+    there is no integrity invariant here on the model of ``assert_invariant``
+    in masks.py; a protected pixel simply never receives a palette entry.
+
+    ``touched`` is False for a detector-proposed mask (rendered with a dashed
+    outline per UI-SPEC §3) and flips to True the instant the artist reshapes
+    it or draws a new one by hand (solid outline); a hand-drawn mask starts
+    True.
+    """
+
+    page_id: int
     kind: ProtectedKind
-    # Relative path to a binary mask PNG.
-    mask_path: str
+    polygon: list[tuple[int, int]] = field(default_factory=list)
     id: int | None = None
+    touched: bool = False
     area: int = 0
     bbox: tuple[int, int, int, int] = (0, 0, 0, 0)
