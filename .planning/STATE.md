@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: planning
-stopped_at: Phase 2 context gathered
-last_updated: "2026-08-16T07:54:58.384Z"
+stopped_at: Phase 2 UI-SPEC approved
+last_updated: "2026-08-16T08:07:43.884Z"
 last_activity: 2026-08-16 -- Phase 01 complete (verified, UAT 5/5, threat-secure)
 progress:
   total_phases: 7
@@ -89,6 +89,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-08-16T07:54:58.374Z
-Stopped at: Phase 2 context gathered
-Resume file: .planning/phases/02-panel-polygon-editor-protected-masks/02-CONTEXT.md
+Last session: 2026-08-16T08:07:43.876Z
+Stopped at: Phase 2 UI-SPEC approved
+Resume file: .planning/phases/02-panel-polygon-editor-protected-masks/02-UI-SPEC.md
