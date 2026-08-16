@@ -15,6 +15,14 @@ describe("parseRoute", () => {
     expect(parseRoute("#/page/7")).toEqual({ kind: "page", pageId: 7 });
   });
 
+  it("parses the page-editor route", () => {
+    expect(parseRoute("#/page/7/edit")).toEqual({ kind: "pageEditor", pageId: 7 });
+  });
+
+  it("falls back to the picker route on a bad-id page-editor hash", () => {
+    expect(parseRoute("#/page/abc/edit")).toEqual({ kind: "picker" });
+  });
+
   it("parses the palette route", () => {
     expect(parseRoute("#/palette")).toEqual({ kind: "palette" });
   });
@@ -39,7 +47,7 @@ describe("parseRoute", () => {
 });
 
 describe("buildHash <-> parseRoute round trip", () => {
-  const validHashes = ["#/picker", "#/volume/12", "#/page/7", "#/palette"];
+  const validHashes = ["#/picker", "#/volume/12", "#/page/7", "#/page/7/edit", "#/palette"];
 
   it.each(validHashes)("round-trips %s", (hash) => {
     expect(buildHash(parseRoute(hash))).toBe(hash);
