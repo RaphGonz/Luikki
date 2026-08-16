@@ -25,7 +25,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from ..colour.extract import EmptyImageError
-from .routers import page, palette, pipeline, project, reference, volume
+from .routers import page, palette, panel, pipeline, project, protected, reference, volume
 
 # src/comiccolor/web/app.py -> parents[3] is the repo root. A
 # COMICCOLOR_FRONTEND_DIST environment override lets `comiccolor serve` work
@@ -98,6 +98,13 @@ def create_app() -> FastAPI:
     app.include_router(
         reference.router, prefix="/api/references", tags=["references"]
     )
+    # Plain "/api" rather than a per-resource prefix: each of these routers
+    # serves two path families of its own (e.g. "/api/pages/{page_id}/panels"
+    # and "/api/panels/{panel_id}/...") and a per-resource prefix cannot
+    # express both. Registering here — inside create_app() — is what puts
+    # every route either adds behind _reject_foreign_origins.
+    app.include_router(panel.router, prefix="/api", tags=["panels"])
+    app.include_router(protected.router, prefix="/api", tags=["protected"])
 
     @app.exception_handler(EmptyImageError)
     def _empty_image_error_handler(

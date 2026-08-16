@@ -72,7 +72,16 @@ def _page_response(page: Page) -> PageResponse:
     )
 
 
-def _get_owned_page(page_id: int, store: Store) -> Page:
+def get_owned_page(page_id: int, store: Store) -> Page:
+    """The page, or a 404 if it does not belong to the currently open
+    project.
+
+    Public rather than underscore-prefixed because ``panel.py`` and
+    ``protected.py`` call it too (same cross-router import precedent this
+    module already sets by importing ``get_owned_volume`` from
+    ``.volume``): a panel or mask names its page by raw id, and that id
+    needs the same check the page routes give it.
+    """
     page = store.page_by_id(page_id)
     if page is None:
         raise HTTPException(status_code=404, detail=PAGE_NOT_FOUND_DETAIL)
@@ -183,7 +192,7 @@ def list_pages(
 def get_page(page_id: int, store: Store = Depends(get_store)) -> PageResponse:
     """"Open any page for editing" (PROJ-04) — Phase 2 hangs the panel
     editor off this route."""
-    page = _get_owned_page(page_id, store)
+    page = get_owned_page(page_id, store)
     return _page_response(page)
 
 
@@ -193,7 +202,7 @@ def get_page_image(
     store: Store = Depends(get_store),
     project_root: Path = Depends(get_current_project_path),
 ) -> FileResponse:
-    page = _get_owned_page(page_id, store)
+    page = get_owned_page(page_id, store)
     resolved = (project_root / page.source_path).resolve()
     if not resolved.is_relative_to(project_root.resolve()):
         # source_path is always server-generated (uploads.save_upload); this
@@ -216,5 +225,5 @@ def delete_page(page_id: int, store: Store = Depends(get_store)) -> None:
     """204. The image file is left on disk, for the same reason as volumes
     (T-01-DISK, accepted): orphaned bytes are recoverable, a page an artist
     wanted back is not."""
-    _get_owned_page(page_id, store)
+    get_owned_page(page_id, store)
     store.delete_page(page_id)
