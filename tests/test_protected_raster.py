@@ -103,5 +103,7 @@ def test_protected_bbox_and_area_matches_page_rasterisation():
 
     area, bbox = protected_bbox_and_area(polygon, page_w=200, page_h=200)
 
-    assert bbox == (20, 20, 60, 50)
-    assert area == 60 * 50
+    # cv2.fillPoly fills inclusive of the boundary pixel, so a rectangle
+    # with corners at 20 and 80 covers pixel columns 20..80 inclusive (61).
+    assert bbox == (20, 20, 61, 51)
+    assert area == 61 * 51
