@@ -109,3 +109,23 @@ def make_png():
         return buf.getvalue()
 
     return _make
+
+
+@pytest.fixture
+def page_in_project(client, make_png):
+    """A single persisted page inside the currently open project.
+
+    Composes ``client`` (project already open, per its own docstring) and
+    ``make_png`` (an in-memory PNG factory) so a route test needing "some
+    page that exists" gets one in a single fixture call instead of each
+    test reinventing the volume-then-upload dance. Yields the accepted
+    page dict as returned by ``POST /api/pages/`` (``id``, ``volume_id``,
+    ``width``, ``height``, ``stage``, ...).
+    """
+    volume = client.post("/api/volumes/", json={"name": "Chapter 1"}).json()
+    png_bytes = make_png(64, 64, [(9, 9, 9)])
+    response = client.post(
+        f"/api/pages/?volume_id={volume['id']}",
+        files=[("files", ("page.png", png_bytes, "image/png"))],
+    )
+    yield response.json()["accepted"][0]
