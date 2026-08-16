@@ -511,14 +511,18 @@ def move_vertex(
 | A4 | Bubble-detection runner can stay a synchronous FastAPI `def` route (no background job queue) at page scale | Pitfall 6 | Low-Medium — if real pages prove slow enough to feel unresponsive, the fix is a loading-state UX tweak (already specified in UI-SPEC), not an architecture change; Phase 4's Cobra worker is the precedent for when a real queue becomes necessary and this is not that scale |
 | A5 | Adding `jsdom` as a dev-dependency (for DOM-structure tests only, not canvas pixel tests) is compatible with D-26/Phase 1's "three audited dev packages" framing | Common Pitfalls / Pitfall 3 | Low — `jsdom` is a devDependency, not a runtime dependency, and does not touch D-26's "no Konva, no runtime frontend dependency" constraint, but the planner should treat this as a deliberate small addition to flag, not something to silently skip past |
 
-## Open Questions
+## Open Questions (RESOLVED)
+
+> Both questions were resolved at plan-phase time by adopting the researcher's Recommendation verbatim. Plans 02-08 and 02-11 implement them.
 
 1. **Does `_reading_order()`'s tier-based grouping need to re-run live as the artist adds/deletes panels in the editor, or only recompute server-side on each mutation?**
+   - **RESOLVED:** server recomputes reading order and returns the full updated panel list (with `reading_order`) on every mutating panel request; `_reading_order()` is NOT ported to TypeScript. Implemented by plan 02-08.
    - What we know: `_reading_order` is a pure function operating on a full box list; UI-SPEC §2 says "Numbering badges always reflect current reading order live as polygons are added/deleted/reordered by position."
    - What's unclear: whether "live" means the client recomputes tiering locally after every edit (requiring `_reading_order`'s logic to be ported to TypeScript, a second implementation) or the client waits for each PATCH/POST/DELETE response to carry updated `reading_order` values for all panels.
    - Recommendation: server recomputes and returns full updated panel list (with `reading_order`) on every mutating panel request — avoids porting geometry logic to TypeScript and avoids a second source of truth, at the cost of one extra round-trip's worth of badge-renumbering latency, which is imperceptible for tens of panels.
 
 2. **What triggers bubble re-detection on Go-Back from Protected to Panels?**
+   - **RESOLVED:** Go-Back from Protected to Panels discards **all** protected masks for the page, hand-drawn (touched) ones included, matching 02-UI-SPEC.md §8 literally. Implemented by plan 02-11 (server) and 02-14 (client dialog).
    - What we know: 02-UI-SPEC.md §8 states going back from Protected to Panels "re-runs bubble detection for the whole page," discarding existing protected masks.
    - What's unclear: whether hand-drawn (touched) masks are also discarded on this Go-Back, or only detector-proposed-untouched ones — the example sentence says "discards 4 protected masks," implying all of them, but this seems harsh if the artist hand-drew SFX masks that have nothing to do with panel geometry.
    - Recommendation: treat this as the literal, simple behavior D-08/§8 already describes (discard all protected masks for the page on this Go-Back, matching Phase 1's general "going back is costed and explicit" framing) — the alternative (partial preservation) adds real complexity for a destructive action the artist already sees a specific numeric warning for before confirming.
