@@ -1,6 +1,7 @@
+import cv2
 import numpy as np
 
-from comiccolor.segmentation.panels import PanelParams, segment_panels
+from comiccolor.segmentation.panels import PanelBox, PanelParams, box_to_polygon, segment_panels
 
 
 def _grid_page(rows: int, cols: int, size: int = 300, gutter: int = 30) -> np.ndarray:
@@ -72,3 +73,35 @@ def test_panels_do_not_overlap():
             overlap_x = min(a.x + a.width, b.x + b.width) - max(a.x, b.x)
             overlap_y = min(a.y + a.height, b.y + b.height) - max(a.y, b.y)
             assert overlap_x <= 0 or overlap_y <= 0, "panels overlap"
+
+
+def test_box_to_polygon_seeds_four_corners_clockwise():
+    polygon = box_to_polygon(PanelBox(10, 20, 100, 50))
+    assert polygon == [(10, 20), (110, 20), (110, 70), (10, 70)]
+
+
+def _borderless_silhouette_page(size: int = 300) -> np.ndarray:
+    """A solid, no-frame ink blob (circle plus two arms) with low solidity.
+
+    D-18's motivating case: no rectangular frame at all, so the proposed
+    panel has to come from the ink silhouette itself, which is irregular
+    enough that area / bbox_area lands well under the old 0.55 floor.
+    """
+    page = np.zeros((size, size), dtype=np.uint8)
+    cv2.circle(page, (100, 100), 50, 1, thickness=-1)
+    page[90:110, 100:280] = 1  # arm reaching right
+    page[100:120, 90:110] = 1  # arm reaching down
+    return page.astype(bool)
+
+
+def test_borderless_silhouette_is_proposed_not_discarded():
+    page = _borderless_silhouette_page()
+    boxes = segment_panels(page)
+    assert len(boxes) >= 1
+    box = boxes[0]
+    assert not (box.x == 0 and box.y == 0 and box.width == page.shape[1] and box.height == page.shape[0])
+
+
+def test_default_reading_order_is_left_to_right():
+    boxes = segment_panels(_grid_page(1, 2))
+    assert boxes[0].x < boxes[1].x, "default reading order should be ltr"
