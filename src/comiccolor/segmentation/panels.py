@@ -51,13 +51,29 @@ class PanelParams:
     min_area_frac: float = 0.005
     # Reject blobs less solid than this (area over bounding-box area). Filters
     # L-shaped merges and stray line networks that survived the fill.
-    min_solidity: float = 0.55
+    #
+    # D-18: this is a FLOOR, so it silently DISCARDS components, not
+    # mis-boxes them. On a borderless panel the surviving component is the
+    # ink silhouette of the drawing itself (no frame to seal `_gutter_network`
+    # against), and an irregular silhouette's area/bbox ratio sits well under
+    # the old 0.55. Explicit user instruction: over-propose and let the
+    # artist delete a false positive (D-19) rather than under-propose and
+    # make them draw a whole panel from scratch. Do not raise this back —
+    # a value near 0.55 again silently drops every ink-silhouette borderless
+    # panel and looks, to the next contributor, like nothing changed.
+    min_solidity: float = 0.25
     # Shortest run counted as a panel frame, as a fraction of the shorter side.
     frame_length_frac: float = 0.05
     # Longest break in a frame to repair, as a fraction of the shorter side.
     # Sized to swallow hair, SFX and figures crossing a border.
     frame_gap_frac: float = 0.10
-    reading: ReadingDirection = "rtl"
+    # 02-UI-SPEC.md §7: the project's motivating examples are Franco-Belgian,
+    # so left-to-right is the default. Reading order is a backend parameter
+    # for this phase, not a per-project setting, and the toolbar shows a
+    # non-interactive "Reading order: Left -> Right" readout so the
+    # convention is never silently assumed. "rtl" (manga) stays reachable by
+    # passing it explicitly.
+    reading: ReadingDirection = "ltr"
 
 
 @dataclass
@@ -70,6 +86,24 @@ class PanelBox:
     @property
     def area(self) -> int:
         return self.width * self.height
+
+
+def box_to_polygon(box: PanelBox) -> list[tuple[int, int]]:
+    """Seed a panel's four-vertex polygon from its bounding box (D-17).
+
+    Returns the corners top-left, top-right, bottom-right, bottom-left —
+    clockwise starting at the top-left — in page-pixel space. This is the
+    only way a panel becomes a polygon: `findContours` must never be called
+    here. `_gutter_network` cannot be blocked by a frame on a borderless
+    panel, so the surviving component is the ink silhouette of the drawing,
+    not a frame; tracing it with `findContours` + `approxPolyDP` yields a
+    polygon shaped like the character rather than the panel. The box is the
+    correct starting shape; `Panel.polygon` (entities.py) is where an artist
+    then reshapes it via vertex editing (D-19).
+    """
+    x0, y0 = box.x, box.y
+    x1, y1 = box.x + box.width, box.y + box.height
+    return [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
 
 
 def segment_panels(
