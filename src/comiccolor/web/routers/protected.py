@@ -17,6 +17,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from ...model import ProtectedMask, Store
+from ...pipeline.runner import BubbleDetectionFailed, run_protected
 from ...segmentation.protected import protected_bbox_and_area
 from ..deps import get_store
 from ..schemas import (
@@ -35,6 +36,10 @@ PROTECTED_MASK_NOT_FOUND_DETAIL = (
 )
 VERTEX_OUT_OF_RANGE_DETAIL = (
     "That vertex is no longer part of this shape — refresh and try again."
+)
+DETECT_WOULD_DISCARD_DETAIL = (
+    "This page already has protected masks. Delete them first if you want to detect "
+    "again — detection replaces every mask, including the ones you drew by hand."
 )
 POLYGON_OUT_OF_PAGE_DETAIL = (
     "That shape reaches outside the page — drag its points back inside and try again."
@@ -111,6 +116,41 @@ def list_protected(page_id: int, store: Store = Depends(get_store)) -> Protected
     removed.
     """
     get_owned_page(page_id, store)
+    return _masks_response(store, page_id)
+
+
+@router.post("/pages/{page_id}/protected/detect", response_model=ProtectedMaskListResponse)
+def detect_protected(
+    page_id: int, store: Store = Depends(get_store)
+) -> ProtectedMaskListResponse:
+    """PROT-01: run bubble detection for this page, on the artist's command.
+
+    The counterpart to ``detect_panels``, and it exists for the same reason:
+    ``run_protected`` was registered in the stage registry and never called.
+
+    Two behaviours are deliberate. ``run_protected`` deletes existing masks
+    before re-running, so this refuses when any mask exists — a hand-drawn
+    mask is the artist's own work and must not be discarded as a side effect
+    of asking for a detection. And zero detected bubbles is reported as an
+    empty list, not a failure (a splash page with no dialogue is a real
+    page); only a detection *error* sets ``detection_failed``, which is what
+    the editor's banner reads to tell the artist to fall back to drawing by
+    hand. D-24: SFX is never proposed here, by design.
+    """
+    page = get_owned_page(page_id, store)
+    if store.protected_for_page(page_id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=DETECT_WOULD_DISCARD_DETAIL,
+        )
+    try:
+        run_protected(store, page)
+    except BubbleDetectionFailed as err:
+        return ProtectedMaskListResponse(
+            masks=[],
+            detection_failed=True,
+            detection_message=str(err) or None,
+        )
     return _masks_response(store, page_id)
 
 

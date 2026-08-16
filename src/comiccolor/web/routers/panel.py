@@ -17,6 +17,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from ...model import Page, Panel, Store
+from ...pipeline.runner import run_panels
 from ..deps import get_store
 from ..schemas import (
     PanelCreateRequest,
@@ -35,6 +36,10 @@ VERTEX_OUT_OF_RANGE_DETAIL = (
 )
 POLYGON_OUT_OF_PAGE_DETAIL = (
     "That shape falls outside the page — refresh and try again."
+)
+DETECT_WOULD_DISCARD_DETAIL = (
+    "This page already has panels. Delete them first if you want to detect again — "
+    "detection replaces every panel, including the ones you corrected."
 )
 
 
@@ -131,6 +136,34 @@ def _recompute_reading_order(store: Store, page_id: int) -> None:
 def list_panels(page_id: int, store: Store = Depends(get_store)) -> PanelListResponse:
     """PAN-01: a page's panels as polygons, in reading order."""
     get_owned_page(page_id, store)
+    return _panel_list_response(store, page_id)
+
+
+@router.post("/pages/{page_id}/panels/detect", response_model=PanelListResponse)
+def detect_panels(page_id: int, store: Store = Depends(get_store)) -> PanelListResponse:
+    """PAN-01: run panel detection for this page, on the artist's command.
+
+    ``run_panels`` existed and was registered in the stage registry from
+    plan 02-07, but nothing ever called it, so a page sat at the ``panels``
+    stage with no panels forever. D-10 is why the registry itself cannot be
+    the caller — it declares, it never orchestrates — so the trigger has to
+    be an explicit request, and the artist pressing a button is the most
+    honest one: detection is a proposal they choose to ask for, not
+    something that happens to their page.
+
+    ``run_panels`` deletes the page's existing panels before re-running, so
+    this route refuses when panels already exist rather than silently
+    discarding the artist's corrections. Clearing them first is a
+    deliberate act with its own confirmation, not a side effect of asking
+    for a fresh detection.
+    """
+    page = get_owned_page(page_id, store)
+    if store.panels_for_page(page_id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=DETECT_WOULD_DISCARD_DETAIL,
+        )
+    run_panels(store, page)
     return _panel_list_response(store, page_id)
 
 

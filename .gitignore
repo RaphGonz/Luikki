@@ -32,3 +32,9 @@ third_party/
 
 # Claude Code agent worktrees (transient)
 .claude/worktrees/
+
+# tokenade — per-project cache / scaffold flag / dedup refs
+.tokenade/
+
+# tokenade — legacy per-project embedding model cache (now global)
+.fastembed_cache/
