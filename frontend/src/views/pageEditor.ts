@@ -18,14 +18,17 @@
 
 import { api, ApiError } from "../api/client";
 import type {
+  GoBackTargetDto,
   PageDto,
   PanelDto,
   PanelListDto,
+  PipelineStageName,
   ProtectedMaskDto,
   ProtectedMaskListDto,
   StageConfirmDto,
   VertexDto,
 } from "../api/types";
+import { openGoBackDialog } from "../components/goBackDialog";
 import { showToast } from "../components/toast";
 import {
   mountCanvasEditor as mountEditorSurface,
@@ -52,6 +55,8 @@ import { getToolbarHandle } from "../shell/toolbar";
 // surface, zoom pill and cursor states have no layout at all).
 import "../styles/editor.css";
 import "../styles/pageEditor.css";
+// plan 02-14: the dialog goBackLink opens is styled from here.
+import "../styles/dialog.css";
 
 // ---- Copywriting Contract (02-UI-SPEC.md) -- every fixed string is
 // declared exactly once here and referenced by name everywhere it is
@@ -185,6 +190,13 @@ export function renderPageEditor(mount: HTMLElement, params: { pageId: number })
   banner.hidden = true;
   root.append(banner);
 
+  // Mount point for the Go-Back dialog (01-UI-SPEC.md §3, 02-UI-SPEC.md
+  // §8/§10) -- appended to `root` so teardown() removing `root` also tears
+  // down any dialog left open.
+  const dialogMount = document.createElement("div");
+  dialogMount.className = "page-editor-dialog-mount";
+  root.append(dialogMount);
+
   // ---- Toolbar (02-UI-SPEC.md §10: left to right -- breadcrumb, tool-mode
   // + kind selector + undo, Go-Back link, primary Confirm). ----
 
@@ -254,17 +266,18 @@ export function renderPageEditor(mount: HTMLElement, params: { pageId: number })
   deleteButton.disabled = true;
 
   // UI-SPEC §8: low-emphasis destructive-coloured text link, positioned
-  // before (visually subordinate to) the primary Confirm button. Plan
-  // 02-14 wires its real behaviour (go-back-targets + the costed
-  // confirmation from 01-UI-SPEC.md §3); this plan renders the element in
-  // its documented toolbar position with a documented no-op.
+  // before (visually subordinate to) the primary Confirm button -- never a
+  // filled button, never competing with forward motion. Phase 1's original
+  // rationale: forward movement should be the path of least resistance,
+  // backward movement should require a conscious reach.
   const goBackLink = document.createElement("a");
   goBackLink.href = "#";
   goBackLink.className = "page-editor-go-back";
   goBackLink.textContent = GO_BACK_LABEL;
-  goBackLink.addEventListener("click", (event) => {
-    event.preventDefault();
-  });
+  // Hidden until the first `refreshGoBackTargets()` call (boot, and after
+  // every gate confirm / Go-Back) proves there is somewhere to go back to
+  // -- a Go-Back with nothing behind it is simply not offered.
+  goBackLink.hidden = true;
 
   const confirmButton = document.createElement("button");
   confirmButton.type = "button";
@@ -307,6 +320,14 @@ export function renderPageEditor(mount: HTMLElement, params: { pageId: number })
 
   let panelUndo: UndoStack = createUndoStack();
   let protectedUndo: UndoStack = createUndoStack();
+
+  // The last-fetched Go-Back targets, refreshed at boot and after every
+  // gate confirm / Go-Back, purely to decide the link's visibility -- the
+  // link click handler below always re-fetches before opening the dialog,
+  // since 01-UI-SPEC.md §3's cost sentence must be "computed from real data
+  // at the moment the dialog opens", not from a stale cache.
+  let lastGoBackTargets: GoBackTargetDto[] = [];
+  let dismissGoBackDialog: (() => void) | null = null;
 
   // ---- Toolbar/overlay sync -- one place that reconciles every visible
   // control against the state above, called after every mutation. ----
@@ -644,6 +665,10 @@ export function renderPageEditor(mount: HTMLElement, params: { pageId: number })
         setDetectionFailed(result.detection_failed);
         showDoneAffordance();
       }
+      // The set of computable Go-Back targets (and their costs) changes on
+      // every gate confirm -- refresh so the link's visibility and the next
+      // dialog open both reflect the page's new stage.
+      await refreshGoBackTargets();
     } catch (err) {
       hideSpinner();
       reportApiError(err);
@@ -651,6 +676,73 @@ export function renderPageEditor(mount: HTMLElement, params: { pageId: number })
       confirmInFlight = false;
       syncToolbar();
     }
+  }
+
+  // ---- Go-Back (D-08, 01-UI-SPEC.md §3, 02-UI-SPEC.md §8). ----
+
+  async function refreshGoBackTargets(): Promise<void> {
+    if (!page) return;
+    try {
+      lastGoBackTargets = await api.pages.goBackTargets(pageId);
+    } catch (err) {
+      reportApiError(err);
+      lastGoBackTargets = [];
+    }
+    if (disposed) return;
+    goBackLink.hidden = lastGoBackTargets.length === 0;
+  }
+
+  async function handleGoBackConfirm(stage: PipelineStageName): Promise<void> {
+    const result = await api.pages.goBack(pageId, stage);
+    if (disposed) return;
+    page = result.page;
+    doneMode = false;
+
+    // Both layers are reloaded from the server rather than patched locally:
+    // a Go-Back can delete panels, protected masks, or both, depending on
+    // which target was chosen, and the server is the only source of truth
+    // for what remains.
+    const [panelList, maskList] = await Promise.all([api.panels.list(pageId), api.protected.list(pageId)]);
+    if (disposed) return;
+    applyPanelList(panelList);
+    replaceProtectedShapes(maskList.masks);
+    setDetectionFailed(maskList.detection_failed);
+
+    // UI-SPEC §6 scopes the undo stack to a tool-mode session; a Go-Back
+    // just deleted the rows every pending undo op references (vertex ids,
+    // shape ids), so replaying an inverse against either stack would 404.
+    // Both are cleared here, the same rule the tool-mode-switch and
+    // gate-confirm paths already apply for their own triggers.
+    panelUndo = clearStack(panelUndo);
+    protectedUndo = clearStack(protectedUndo);
+
+    // Re-derive active layer and read-only state exactly as boot() does,
+    // so the stage being returned to becomes editable again.
+    activeTool = page.stage === "protected" ? "protected" : "panels";
+    editorHandle?.setActiveLayer(activeTool);
+    editorHandle?.setReadOnly("panels", page.stage !== "panels");
+    editorHandle?.setReadOnly("protected", page.stage !== "protected");
+    currentTool = "select";
+    editorHandle?.setTool("select");
+
+    syncToolbar();
+    await refreshGoBackTargets();
+  }
+
+  function openGoBack(): void {
+    void (async () => {
+      await refreshGoBackTargets();
+      if (disposed || lastGoBackTargets.length === 0) return;
+      dismissGoBackDialog?.();
+      dismissGoBackDialog = openGoBackDialog(dialogMount, lastGoBackTargets, async (stage) => {
+        try {
+          await handleGoBackConfirm(stage);
+        } catch (err) {
+          reportApiError(err);
+          throw err;
+        }
+      });
+    })();
   }
 
   // ---- Wiring. ----
@@ -672,6 +764,10 @@ export function renderPageEditor(mount: HTMLElement, params: { pageId: number })
   deleteButton.addEventListener("click", () => {
     const canvasEl = canvasMount.querySelector("canvas");
     canvasEl?.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", bubbles: true }));
+  });
+  goBackLink.addEventListener("click", (event) => {
+    event.preventDefault();
+    openGoBack();
   });
   confirmButton.addEventListener("click", () => {
     if (doneMode) {
@@ -753,6 +849,9 @@ export function renderPageEditor(mount: HTMLElement, params: { pageId: number })
     currentTool = "select";
     editorHandle.setTool("select");
     syncToolbar();
+    // Non-blocking -- decides the Go-Back link's initial visibility without
+    // holding up the rest of boot().
+    void refreshGoBackTargets();
   }
 
   void boot();
@@ -760,6 +859,7 @@ export function renderPageEditor(mount: HTMLElement, params: { pageId: number })
   return () => {
     disposed = true;
     window.removeEventListener("keydown", onGlobalKeyDown);
+    dismissGoBackDialog?.();
     editorHandle?.destroy();
     root.remove();
     toolbar.setTitle("");
