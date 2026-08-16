@@ -218,6 +218,9 @@ export function mountCanvasEditor(mount: HTMLElement, options: CanvasEditorOptio
 
   let drag: DragState | null = null;
   let panDrag: PanState | null = null;
+  // False until the editor has been fitted against a mount that actually had a
+  // laid-out box. See the ResizeObserver below.
+  let hasFitted = false;
   let spaceHeld = false;
   let hoveredEdge: HoveredEdge | null = null;
   let draftCursor: Point | null = null;
@@ -717,6 +720,29 @@ export function mountCanvasEditor(mount: HTMLElement, options: CanvasEditorOptio
     scheduleRedraw();
   }
 
+  // The mount's box is not laid out yet when `fitToScreen()` runs below, so
+  // the first `resizeCanvas()` can size the backing store from a stale rect.
+  // CSS then stretches that wrong-aspect bitmap into the real box and the page
+  // renders distorted. `window.resize` alone does not catch this -- no window
+  // resize happens -- and it also misses every other reflow that changes the
+  // editor's box without changing the window's (sidebar collapse, gate banner
+  // appearing, the toolbar wrapping). Observe the mount itself, and treat the
+  // first observation with a real box as the true initial fit.
+  const resizeObserver =
+    typeof ResizeObserver === "undefined"
+      ? null
+      : new ResizeObserver(() => {
+          const rect = mount.getBoundingClientRect();
+          if (rect.width < 1 || rect.height < 1) return;
+          if (!hasFitted) {
+            hasFitted = true;
+            fitToScreen();
+            return;
+          }
+          handleResize();
+        });
+  resizeObserver?.observe(mount);
+
   // ---- Handle methods ----
 
   function setActiveLayer(mode: ToolMode): void {
@@ -775,12 +801,19 @@ export function mountCanvasEditor(mount: HTMLElement, options: CanvasEditorOptio
     pill.zoomOutBtn.removeEventListener("click", zoomOut);
     pill.fitBtn.removeEventListener("click", fitToScreen);
     window.removeEventListener("resize", handleResize);
+    resizeObserver?.disconnect();
     canvas.remove();
     pill.element.remove();
     mount.classList.remove("canvas-editor");
   }
 
   fitToScreen();
+  // Only trust this fit if the mount actually had a box when it ran; otherwise
+  // the ResizeObserver above owns the real initial fit.
+  {
+    const rect = mount.getBoundingClientRect();
+    hasFitted = rect.width >= 1 && rect.height >= 1;
+  }
 
   return {
     setActiveLayer,
