@@ -54,18 +54,6 @@ def main(argv: list[str] | None = None) -> int:
     )
     ab.add_argument("--no-debug", action="store_true", help="skip debug renders")
 
-    serve = sub.add_parser("serve", help="start the local web app")
-    # Loopback default: PROJECT.md scopes v1 to one machine, and the app has
-    # no authentication by design, so binding a routable interface would
-    # expose an unauthenticated file-writing API to the local network.
-    serve.add_argument("--host", default="127.0.0.1", help="bind address")
-    serve.add_argument("--port", type=int, default=8000, help="bind port")
-    serve.add_argument(
-        "--project", default=None, help="project folder to open at startup"
-    )
-    serve.add_argument(
-        "--reload", action="store_true", help="reload on source changes (development)"
-    )
 
     args = parser.parse_args(argv)
 
@@ -102,47 +90,6 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(format_report(report))
         print(f"\nwritten to {args.out}/ab.json and {args.out}/ab.md")
-
-    if args.command == "serve":
-        import os
-
-        import uvicorn
-
-        from .web.appconfig import is_project_folder
-
-        project_path = None
-        if args.project:
-            # expanduser/resolve: `--project ~/ComicColor/Kaito` is the
-            # obvious thing to type and used to fail with "not a project
-            # folder" because the tilde was never expanded.
-            project_path = Path(args.project).expanduser().resolve()
-            if not is_project_folder(project_path):
-                raise SystemExit(f"not a project folder: {project_path}")
-
-        if args.reload:
-            # uvicorn can only reload from an *import string* — handed an app
-            # instance it logs a warning and silently runs without reloading,
-            # which is what --help was advertising. Because the reloader
-            # re-imports the app in a fresh process, the project can't be set
-            # on an object here; it travels through the environment and
-            # web.app picks it up at startup.
-            if project_path is not None:
-                os.environ["COMICCOLOR_PROJECT"] = str(project_path)
-            uvicorn.run(
-                "comiccolor.web.app:create_app",
-                factory=True,
-                host=args.host,
-                port=args.port,
-                reload=True,
-            )
-        else:
-            from .web.app import create_app
-            from .web.deps import set_current_project
-
-            app = create_app()
-            if project_path is not None:
-                set_current_project(app, project_path)
-            uvicorn.run(app, host=args.host, port=args.port)
 
     return 0
 
