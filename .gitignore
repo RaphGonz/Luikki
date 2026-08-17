@@ -30,6 +30,10 @@ third_party/
 *.ckpt
 *.safetensors
 
+# The running app's workdir: uploaded pages, exported PSDs, server logs.
+# Same rule as test_pages/ — the uploads are the artist's material.
+.comiccolor-work/
+
 # Claude Code agent worktrees (transient)
 .claude/worktrees/
 

@@ -9,6 +9,7 @@ dependencies = [
     "scipy>=1.14",
     "pillow>=11.0",
     "scikit-image>=0.26",
+    "psd-tools>=1.18",
 ]
 
 [project.optional-dependencies]

@@ -66,6 +66,23 @@ def load_line_art(
     return binary.astype(bool), grey
 
 
+def binarise_lines(lines: np.ndarray, threshold: int | None = None) -> np.ndarray:
+    """A line extractor's greyscale output → a boolean ink mask.
+
+    Extractors return soft greyscale (`extract/base.py`), and §7's note that
+    "the threshold applied afterwards moves the region count substantially"
+    makes this a parameter of the pipeline rather than an implementation
+    detail. None means Otsu, which is what the §2.2 A/B measured.
+    """
+    if threshold is None:
+        _, binary = cv2.threshold(
+            lines, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
+        )
+    else:
+        _, binary = cv2.threshold(lines, threshold, 255, cv2.THRESH_BINARY_INV)
+    return binary.astype(bool)
+
+
 def ink_fraction(line_mask: np.ndarray) -> float:
     """Share of the page that is ink. A quick sanity check on binarisation.
 

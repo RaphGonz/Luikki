@@ -54,8 +54,42 @@ def main(argv: list[str] | None = None) -> int:
     )
     ab.add_argument("--no-debug", action="store_true", help="skip debug renders")
 
+    serve = sub.add_parser("serve", help="run the flatting app")
+    serve.add_argument("--host", default="127.0.0.1")
+    serve.add_argument("--port", type=int, default=8000)
+    serve.add_argument(
+        "--workdir", default=None, help="where uploads and the exported PSD land"
+    )
+    serve.add_argument(
+        "--proposer",
+        default=None,
+        choices=["distinct", "cobra"],
+        help="colour proposer; cobra needs an NVIDIA GPU and its weights",
+    )
+    serve.add_argument(
+        "--extractor",
+        default=None,
+        choices=["manga", "raw"],
+        help="line extractor before segmentation; raw skips it (§2.2 chose manga)",
+    )
 
     args = parser.parse_args(argv)
+
+    if args.command == "serve":
+        import os
+
+        import uvicorn
+
+        if args.proposer:
+            os.environ["COMICCOLOR_PROPOSER"] = args.proposer
+        if args.extractor:
+            os.environ["COMICCOLOR_EXTRACTOR"] = args.extractor
+
+        from .web.app import create_app
+
+        print(f"ComicColor on http://{args.host}:{args.port}")
+        uvicorn.run(create_app(args.workdir), host=args.host, port=args.port)
+        return 0
 
     if args.command == "p3":
         from .spike.p3 import DEFAULT_CONDITIONS, format_report, run_p3
