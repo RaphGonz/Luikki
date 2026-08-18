@@ -10,7 +10,7 @@ Then open <http://127.0.0.1:8000>.
 | Button | What runs | Where |
 |---|---|---|
 | 1 Upload page | `load_line_art` | `segmentation/preprocess.py` |
-| 2 Detect panels | gutter network → boxes → 4-corner polygons | `segmentation/panels.py` |
+| 2 Detect panels | gutter network → traced polygons, box fallback | `segmentation/panels.py` |
 | 3 Detect bubbles | RT-DETR box → radial trace → polygon | `segmentation/bubbles.py` |
 | 4 Segment zones | MangaLineExtraction → LineFiller trapped-ball, per panel | `extract/`, `segmentation/segmenter.py` |
 | 5 Generate flats | proposer → per-zone mode → CIELAB snap | `colour/` |
@@ -123,6 +123,13 @@ comment there before anyone "simplifies" it back to a plain `psd.save()`.
 drawn at all comes back as its lettering rather than its white. Both follow
 from the trace being star-shaped, which is also what stops it folding inward
 around the text. See `segmentation/bubbles.py`.
+
+**Panel detection merges and over-proposes, and the two are not equal.** On
+`tintin_page.jpg` the left column of rows 1–2 comes back as one panel, and the
+page title comes back as a panel of its own; `manga_page.jpg` proposes a
+balloon poking into the margin. Per D-19 a false positive is one click to
+delete. A *merge* is not correctable at all — there is no split tool — so that
+is the one worth fixing.
 
 **Nothing is correctable in-app.** No dragging corners, no merging zones, no
 reassigning a colour — that is the deliberate scope of this version. A wrong

@@ -383,6 +383,15 @@ route. Each preview image is one GET route that sends a PNG.
 - **The shape can be a little too large.** Where a ray finds no ink, it stops
   at the box border. This shows as slack around the oval balloons in
   `manga_page.jpg`.
+- **Panel detection joins two panels into one.** On `tintin_page.jpg` the two
+  panels at the left of rows 1 and 2 come back as one panel. This is the worst
+  failure of the app, because the artist cannot correct it: you can move the
+  corners of a panel, but you cannot cut one panel into two, and there is no
+  button to add a panel.
+- **Panel detection also finds panels that are not there.** The title of
+  `tintin_page.jpg` and a balloon at the edge of `manga_page.jpg` come back as
+  panels. This is not important: the artist deletes them with one click. Every
+  filter that removes them also removes a thin panel that is real.
 - **Nothing is correctable in the app.** A wrong panel or a wrong bubble goes
   to Photoshop, or the artist does not press that button.
 - Segmentation is slow. A large page takes approximately two minutes. The cost
