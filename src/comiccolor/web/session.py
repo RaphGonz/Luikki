@@ -26,7 +26,12 @@ import numpy as np
 from PIL import Image
 
 from ..colour.extract import extract_palette
-from ..colour.proposer import ColourProposer, DistinctColourProposer, PanelRequest
+from ..colour.proposer import (
+    ColourProposer,
+    DistinctColourProposer,
+    PanelRequest,
+    ReferenceImage,
+)
 from ..colour.references import Reference, ReferenceStore
 from ..colour.snap import SNAP_MAX_DELTA, assign_zones
 from ..export.psd import PanelFlats, flats_preview, write_psd
@@ -264,6 +269,45 @@ class Session:
             self._structural = binarise_lines(lines)
         return self._structural
 
+    def reference_images(self) -> list[ReferenceImage]:
+        """The book's references, with the kind the artist gave each one.
+
+        `kind` travels with the pixels because the proposer decides how to fit
+        a reference to a panel, and the right answer differs between one
+        composed page and a montage of separate character drawings.
+        """
+        return [
+            ReferenceImage(
+                pixels=self.reference_store.image(reference.id),
+                kind=reference.kind,
+                label=reference.label,
+            )
+            for reference in self.reference_store
+        ]
+
+    def _line_art_for(self, panel: PanelState) -> np.ndarray:
+        """The panel crop, masked to the panel's own polygon.
+
+        The crop is a bounding box, and a bounding box is only the panel for a
+        rectangle. For an L-shaped or a round panel it also contains whatever
+        the neighbouring panel put in the corner, and the proposer would be
+        reasoning about — and retrieving references for — a scene that is
+        partly not this panel. Everything outside the polygon becomes paper
+        white here, which for a rectangular panel is a no-op.
+
+        What is *painted* outside the polygon has never mattered: zones there
+        come back UNASSIGNED from `_blocked_for` and are never coloured. What
+        the model sees is the part that did.
+        """
+        crop = self.grey[
+            panel.y : panel.y + panel.height, panel.x : panel.x + panel.width
+        ]
+        inside = rasterize_protected_for_panel(
+            [panel.polygon], panel.x, panel.y, panel.width, panel.height
+        )
+        masked = np.where(inside, crop, 255).astype(np.uint8)
+        return np.repeat(masked[:, :, None], 3, axis=2)
+
     def _blocked_for(self, panel: PanelState) -> np.ndarray:
         """Protected areas plus everything outside the panel polygon.
 
@@ -379,13 +423,10 @@ class Session:
             for panel in self.panels:
                 if panel.label_map is None:
                     continue
-                crop = self.grey[
-                    panel.y : panel.y + panel.height, panel.x : panel.x + panel.width
-                ]
                 request = PanelRequest(
-                    line_art=np.repeat(crop[:, :, None], 3, axis=2),
+                    line_art=self._line_art_for(panel),
                     label_map=panel.label_map,
-                    references=self.references,
+                    references=self.reference_images(),
                 )
                 proposal = self.proposer.propose(request)
 

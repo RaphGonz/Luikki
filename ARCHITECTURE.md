@@ -148,7 +148,8 @@ step how to fit the image to the panel later.
 each reference part to be one half of the width and the height of the panel.
 To get that size, the app must fit the image to the shape of the panel. The
 app does not know the shape of the panel before segmentation. Therefore the
-app cuts the image at colour time, not at upload time.
+app cuts the image at colour time, not at upload time. Section 5a tells you
+how the app cuts it.
 
 The palette has two halves:
 
@@ -184,6 +185,12 @@ Then, for each panel:
 For each panel the app builds a `PanelRequest` and calls the proposer. The
 proposer gives back a proposal raster.
 
+The `line_art` in the request is the box of the panel, but the app first makes
+all pixels outside the polygon of the panel white. A box is the panel only when
+the panel is a rectangle. For an L-shaped panel the box also holds a part of
+the panel next to it. The colour model must not look at that part. For a
+rectangular panel this step changes nothing.
+
 `assign_zones` then takes the **mode** colour of each zone from that raster.
 It does not take the average. Then it finds the nearest palette entry in
 CIELAB space. If the distance is more than `SNAP_MAX_DELTA`, the app flags the
@@ -204,6 +211,36 @@ There are two proposers:
 
 Everything after this step reads the proposal raster only. To change the
 proposer, change one constructor call.
+
+### Step 5a — How the app fits images to Cobra
+
+Cobra accepts only some shapes. It has a list of 15 shapes ("buckets"). The
+widest is 2.06:1 and the tallest is 1:2.06. Real panels are not always in that
+range: on the test pages they go from 0.63:1 to 3.38:1.
+
+**The panel goes on a white rectangle.** `_letterbox` (`colour/cobra.py`)
+makes the panel as large as possible in the bucket, keeps its shape, and fills
+the rest with white. After the model runs, the app cuts the white away again.
+
+Do not squash the panel to make it fit. A squashed face is a face that the
+model must recognise through a distortion that no comic has. The app loses
+some resolution instead. Resolution does not matter here, because the app
+keeps only one colour for each zone and then deletes the raster.
+
+**The reference is cut into tiles.** `_tiles` (`colour/cobra.py`) cuts the
+image into pieces that have the shape of the bucket. The pieces overlap by one
+half. Nothing is lost.
+
+Do not put a reference on a white rectangle. White pixels in a reference are
+of no use: a reference must give colours. Cut it instead.
+
+If the shape of the reference is already near to the shape of the bucket (a
+difference of less than 15%), the app makes one tile from the whole image.
+This is the same rule Cobra uses.
+
+The `kind` of the reference gives the number of tiles: a `sheet` gets 6, a
+`page` or a `panel` gets 3. A sheet holds many separate drawings and needs
+more tiles. **These two numbers are a guess. Measure them on the GPU machine.**
 
 ### Step 6 — Export PSD
 
@@ -270,8 +307,12 @@ route. Each preview image is one GET route that sends a PNG.
   is one half of the width and the height of the panel. A character sheet is
   as good as a page.
 - Do not squash a panel to fit the shape that Cobra accepts. Put the panel on
-  a white square instead. Measured on the test pages, panels go from 0.63:1 to
-  3.38:1, and 13 of 23 panels get squashed more than 5%.
+  a white rectangle instead. Measured on the test pages, panels go from 0.63:1
+  to 3.38:1, and 13 of 23 panels get squashed more than 5%.
+- Do not put a reference on a white rectangle. Cut it into tiles. White pixels
+  give no colour, and a reference is there only to give colour.
+- `colour/cobra.py` has never run. Its shape functions have tests, but the
+  model itself is not tested. Verify it on the GPU machine.
 - Keep the bubble detector on `onnxruntime`. Nearly every other comic balloon
   detector on GitHub needs the `ultralytics` package, and that package is
   AGPL-3.0. The licence of the weights does not change this.

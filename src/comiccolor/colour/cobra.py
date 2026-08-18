@@ -48,7 +48,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .proposer import PanelRequest
+from .proposer import PanelRequest, ReferenceImage
 
 _REPO_DIR = Path(__file__).resolve().parents[3] / "third_party" / "Cobra"
 
@@ -73,6 +73,106 @@ _DIT_CONFIG_KEYS = (
     "num_embeds_ada_norm", "upcast_attention", "norm_type",
     "norm_elementwise_affine", "norm_eps", "caption_channels", "attention_type",
 )
+
+
+# Cobra's own tolerance (`cobra_utils.utils.process_image`): an aspect within
+# 15% of the target is close enough to resize outright. Reused rather than
+# invented, so a page-shaped reference against a page-shaped query keeps
+# taking exactly the path Cobra's own app takes.
+_ASPECT_TOLERANCE = 0.15
+
+# How many tiles one reference may contribute. A sheet is a montage of
+# separate drawings and earns more of them; a page or a panel is one
+# composition. Unvalidated starting values in the sense `colour/extract.py`
+# uses the phrase -- hypotheses to measure on the GPU machine, not spec.
+_TILE_BUDGET = {"sheet": 6, "page": 3, "panel": 3}
+
+
+def _letterbox(image, target_w: int, target_h: int):
+    """Fit an image into the target frame on white, without distorting it.
+
+    Returns `(canvas, box)`, where `box` is where the image landed so the
+    coloured result can be cropped back out of it.
+
+    This replaces a plain `resize` to the bucket, and the reason is measured.
+    Cobra quantises to a fixed list of aspect buckets topping out at 2.06:1,
+    while real panels on the test pages run from 0.63:1 to 3.38:1: thirteen of
+    twenty-three were being squashed by more than 5% and one by 1.69x. A
+    squashed face is a face the model has to recognise through a distortion
+    that never occurs in comics, and recognising faces is what we are paying
+    it for. White costs a little resolution instead, and resolution is the one
+    thing this pipeline does not need -- the raster is reduced to one modal
+    colour per zone and thrown away.
+
+    It is also what makes a non-rectangular panel work. `PanelRequest.line_art`
+    arrives masked to the panel's polygon, so an L-shaped or a round panel is
+    already white outside its own outline; letterboxing is the same operation
+    one level out, where the shape happens to be the bounding box.
+    """
+    from PIL import Image
+
+    width, height = image.size
+    scale = min(target_w / width, target_h / height)
+    inner = (max(1, round(width * scale)), max(1, round(height * scale)))
+    left = (target_w - inner[0]) // 2
+    top = (target_h - inner[1]) // 2
+
+    canvas = Image.new("RGB", (target_w, target_h), "white")
+    canvas.paste(image.resize(inner, Image.BICUBIC), (left, top))
+    return canvas, (left, top, left + inner[0], top + inner[1])
+
+
+def _tiles(image, target_w: int, target_h: int, budget: int) -> list:
+    """Cover a reference with target-shaped tiles, losing nothing.
+
+    Cobra's `process_image` centre-crops a reference whose aspect is far from
+    the query's, which for a tall character sheet against a wide panel keeps a
+    horizontal band through the middle and throws away the heads and the feet.
+    That is a preprocessing choice in a helper, not a property of the model --
+    the pipeline only ever requires a patch to be half the query's size -- so
+    it is replaced here rather than inherited.
+
+    A reference is *not* letterboxed. White padding would put white in the
+    patches the retrieval step ranks and the DiT reads, and a reference exists
+    to supply colour. Tiling keeps every pixel of it at full scale instead.
+
+    Tiles overlap by half, so a face landing on a seam still falls whole in
+    the neighbouring tile. Retrieval then picks whichever tiles match; that is
+    what retrieval is for.
+    """
+    from PIL import Image
+
+    width, height = image.size
+    target_ratio = target_w / target_h
+    ratio = width / height
+
+    if abs(ratio - target_ratio) / target_ratio < _ASPECT_TOLERANCE:
+        return [image.resize((target_w, target_h), Image.BICUBIC)]
+
+    if ratio > target_ratio:  # source is wider: cut vertical slices
+        extent = max(1, round(height * target_ratio))
+        span = width
+    else:  # source is taller: cut horizontal bands
+        extent = max(1, round(width / target_ratio))
+        span = height
+
+    stride = max(1, extent // 2)
+    starts = list(range(0, max(1, span - extent + 1), stride))
+    if starts[-1] + extent < span:
+        starts.append(span - extent)
+
+    # Keep the tiles nearest the middle: on a character sheet the outer edge
+    # is margin, and on a page it is usually gutter.
+    if len(starts) > budget:
+        middle = (span - extent) / 2
+        starts = sorted(sorted(starts, key=lambda s: abs(s - middle))[:budget])
+
+    boxes = (
+        [(s, 0, s + extent, height) for s in starts]
+        if ratio > target_ratio
+        else [(0, s, width, s + extent) for s in starts]
+    )
+    return [image.crop(box).resize((target_w, target_h), Image.BICUBIC) for box in boxes]
 
 
 class CobraUnavailable(RuntimeError):
@@ -226,7 +326,6 @@ class CobraProposer:
         from PIL import Image
 
         from cobra_utils.utils import (
-            process_image,
             process_image_Q_varres,
             process_image_ref_varres,
         )
@@ -237,16 +336,20 @@ class CobraProposer:
         target_w, target_h = _target_resolution(width, height, self.resolution)
 
         line_art = Image.fromarray(request.line_art).convert("L").convert("RGB")
-        query = line_art.resize((target_w, target_h), Image.BICUBIC)
+        query, inner = _letterbox(line_art, target_w, target_h)
 
         if not request.references:
             raise CobraUnavailable(
                 "Cobra colours from reference images; upload at least one character sheet."
             )
-        references = [
-            process_image(Image.fromarray(ref).convert("RGB"), target_w, target_h)
-            for ref in request.references
-        ]
+        references: list = []
+        for reference in request.references:
+            references += _tiles(
+                Image.fromarray(reference.pixels).convert("RGB"),
+                target_w,
+                target_h,
+                _TILE_BUDGET.get(reference.kind, _TILE_BUDGET["sheet"]),
+            )
 
         # Retrieval: rank reference patches against query patches by CLIP
         # cosine similarity and keep the top k per query patch. This is the
@@ -294,5 +397,8 @@ class CobraProposer:
         )[0][0]
 
         # Back to the panel's own frame: mode extraction indexes the raster by
-        # the label map, so the two must agree pixel for pixel.
-        return np.asarray(coloured.convert("RGB").resize((width, height), Image.BICUBIC))
+        # the label map, so the two must agree pixel for pixel. The white
+        # margin `_letterbox` added comes off first -- whatever the model
+        # painted out there is not part of this panel.
+        panel = coloured.convert("RGB").crop(inner)
+        return np.asarray(panel.resize((width, height), Image.BICUBIC))
