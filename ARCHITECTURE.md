@@ -64,9 +64,9 @@ again, the app deletes the results of all later steps.
 | 5 | Generate flats | `propose` then `assign_zones` | `colour/` |
 | 6 | Export PSD | `write_psd` | `export/psd.py` |
 
-A seventh input is optional: the artist can upload a character sheet or a
-colour swatch. That image does two jobs. Its colours become the palette. The
-image itself is the reference that the model sees.
+A seventh input is optional: the artist can upload reference images. Each image
+does two jobs. Its colours become the palette. The image itself is what the
+colour model sees. See section 4a.
 
 ### Step 1 — Upload page
 
@@ -120,6 +120,47 @@ fold back around the text. The polygon lands **on** the outline, so the black
 outline is protected too.
 
 The app does not read the text. There is no OCR engine and no language pack.
+
+### Step 4a — References (optional, at any time)
+
+The references are the images that the colour model looks at. They belong to
+the book, not to the page. Thus they stay when the artist loads a new page,
+and they stay when the app stops and starts again.
+
+`ReferenceStore` (`colour/references.py`) keeps them in
+`<workdir>/references/`: one file for each image, and an `index.json`. Each
+record has an id, a filename, a label, a `kind` and a date. Ids increase and
+the app never uses an id again.
+
+`kind` is one of three values:
+
+| kind | Meaning |
+|---|---|
+| `page` | A finished coloured page of this book. |
+| `panel` | One finished coloured panel. |
+| `sheet` | A character sheet or a colour swatch. |
+
+The artist selects the kind. The app cannot find it out from the image. The
+kind does not change how the app stores the image. The kind tells the colour
+step how to fit the image to the panel later.
+
+**The app stores each image complete. The app does not cut it.** Cobra needs
+each reference part to be one half of the width and the height of the panel.
+To get that size, the app must fit the image to the shape of the panel. The
+app does not know the shape of the panel before segmentation. Therefore the
+app cuts the image at colour time, not at upload time.
+
+The palette has two halves:
+
+- The **reference half** comes from the references. If you remove a reference,
+  its colours go away with it. The app makes this half again from all the
+  references each time one changes.
+- The **created half** is what step 5 invented for zones that matched no
+  colour.
+
+`extract_palette` uses median cut, which always gives the same result.
+Therefore the app does not save the palette. The app makes it again from the
+files.
 
 ### Step 4 — Segment zones
 
@@ -204,6 +245,7 @@ route. Each preview image is one GET route that sends a PNG.
         manga_line.py         the MangaLineExtraction model
         passthrough.py        the `raw` extractor: no model
       colour/
+        references.py         the reference images on disk + index.json
         proposer.py           the ColourProposer protocol, `distinct`
         cobra.py              the Cobra proposer. Never executed.
         snap.py               zone mode -> nearest palette entry (CIELAB)
@@ -224,6 +266,12 @@ route. Each preview image is one GET route that sends a PNG.
 - Keep Cobra as the `diffusers` repository dependency. The raw `.pth` mirror is
   AGPL and permits research only.
 - Do not install Cobra on the development machine. Its card is too small.
+- Cobra does not need complete pages. Its only rule is that each reference part
+  is one half of the width and the height of the panel. A character sheet is
+  as good as a page.
+- Do not squash a panel to fit the shape that Cobra accepts. Put the panel on
+  a white square instead. Measured on the test pages, panels go from 0.63:1 to
+  3.38:1, and 13 of 23 panels get squashed more than 5%.
 - Keep the bubble detector on `onnxruntime`. Nearly every other comic balloon
   detector on GitHub needs the `ultralytics` package, and that package is
   AGPL-3.0. The licence of the weights does not change this.
