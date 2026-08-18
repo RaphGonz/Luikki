@@ -46,6 +46,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+import cv2
 import numpy as np
 
 from .proposer import PanelRequest, ReferenceImage
@@ -87,6 +88,24 @@ _ASPECT_TOLERANCE = 0.15
 # uses the phrase -- hypotheses to measure on the GPU machine, not spec.
 _TILE_BUDGET = {"sheet": 6, "page": 3, "panel": 3}
 
+# -- finding the drawings on a character sheet ------------------------------
+# Closing radius as a fraction of the sheet's shorter side, used to join the
+# strokes of one drawing. Small on purpose: measured on `laurine_ref.jpg`,
+# 0.002 finds the 13 drawings the artist put there, while 0.012 fuses the
+# whole sheet into 2 blobs.
+_SUBJECT_MERGE_FRAC = 0.002
+# Anything under this share of the sheet is a stray mark, not a drawing.
+_SUBJECT_MIN_AREA_FRAC = 0.002
+# Anything this far from paper white counts as drawn.
+_SUBJECT_INK_DELTA = 18
+# Breathing room around a drawing before its window is fitted to the target.
+_SUBJECT_MARGIN = 1.15
+# Two windows overlapping by more than this are the same view twice.
+_SUBJECT_MAX_OVERLAP = 0.6
+# Below this many drawings the sheet is not a montage -- one big drawing, or a
+# photograph -- and the grid is the honest fallback.
+_MIN_SUBJECTS = 2
+
 
 def _letterbox(image, target_w: int, target_h: int):
     """Fit an image into the target frame on white, without distorting it.
@@ -122,8 +141,120 @@ def _letterbox(image, target_w: int, target_h: int):
     return canvas, (left, top, left + inner[0], top + inner[1])
 
 
-def _tiles(image, target_w: int, target_h: int, budget: int) -> list:
-    """Cover a reference with target-shaped tiles, losing nothing.
+def _subjects(image) -> list[tuple[int, int, int, int, float, float]]:
+    """The separate drawings on a character sheet.
+
+    A sheet is drawings with paper between them, so the drawings are the
+    connected components of not-paper — the same reasoning the bubble detector
+    uses for what white encloses, one level up. Returns
+    `(x, y, width, height, centre_x, centre_y)` per drawing, largest first.
+    """
+    pixels = np.asarray(image.convert("RGB")).astype(np.int16)
+    drawn = (255 - pixels).max(axis=2) > _SUBJECT_INK_DELTA
+
+    radius = max(1, int(_SUBJECT_MERGE_FRAC * min(drawn.shape)))
+    kernel = np.ones((2 * radius + 1,) * 2, np.uint8)
+    merged = cv2.morphologyEx(drawn.astype(np.uint8), cv2.MORPH_CLOSE, kernel)
+    merged = cv2.dilate(merged, kernel)
+
+    count, _, stats, centroids = cv2.connectedComponentsWithStats(merged, connectivity=8)
+    floor = _SUBJECT_MIN_AREA_FRAC * drawn.size
+
+    found = []
+    for i in range(1, count):
+        if stats[i, cv2.CC_STAT_AREA] < floor:
+            continue
+        found.append(
+            (
+                int(stats[i, cv2.CC_STAT_LEFT]),
+                int(stats[i, cv2.CC_STAT_TOP]),
+                int(stats[i, cv2.CC_STAT_WIDTH]),
+                int(stats[i, cv2.CC_STAT_HEIGHT]),
+                float(centroids[i][0]),
+                float(centroids[i][1]),
+            )
+        )
+    return sorted(found, key=lambda s: -s[2] * s[3])
+
+
+def _window_for(subject, target_ratio: float, size: tuple[int, int]):
+    """A target-shaped window around one drawing, centred on it and clipped.
+
+    The window is grown to the target's aspect rather than the drawing being
+    padded to it, so the patch stays full of artwork: whatever else on the
+    sheet falls inside the window comes along, which is context, not waste.
+    """
+    _, _, width, height, centre_x, centre_y = subject
+    sheet_w, sheet_h = size
+
+    need_w, need_h = width * _SUBJECT_MARGIN, height * _SUBJECT_MARGIN
+    if need_w / need_h > target_ratio:
+        window_w, window_h = need_w, need_w / target_ratio
+    else:
+        window_h, window_w = need_h, need_h * target_ratio
+
+    # Clip to the sheet, keeping the aspect exact.
+    window_w = min(window_w, sheet_w, sheet_h * target_ratio)
+    window_h = window_w / target_ratio
+
+    left = int(round(min(max(centre_x - window_w / 2, 0), sheet_w - window_w)))
+    top = int(round(min(max(centre_y - window_h / 2, 0), sheet_h - window_h)))
+    return (left, top, left + int(round(window_w)), top + int(round(window_h)))
+
+
+def _overlap(a, b) -> float:
+    """Intersection over union of two boxes."""
+    inner_w = max(0, min(a[2], b[2]) - max(a[0], b[0]))
+    inner_h = max(0, min(a[3], b[3]) - max(a[1], b[1]))
+    intersection = inner_w * inner_h
+    if not intersection:
+        return 0.0
+    area_a = (a[2] - a[0]) * (a[3] - a[1])
+    area_b = (b[2] - b[0]) * (b[3] - b[1])
+    return intersection / (area_a + area_b - intersection)
+
+
+def _subject_tiles(image, target_w: int, target_h: int, budget: int) -> list:
+    """Tiles placed on the drawings rather than on a grid.
+
+    A grid stride over a character sheet gives bands: against a tall panel the
+    Laurine sheet comes back as two vertical halves, each a wall of seven
+    figures too small to match anything. Placing the windows on the drawings
+    instead gives one character per patch at a readable size, which is the
+    unit the CLIP retrieval is actually comparing against a panel.
+
+    Returns `[]` when the sheet is not a montage — one large drawing, or a
+    photograph — and the caller falls back to the grid.
+    """
+    found = _subjects(image)
+    if len(found) < _MIN_SUBJECTS:
+        return []
+
+    from PIL import Image
+
+    target_ratio = target_w / target_h
+    kept: list = []
+    for subject in found:
+        window = _window_for(subject, target_ratio, image.size)
+        if any(_overlap(window, other) > _SUBJECT_MAX_OVERLAP for other in kept):
+            continue
+        kept.append(window)
+        if len(kept) >= budget:
+            break
+
+    return [image.crop(w).resize((target_w, target_h), Image.BICUBIC) for w in kept]
+
+
+def _tiles(image, target_w: int, target_h: int, budget: int, kind: str = "sheet") -> list:
+    """Cut a reference into patches the model can read.
+
+    A `sheet` is a montage, so its tiles are placed on the drawings
+    (`_subject_tiles`). A `page` or a `panel` is one composition with no paper
+    between its subjects, so there is nothing to place tiles on and the grid
+    below is used instead.
+
+    The grid path covers the reference with target-shaped tiles, losing
+    nothing.
 
     Cobra's `process_image` centre-crops a reference whose aspect is far from
     the query's, which for a tall character sheet against a wide panel keeps a
@@ -141,6 +272,11 @@ def _tiles(image, target_w: int, target_h: int, budget: int) -> list:
     what retrieval is for.
     """
     from PIL import Image
+
+    if kind == "sheet":
+        placed = _subject_tiles(image, target_w, target_h, budget)
+        if placed:
+            return placed
 
     width, height = image.size
     target_ratio = target_w / target_h
@@ -349,6 +485,7 @@ class CobraProposer:
                 target_w,
                 target_h,
                 _TILE_BUDGET.get(reference.kind, _TILE_BUDGET["sheet"]),
+                reference.kind,
             )
 
         # Retrieval: rank reference patches against query patches by CLIP

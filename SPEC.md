@@ -57,6 +57,41 @@ That is the whole product. Everything else is an improvement to one of those ste
     border is one shape.
 13. Protected areas never receive colour. That is all "protected" means.
 
+### References and the retrieval pool
+Cobra colours from references. Its only hard constraint is that every
+reference patch is exactly half the query's width and height — whole pages are
+a convention of its demo, not a requirement, so a character sheet is an
+equally valid pool entry.
+
+`ReferenceStore` keeps them in `<workdir>/references/` with a JSON index. Each
+carries a `kind` (`page` | `panel` | `sheet`) that the artist sets, because it
+is the one thing we cannot infer and it decides how the image is fitted:
+
+- **sheet** — a montage, so windows are placed on the drawings themselves
+  (connected components of not-paper), one character per patch.
+- **page / panel** — one composition with no paper between subjects, so a grid
+  of target-shaped tiles, overlapping by half.
+
+**Nothing becomes a reference by itself.** A validated page is promoted by the
+artist, never automatically — rule 2 applied to the pool. This is what keeps
+it bounded, and it is the cheapest of all the available controls.
+
+**Pool growth, for when this is measured on the GPU.** The DiT always sees
+`4 × top_k` patches whatever the pool size, so the pool costs retrieval time,
+never inference time. At `T=3` tiles per reference, a 50-page book is ~750
+patches against the ~1000 the paper describes; 200 pages would be 3× beyond
+it. Two risks, in this order:
+
+1. *Near-duplicate crowding* — our tiles overlap, so `top_k` could return the
+   same pose repeatedly and lose the diversity the whole design is for. Fix:
+   dedupe the selection by overlap, not the candidate pool.
+2. *CLIP cost, linear in pool.* Fix: cache embeddings by `(reference, bucket)`
+   — a page's panels collapse to 2–3 distinct buckets, not one per panel.
+
+Neither is built. Neither is measurable without the GPU, and tuning a
+retrieval system that cannot be run is how the first bubble detector went
+wrong.
+
 ### Zones
 14. **Segment zones** button. Fills each panel with flat regions.
 15. Click two zones to merge them.

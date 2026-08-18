@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from comiccolor.colour.cobra import _ASPECT_TOLERANCE, _letterbox, _tiles
 
@@ -210,3 +210,106 @@ def test_a_rectangular_panel_is_unchanged_by_masking(tmp_path):
 
     line_art = session._line_art_for(panel)
     assert (line_art[:, :, 0] == session.grey).all()
+
+
+# -- sheets: tiles placed on the drawings -----------------------------------
+
+
+def _montage(width=1200, height=1200, rows=3, cols=3, gap=60):
+    """A character sheet: separate coloured drawings with paper between them."""
+    sheet = Image.new("RGB", (width, height), "white")
+    draw = ImageDraw.Draw(sheet)
+    cell_w = (width - gap * (cols + 1)) // cols
+    cell_h = (height - gap * (rows + 1)) // rows
+    for r in range(rows):
+        for c in range(cols):
+            x = gap + c * (cell_w + gap)
+            y = gap + r * (cell_h + gap)
+            draw.ellipse(
+                (x, y, x + cell_w, y + cell_h),
+                fill=(40 + 20 * r, 90 + 30 * c, 200 - 15 * r),
+            )
+    return sheet
+
+
+def test_a_sheet_is_cut_on_its_drawings():
+    """One drawing per patch is the unit CLIP compares against a panel; a
+    grid band through a montage is not."""
+    from comiccolor.colour.cobra import _subjects
+
+    sheet = _montage()
+    assert len(_subjects(sheet)) == 9
+
+    tiles = _tiles(sheet, 512, 256, budget=6, kind="sheet")
+    assert len(tiles) == 6
+    assert all(t.size == (512, 256) for t in tiles)
+
+
+def test_a_sheet_is_cut_even_when_its_aspect_already_fits():
+    """A montage needs framing whatever its outline is: the whole-image patch
+    of a 13-drawing sheet is 13 drawings too small to match anything."""
+    sheet = _montage(1200, 1200)
+    tiles = _tiles(sheet, 512, 512, budget=6, kind="sheet")
+    assert len(tiles) > 1
+
+
+def test_a_page_is_never_cut_on_subjects():
+    """A finished page has no paper between its subjects, so there is nothing
+    to place a window on — the grid is the honest answer."""
+    sheet = _montage(1200, 1200)
+    assert len(_tiles(sheet, 512, 512, budget=6, kind="page")) == 1
+
+
+def test_one_big_drawing_falls_back_to_the_grid():
+    """Not every reference is a montage. Below `_MIN_SUBJECTS` the sheet path
+    must hand back to the grid rather than return one useless window."""
+    from comiccolor.colour.cobra import _MIN_SUBJECTS, _subjects
+
+    single = Image.new("RGB", (800, 2000), "white")
+    ImageDraw.Draw(single).ellipse((100, 100, 700, 1900), fill=(200, 40, 40))
+    assert len(_subjects(single)) < _MIN_SUBJECTS
+
+    tiles = _tiles(single, 512, 256, budget=6, kind="sheet")
+    assert len(tiles) > 1, "should have fallen back to grid striding"
+
+
+def test_subject_windows_keep_the_target_aspect_exactly():
+    """The patch must reach half the query's size without distortion, so the
+    window it is cropped from has to be the target's shape already."""
+    from comiccolor.colour.cobra import _subject_tiles, _subjects, _window_for
+
+    sheet = _montage()
+    for subject in _subjects(sheet):
+        box = _window_for(subject, 512 / 256, sheet.size)
+        assert (box[2] - box[0]) / (box[3] - box[1]) == pytest.approx(2.0, rel=0.02)
+        assert 0 <= box[0] and 0 <= box[1]
+        assert box[2] <= sheet.width and box[3] <= sheet.height
+
+
+def test_subject_tiles_are_not_all_the_same_view():
+    """Windows overlapping past `_SUBJECT_MAX_OVERLAP` are one view twice, and
+    the whole point of a wide pool is that the k retrieved patches differ."""
+    from comiccolor.colour.cobra import _SUBJECT_MAX_OVERLAP, _overlap, _subjects, _window_for
+
+    sheet = _montage()
+    kept = []
+    for subject in _subjects(sheet):
+        box = _window_for(subject, 2.0, sheet.size)
+        if any(_overlap(box, other) > _SUBJECT_MAX_OVERLAP for other in kept):
+            continue
+        kept.append(box)
+    for i, a in enumerate(kept):
+        for b in kept[i + 1 :]:
+            assert _overlap(a, b) <= _SUBJECT_MAX_OVERLAP
+
+
+def test_subject_tiles_are_mostly_drawing_not_paper():
+    """A window centred on a drawing should be filled by one.
+
+    White inside a subject tile is the sheet's own paper, not padding — the
+    tile is a crop, so nothing can be added. What matters is that the window
+    landed on artwork rather than on the gap between two drawings.
+    """
+    for tile in _tiles(_montage(), 512, 256, budget=6, kind="sheet"):
+        drawn = (np.asarray(tile) < 250).any(axis=2).mean()
+        assert drawn > 0.15, f"window is {1 - drawn:.0%} paper"

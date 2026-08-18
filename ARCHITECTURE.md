@@ -228,8 +228,21 @@ some resolution instead. Resolution does not matter here, because the app
 keeps only one colour for each zone and then deletes the raster.
 
 **The reference is cut into tiles.** `_tiles` (`colour/cobra.py`) cuts the
-image into pieces that have the shape of the bucket. The pieces overlap by one
-half. Nothing is lost.
+image into pieces that have the shape of the bucket. The way it cuts depends
+on the `kind`.
+
+For a `sheet`, the app puts one window on each drawing (`_subject_tiles`). A
+character sheet is drawings with paper between them. Therefore the app finds
+the drawings as the connected parts of "not paper". Then it makes a window of
+the correct shape around each drawing and cuts it out. The result is one
+character in each piece, at a size that the retrieval step can use. If the app
+finds fewer than 2 drawings, the image is not a montage, and the app uses the
+grid instead.
+
+For a `page` or a `panel`, the app uses a grid: it cuts pieces that have the
+shape of the bucket, and the pieces overlap by one half. Nothing is lost. A
+page has no paper between its subjects, so there is nothing to put a window
+on.
 
 Do not put a reference on a white rectangle. White pixels in a reference are
 of no use: a reference must give colours. Cut it instead.
@@ -241,6 +254,21 @@ This is the same rule Cobra uses.
 The `kind` of the reference gives the number of tiles: a `sheet` gets 6, a
 `page` or a `panel` gets 3. A sheet holds many separate drawings and needs
 more tiles. **These two numbers are a guess. Measure them on the GPU machine.**
+
+Measured on `test_pages/laurine_ref.jpg` (a real character sheet, 1440 x 1440,
+13 drawings): against a tall panel, the grid gives 2 pieces, and each one is a
+wall of 7 small figures. The drawing windows give 6 pieces, and each one shows
+one character at a size you can read.
+
+**How the pool grows.** Cobra always shows the model `4 x top_k` pieces. This
+number does not change with the size of the pool. Thus more references make
+the search more costly, but never the model. Two dangers stay:
+
+1. The cost of the CLIP step increases with the number of references.
+2. Pieces that overlap can fill the `top_k` with the same view many times.
+
+An artist adds each reference by hand. Nothing becomes a reference by itself.
+This is the rule that keeps the pool small.
 
 ### Step 6 — Export PSD
 
