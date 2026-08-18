@@ -144,6 +144,35 @@ Parameters (`PanelParams`):
 | `frame_length_frac` | 0.05 | shortest run counted as a frame |
 | `frame_gap_frac` | 0.10 | longest frame break to repair |
 
+**Panels are polygons, not boxes (D-17 revised).** D-17 originally forbade
+`findContours` here, because with no frame to seal the gutter network against,
+a borderless panel's surviving blob is the ink silhouette of the drawing and
+tracing it returns a character-shaped polygon. That reason still holds, so the
+reversal is conditional rather than total.
+
+`diagonal_page.jpg` shows both halves at once. Its five framed panels trace
+exactly — the diamond comes back as a rotated square and its four neighbours
+come back notched where it bites into them — and no bounding box can express
+that page at all, since the diamond's box overlaps all four. Its top panel is
+borderless and traces the artwork itself at 40 vertices, which is D-17's case
+verbatim.
+
+The vertex count separates them, measured over the seven test pages at
+`polygon_epsilon_frac`: framed panels come back with 4–9 vertices, borderless
+artwork with 31–43. `max_polygon_vertices = 12` sits in that gap and falls
+back to the box above it. The epsilon must stay fine — at 0.02 every blob on
+every page collapsed to 4–5 vertices, erasing the notches and the signal with
+them.
+
+**`min_gutter_frac` is 0.009, and it is measured.** There is a cliff between
+0.009 and 0.010: `tintin_page.jpg` returns 12 panels at or below, and 5 above,
+because past it the disc no longer fits the gutters *between* panels of a row
+and whole rows survive as one blob. The previous 0.012 was on the wrong side.
+Two known failures are left alone: tintin's left column merges rows 1–2, and
+the page title comes back as a panel. Per D-19 a false positive is one click
+to delete, while a merge is not correctable at all — there is no split tool —
+so the merge is the one worth fixing next.
+
 **Borderless panels are the motivating case.** With no frame to seal the gutter
 network, the surviving component is the ink silhouette of the drawing, not a
 rectangle. So: no contour tracing (it would trace the character's outline), and

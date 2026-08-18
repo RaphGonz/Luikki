@@ -33,7 +33,7 @@ from ..extract.manga_line import MangaLineExtractor
 from ..extract.passthrough import PassthroughExtractor
 from ..model.masks import check_coverage, region_count, region_stats, regions_to_cover
 from ..segmentation.closure import ClosureParams, close_line_gaps
-from ..segmentation.panels import PanelBox, PanelParams, segment_panels
+from ..segmentation.panels import Panel, PanelParams, segment_panels
 from ..segmentation.preprocess import estimate_line_width, ink_fraction, load_line_art
 from ..segmentation.trappedball import SegmentationParams, trapped_ball_segment
 from .visualise import colourise_labels, overlay_panels

@@ -6,7 +6,7 @@ nothing here calls a model. §9: keep the boundary between segmentation
 """
 
 from .closure import ClosureParams, close_line_gaps, find_endpoints
-from .panels import PanelBox, PanelParams, segment_panels
+from .panels import Panel, PanelBox, PanelParams, segment_panels
 from .preprocess import estimate_line_width, ink_fraction, load_line_art
 from .trappedball import (
     DEFAULT_RADII,
@@ -19,6 +19,7 @@ from .trappedball import (
 __all__ = [
     "DEFAULT_RADII",
     "ClosureParams",
+    "Panel",
     "PanelBox",
     "PanelParams",
     "SegmentationParams",

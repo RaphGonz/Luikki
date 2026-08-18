@@ -37,7 +37,7 @@ Use these words only with these meanings. Do not rename them in the code.
 | grey | The 8-bit greyscale of the page. Anti-aliased edges stay visible. |
 | line mask | A boolean array. `True` is the ink of the artist. |
 | structural mask | A second line mask. A neural model makes it from `grey`. |
-| panel | One rectangle of the page. It holds a polygon and a position. |
+| panel | One area of the page. It holds a polygon and a box. Not always a rectangle. |
 | protected area | A polygon that the app must never colour. A bubble is one. |
 | box | Four numbers from the bubble model: `x0, y0, x1, y1`. Not a shape. |
 | zone | One flat colour area in a panel. The code calls it a region. |
@@ -78,11 +78,35 @@ alpha channel, the function uses an Otsu threshold.
 
 `segment_panels` uses the **raw** line mask. First it makes the frame lines
 stronger. Then it finds the network of white gutters between the panels. Then
-it takes the areas that the gutters enclose. The result is a list of
-`PanelBox`. `box_to_polygon` makes a four-corner polygon from each box.
+it takes the areas that the gutters enclose. The result is a list of `Panel`.
+Each `Panel` holds a polygon and a box.
 
 The panel step must have solid blacks. This is why it does not use the
 structural mask: the gutter network would go through a spot black.
+
+**A panel is a polygon. The box says only where to cut.** A panel is not
+always a rectangle. It can be a diamond, or it can have a piece missing where
+another panel touches it. For such a panel, the box is not the panel: the box
+of a diamond also covers a part of each panel next to it. The app cuts the box
+out of the page, and then makes all pixels outside the polygon white.
+
+`_panel_polygon` makes the polygon:
+
+1. Trace the outline of the area.
+2. Simplify the outline. Use a tolerance of 0.5% of the length of the outline.
+3. If the result has more than 12 corners, the area is artwork and not a
+   panel. Use the box.
+
+Step 3 is necessary. A panel with no frame gives no closed area to the gutter
+step. The area that stays is the drawing itself. If you trace it, you get the
+shape of the character and not the shape of the panel.
+
+Measured on the 7 test pages: a panel with a frame gives 4 to 9 corners.
+Artwork with no frame gives 31 to 43 corners. The limit of 12 is between these
+two groups.
+
+Keep the tolerance small. At 2%, all areas on all pages gave 4 or 5 corners.
+That removes the missing piece of a panel, which is the reason to trace.
 
 ### Step 3 — Detect bubbles
 
@@ -300,7 +324,7 @@ route. Each preview image is one GET route that sends a PNG.
       web/app.py              the HTTP routes
       segmentation/
         preprocess.py         file -> line_mask + grey
-        panels.py             gutter network -> panel boxes
+        panels.py             gutter network -> panel polygons
         bubbles.py            RT-DETR box -> ray trace -> polygon
         segmenter.py          the LineFiller adapter
         trappedball.py        the fill parameters, expand_under_lines
@@ -334,6 +358,10 @@ route. Each preview image is one GET route that sends a PNG.
 - Cobra does not need complete pages. Its only rule is that each reference part
   is one half of the width and the height of the panel. A character sheet is
   as good as a page.
+- A panel is its polygon. The box is only where to cut. Never use the box as
+  the shape: a diamond panel's box covers a part of four other panels.
+- Do not trace an area that has more than 12 corners. It is artwork, not a
+  panel, and its shape is the shape of a character.
 - Do not squash a panel to fit the shape that Cobra accepts. Put the panel on
   a white rectangle instead. Measured on the test pages, panels go from 0.63:1
   to 3.38:1, and 13 of 23 panels get squashed more than 5%.

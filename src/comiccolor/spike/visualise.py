@@ -9,7 +9,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from ..segmentation.panels import PanelBox
+from ..segmentation.panels import Panel
 
 
 def colourise_labels(label_map: np.ndarray, seed: int = 0) -> np.ndarray:
@@ -22,7 +22,7 @@ def colourise_labels(label_map: np.ndarray, seed: int = 0) -> np.ndarray:
 
 
 def overlay_panels(
-    grey: np.ndarray, boxes: list[PanelBox], reading_labels: bool = True
+    grey: np.ndarray, boxes: list[Panel], reading_labels: bool = True
 ) -> np.ndarray:
     """Draw panel boxes and reading order over the page."""
     canvas = cv2.cvtColor(grey, cv2.COLOR_GRAY2BGR)

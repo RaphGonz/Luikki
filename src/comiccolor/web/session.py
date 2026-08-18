@@ -40,7 +40,7 @@ from ..extract.manga_line import MangaLineExtractor
 from ..model.entities import PaletteEntry
 from ..model.masks import UNASSIGNED
 from ..segmentation.bubbles import BubbleDetector, detect_bubbles
-from ..segmentation.panels import box_to_polygon, segment_panels
+from ..segmentation.panels import segment_panels
 from ..segmentation.preprocess import binarise_lines, load_line_art
 from ..segmentation.protected import rasterize_protected_for_panel
 from ..segmentation.segmenter import LineFillerSegmenter
@@ -176,17 +176,17 @@ class Session:
     def detect_panels(self) -> list[PanelState]:
         with self.lock:
             self._require_page()
-            boxes = segment_panels(self.line_mask)
+            found = segment_panels(self.line_mask)
             self.panels = [
                 PanelState(
                     order=order,
-                    x=box.x,
-                    y=box.y,
-                    width=box.width,
-                    height=box.height,
-                    polygon=box_to_polygon(box),
+                    x=panel.x,
+                    y=panel.y,
+                    width=panel.width,
+                    height=panel.height,
+                    polygon=panel.polygon,
                 )
-                for order, box in enumerate(boxes)
+                for order, panel in enumerate(found)
             ]
             self._invalidate_from_panels()
             return self.panels

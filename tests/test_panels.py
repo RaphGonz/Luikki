@@ -105,3 +105,78 @@ def test_borderless_silhouette_is_proposed_not_discarded():
 def test_default_reading_order_is_left_to_right():
     boxes = segment_panels(_grid_page(1, 2))
     assert boxes[0].x < boxes[1].x, "default reading order should be ltr"
+
+
+# -- polygons, not boxes ----------------------------------------------------
+
+
+def _diamond_page(size: int = 600) -> np.ndarray:
+    """A page holding one rotated square panel, framed, on white."""
+    page = np.zeros((size, size), dtype=np.uint8)
+    half = size // 2
+    reach = int(size * 0.36)
+    corners = np.array(
+        [[half, half - reach], [half + reach, half], [half, half + reach], [half - reach, half]]
+    )
+    cv2.polylines(page, [corners], True, 1, thickness=3)
+    return page.astype(bool)
+
+
+def test_a_rotated_panel_keeps_its_shape():
+    """The case no bounding box can express. A diamond's box overlaps every
+    neighbour it has; only its outline says which pixels are its own."""
+    panels = segment_panels(_diamond_page())
+    assert len(panels) == 1
+
+    polygon = panels[0].polygon
+    assert 3 <= len(polygon) <= 6, f"a diamond is not {len(polygon)} vertices"
+
+    # A box would cover twice the area a rotated square does.
+    traced = cv2.contourArea(np.array(polygon, dtype=np.int32))
+    box = panels[0].width * panels[0].height
+    assert traced < 0.7 * box
+
+
+def test_a_rectangular_panel_still_gives_four_corners():
+    """The common case must not get more complicated."""
+    panels = segment_panels(_grid_page(2, 2))
+    for panel in panels:
+        assert len(panel.polygon) == 4
+
+
+def test_artwork_falls_back_to_its_bounding_box():
+    """D-17's case, kept. With no frame to seal the gutter network against, a
+    borderless panel's blob is the drawing itself, and tracing it would return
+    a polygon shaped like the character. Above `max_polygon_vertices` the box
+    is used instead."""
+    size = 500
+    page = np.zeros((size, size), dtype=np.uint8)
+    rng = np.random.default_rng(0)
+    centre = np.array([size // 2, size // 2])
+    points = []
+    for i in range(40):
+        angle = 2 * np.pi * i / 40
+        radius = 120 + rng.integers(-45, 45)
+        points.append(centre + [int(radius * np.cos(angle)), int(radius * np.sin(angle))])
+    cv2.fillPoly(page, [np.array(points)], 1)
+
+    panels = segment_panels(page.astype(bool))
+    assert len(panels) == 1
+    assert len(panels[0].polygon) == 4, "a ragged blob must come back as its box"
+
+
+def test_polygon_and_box_agree():
+    """The box must contain the polygon: it is where the crop is taken, and
+    the polygon then masks inside it."""
+    for page in (_grid_page(2, 2), _diamond_page()):
+        for panel in segment_panels(page):
+            for x, y in panel.polygon:
+                assert panel.x <= x <= panel.x + panel.width
+                assert panel.y <= y <= panel.y + panel.height
+
+
+def test_polygons_are_closed_without_repeating_the_first_point():
+    """`rasterize_protected_for_panel` fills these; a duplicated closing
+    vertex is a degenerate edge."""
+    for panel in segment_panels(_grid_page(2, 2)):
+        assert panel.polygon[0] != panel.polygon[-1]
