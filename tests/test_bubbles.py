@@ -1,147 +1,205 @@
-"""PROT-01, D-22, D-23, D-24: the bubble detector's behavioural contract.
+"""PROT-01, D-22, D-24, D-25: the bubble detector's behavioural contract.
 
-D-22's own algorithm -- detect the text, flood-fill the enclosing white
-outward from it, cap the area, discard text that is not sitting in white --
-is exercised here against `comiccolor.segmentation.bubbles`. The first test
-verifies `cv2.floodFill`'s `FLOODFILL_MASK_ONLY` flag/mask-size/fill-value
-convention directly against the installed OpenCV 5.0.0 build, per
-02-RESEARCH.md Pitfall 2 -- that convention is `[ASSUMED]` in the research
-sketch, not trusted, until this test proves it on this machine. D-24's SFX
-deferral needs no positive test: lettering with no enclosing white to fill
-falls out of every case below by construction, which is why PROT-02's
-hand-drawing is the guaranteed fallback rather than a gap.
+Detection is a model now (`bubbles.BubbleDetector`), and the tests split along
+that seam. The tracing step -- box in, polygon out -- is ordinary geometry and
+is tested here directly with hand-built boxes, so the whole of the logic that
+can be wrong is covered without a 161 MB download. The model itself is checked
+against the artist's counts in `test_pages/bubble_counts.txt` by one test that
+skips when the weights are not on this machine.
+
+The negative cases the old heuristic detector needed -- hatching is not a
+bubble, lettering on artwork is not a bubble -- have moved to that same
+model-backed test, because they are now claims about the model rather than
+about anything in this repository. They are the cases the heuristic version
+failed on real pages: hatching read as `iiii`, cup holders read as `OOO`.
 """
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 import cv2
 import numpy as np
+import pytest
 
-from tests.conftest import bubble_page, glyph_row
+from comiccolor.segmentation.bubbles import BubbleParams, trace_bubble
 
-
-def test_floodfill_mask_only_semantics_on_this_opencv_build():
-    """02-RESEARCH.md Pitfall 2: `FLOODFILL_MASK_ONLY` needs a mask 2px
-    larger than the image on every side, and the newMaskVal-in-high-byte
-    flag convention (`255 << 8`) is easy to get backwards. A hand-built
-    closed white box, flood-filled from an interior pixel, must come back
-    as True *inside* the box and False *outside* it after cropping the 2px
-    padding -- the inverted-mask symptom this test exists to catch."""
-    image = np.zeros((20, 20), dtype=np.uint8)
-    image[5:15, 5:15] = 255  # a closed 10x10 white box
-
-    mask = np.zeros((22, 22), dtype=np.uint8)
-    flags = 4 | cv2.FLOODFILL_MASK_ONLY | (255 << 8)
-    cv2.floodFill(image.copy(), mask, (9, 9), 255, loDiff=0, upDiff=0, flags=flags)
-
-    cropped = mask[1:-1, 1:-1].astype(bool)
-    assert cropped[5:15, 5:15].all(), "the box interior must be filled"
-    outside = cropped.copy()
-    outside[5:15, 5:15] = False
-    assert not outside.any(), "nothing outside the box should be filled"
+PAGES = Path(__file__).resolve().parent.parent / "test_pages"
 
 
-def test_one_bubble_yields_one_mask():
-    """`bubble_page()` has one closed bubble outline containing a
-    baseline-aligned glyph row -- D-22's positive case must yield exactly
-    one mask, not one per glyph."""
-    from comiccolor.segmentation.bubbles import detect_bubbles
+def _page_with_balloon(gap: int = 0) -> tuple[np.ndarray, np.ndarray]:
+    """A closed elliptical balloon with a line of lettering inside it.
 
-    grey, line_mask = bubble_page()
-    bubbles = detect_bubbles(grey, line_mask)
-    assert len(bubbles) == 1
-
-
-def test_hatching_is_not_a_bubble():
-    """Irregular-height hatching with no shared baseline and no enclosing
-    outline -- D-23's negative case. Whatever glyph candidates the height/
-    aspect filters admit, there is no closed white to fill, so the fill
-    either escapes the open page (area cap) or never seeds at all."""
-    from comiccolor.segmentation.bubbles import detect_bubbles
-
-    width, height = 600, 400
-    line_mask = np.zeros((height, width), dtype=bool)
-    heights = (6, 14, 9, 20, 5, 17)
-    hatch_x, hatch_y = 40, height - 60
-    for i, h in enumerate(heights):
-        gx = hatch_x + i * 14
-        line_mask[hatch_y : hatch_y + h, gx : gx + 4] = True
-    grey = np.where(line_mask, 0, 255).astype(np.uint8)
-
-    assert detect_bubbles(grey, line_mask) == []
-
-
-def test_unclosed_bubble_is_discarded_by_area_cap():
-    """A bubble outline with a gap in it, on a page with open white
-    margins, must yield zero bubbles rather than one covering most of the
-    page -- D-22 point 3, the unclosed-bubble leak."""
-    from comiccolor.segmentation.bubbles import detect_bubbles
-
+    `gap` opens the outline by that many degrees, which is the case that broke
+    every flood-fill version of this module: an open outline is a `C`, and
+    filling a `C` fills the stroke and leaves the middle out.
+    """
     width, height = 600, 400
     drawing = np.zeros((height, width), dtype=np.uint8)
     centre = (width // 2, height // 2)
-    axes = (width // 4, height // 6)
-    # Only 0..300 degrees drawn: the remaining 60 degrees is the gap the
-    # fill escapes through into the page margins.
-    cv2.ellipse(drawing, centre, axes, 0, 0, 300, 1, thickness=2)
+    axes = (120, 60)
+    cv2.ellipse(drawing, centre, axes, 0, gap, 360, 1, thickness=2)
 
     line_mask = drawing.astype(bool)
-    glyph_row(
-        line_mask, x=centre[0] - 24, y=centre[1] - 6, count=6, glyph_w=8, glyph_h=12, gap=5
+    for i in range(6):
+        x = centre[0] - 45 + i * 15
+        line_mask[centre[1] - 8 : centre[1] + 8, x : x + 9] = True
+
+    box = np.array(
+        [centre[0] - axes[0], centre[1] - axes[1], centre[0] + axes[0], centre[1] + axes[1]],
+        dtype=np.float32,
     )
-    grey = np.where(line_mask, 0, 255).astype(np.uint8)
-
-    assert detect_bubbles(grey, line_mask) == []
+    return line_mask, box
 
 
-def test_lettering_on_artwork_is_discarded():
-    """A closed outline enclosing dark/textured ground rather than paper --
-    D-22 point 4's "lettering sitting on artwork," which is also why D-24
-    can defer SFX proposal: a glyph cluster on ink produces nothing here by
-    construction, not by a separate rule."""
-    from comiccolor.segmentation.bubbles import detect_bubbles
-
-    width, height = 600, 400
-    drawing = np.zeros((height, width), dtype=np.uint8)
-    centre = (width // 2, height // 2)
-    axes = (width // 4, height // 6)
-    cv2.ellipse(drawing, centre, axes, 0, 0, 360, 1, thickness=2)
-
-    line_mask = drawing.astype(bool)
-    glyph_row(
-        line_mask, x=centre[0] - 24, y=centre[1] - 6, count=6, glyph_w=8, glyph_h=12, gap=5
-    )
-
-    # Dark/textured ground everywhere, inside a properly closed outline --
-    # isolates the brightness discard from the area cap, which would also
-    # accept this geometry if it were paper-white.
-    grey = np.full((height, width), 80, dtype=np.uint8)
-    grey[line_mask] = 0
-
-    assert detect_bubbles(grey, line_mask) == []
+def _area(polygon: list[tuple[int, int]]) -> float:
+    return abs(cv2.contourArea(np.array(polygon, dtype=np.int32)))
 
 
-def test_mask_to_polygon_returns_page_space_vertices():
-    """The traced polygon has a workable vertex count and stays within the
-    page bounds -- an editable vertex polygon, not a raster blob."""
-    from comiccolor.segmentation.bubbles import mask_to_polygon
+def _is_simple(polygon: list[tuple[int, int]]) -> bool:
+    """No edge crosses another. A star-shaped trace guarantees this; the test
+    exists because the previous version returned polygons that folded inward
+    around the lettering, and that is what a self-crossing shape looks like."""
+    points = [np.array(p, dtype=float) for p in polygon]
+    n = len(points)
 
-    width, height = 200, 150
-    mask = np.zeros((height, width), dtype=bool)
-    mask[30:100, 40:160] = True
+    def crosses(a, b, c, d):
+        def side(p, q, r):
+            u, v = q - p, r - p
+            return np.sign(u[0] * v[1] - u[1] * v[0])
 
-    polygon = mask_to_polygon(mask)
+        return (
+            side(a, b, c) * side(a, b, d) < 0 and side(c, d, a) * side(c, d, b) < 0
+        )
 
-    assert 3 <= len(polygon) <= 64
+    for i in range(n):
+        for j in range(i + 2, n):
+            if i == 0 and j == n - 1:
+                continue
+            if crosses(points[i], points[(i + 1) % n], points[j], points[(j + 1) % n]):
+                return False
+    return True
+
+
+def test_closed_balloon_traces_its_outline():
+    """The polygon covers the balloon rather than the lettering inside it.
+    The ellipse is 120x60, so its area is about 22600 px against a box of
+    240x120 = 28800 -- anything near the text's own 100x16 means the trace
+    stopped at the words."""
+    line_mask, box = _page_with_balloon()
+    polygon = trace_bubble(line_mask, box)
+
+    assert len(polygon) >= 3
+    assert 0.6 * 28800 <= _area(polygon) <= 1.4 * 28800
+
+
+def test_open_balloon_still_traces():
+    """A 40-degree gap in the outline must change the result hardly at all.
+    This is `manga_page.jpg`'s case, where Otsu leaves the outline dotted, and
+    it is the case that made every closed-curve method return a shape folded
+    in around the text."""
+    closed_mask, box = _page_with_balloon()
+    open_mask, _ = _page_with_balloon(gap=40)
+
+    closed = _area(trace_bubble(closed_mask, box))
+    opened = _area(trace_bubble(open_mask, box))
+
+    assert opened > 0.8 * closed
+
+
+def test_traced_polygon_is_simple():
+    """No self-intersection, open outline or closed."""
+    for gap in (0, 40):
+        line_mask, box = _page_with_balloon(gap=gap)
+        assert _is_simple(trace_bubble(line_mask, box))
+
+
+def test_borderless_balloon_traces_its_lettering():
+    """A balloon with no outline drawn at all comes back as its text block.
+
+    This is the one place the trace has no boundary to find, so the furthest
+    ink on each ray *is* the lettering. Protecting the text block rather than
+    the box is the better of the two available answers -- the box would claim
+    the artwork around a borderless caption and leave holes in the flats --
+    but it is a real limitation and not a bug: the white margin of such a
+    caption is left unprotected and will be coloured.
+    """
+    line_mask, box = _page_with_balloon()
+    line_mask[:, :] = False
+    for i in range(6):
+        x = 300 - 45 + i * 15
+        line_mask[192:208, x : x + 9] = True
+
+    polygon = trace_bubble(line_mask, box)
+    assert _area(polygon) < 0.25 * 28800
     for x, y in polygon:
-        assert 0 <= x < width
-        assert 0 <= y < height
+        assert 230 <= x <= 370 and 170 <= y <= 230
 
 
-def test_mask_to_polygon_on_empty_mask_returns_empty_list():
-    """No contour, no polygon -- a degenerate trace must never reach the
-    store as an unrenderable shape."""
-    from comiccolor.segmentation.bubbles import mask_to_polygon
+def test_polygon_stays_inside_the_page():
+    """A balloon at the page edge must not produce out-of-bounds vertices."""
+    line_mask, _ = _page_with_balloon()
+    box = np.array([-30.0, -20.0, 90.0, 60.0], dtype=np.float32)
+    for x, y in trace_bubble(line_mask, box):
+        assert 0 <= x < line_mask.shape[1]
+        assert 0 <= y < line_mask.shape[0]
 
-    mask = np.zeros((50, 50), dtype=bool)
-    assert mask_to_polygon(mask) == []
+
+def test_degenerate_box_returns_no_polygon():
+    """A box a few pixels across is not a balloon; it must yield nothing
+    rather than an unrenderable shape."""
+    line_mask, _ = _page_with_balloon()
+    assert trace_bubble(line_mask, np.array([10.0, 10.0, 14.0, 14.0])) == []
+
+
+def test_vertex_count_stays_editable():
+    """The artist will drag these points. A trace of 128 rays that came back
+    as 128 vertices would be a raster blob wearing a polygon's clothes."""
+    line_mask, box = _page_with_balloon()
+    assert 3 <= len(trace_bubble(line_mask, box)) <= 40
+
+
+@pytest.mark.skipif(
+    not (
+        Path(os.environ.get("COMICCOLOR_BUBBLE_MODEL", "models/comic_bubble_detector.onnx")).exists()
+        and PAGES.exists()
+    ),
+    reason="detector weights or test pages not on this machine",
+)
+def test_detector_matches_the_artists_counts():
+    """The numbers in `test_pages/bubble_counts.txt`, which the artist wrote.
+
+    Three of these pages have no balloons at all and are the cases the
+    heuristic detector invented them on: hatching read as `iiii` on moebius
+    and antoine, cup holders read as `OOO` on teddy. A page of SFX lettering
+    (laurine's Blop/Pop/Hiii) must still yield exactly its four balloons.
+    """
+    from comiccolor.segmentation.bubbles import BubbleDetector, detect_bubbles
+    from comiccolor.segmentation.preprocess import load_line_art
+
+    expected = {
+        "antoine_page.png": 0,
+        "laurine_page.jpg": 4,
+        "manga_page.jpg": 4,
+        "moebius_page.jpg": 0,
+        "teddy_page.png": 0,
+        "tintin_page.jpg": 12,
+    }
+    detector = BubbleDetector()
+
+    found = {}
+    for name in expected:
+        line_mask, grey = load_line_art(PAGES / name)
+        found[name] = len(detect_bubbles(grey, line_mask, detector=detector))
+
+    assert found == expected
+
+
+def test_params_are_overridable():
+    """`BubbleParams` is the whole of the tuning surface; a caller must be
+    able to trade fit for robustness without editing the module."""
+    line_mask, box = _page_with_balloon()
+    coarse = trace_bubble(line_mask, box, BubbleParams(epsilon_frac=0.1))
+    fine = trace_bubble(line_mask, box, BubbleParams(epsilon_frac=0.001))
+    assert len(fine) > len(coarse)

@@ -117,40 +117,67 @@ dropped. Over-propose; the artist deletes false positives. Never raise it back
 toward 0.55 — that silently drops every borderless panel.
 
 ### Bubble detection
-Already built, in `src/comiccolor/segmentation/bubbles.py`.
+Built, in `src/comiccolor/segmentation/bubbles.py`. Rewritten once, and the
+rewrite is the point of this section.
 
-**A bubble is text surrounded by white.**
+**The model says where. The artwork says what shape.**
 
-1. Find glyphs — small dark components of similar height, aligned, not long
-   straight runs. This is *detection*, not OCR: the text is never read, so no
-   OCR engine, no language pack, no licence question.
-2. Drop lonely blobs; cluster the rest into text blocks.
-3. Flood-fill the enclosing white outward from each cluster.
-4. Cap the filled area, so an unclosed bubble cannot leak across the page or
-   run along the gutters.
-5. Discard if the filled ground is dark — that is lettering on artwork, not a
-   bubble.
-6. Trace the fill to a polygon with `approxPolyDP`.
+1. `BubbleDetector` runs RT-DETR-v2 through `onnxruntime` and returns boxes of
+   class `bubble` scoring ≥ 0.7.
+2. For each box, `trace_bubble` casts 128 rays outward from its centre and
+   keeps the furthest ink pixel on each, capped at the box border + 15%.
+3. A circular median over the 128 lengths, then `approxPolyDP`.
 
-Parameters (`BubbleParams`):
+Step 2 is what makes lettering harmless — the text is always nearer the centre
+than the outline is. Step 3 is what makes a *broken* outline harmless: a ray
+escaping through a gap is one outlier its neighbours out-vote. The result is
+star-shaped, therefore always a simple polygon, and it lands **on** the outline
+so the balloon border is protected too.
 
-| Param | Value | Meaning |
+Parameters (`BubbleParams`): `score` 0.7, `rays` 128, `reach` 1.15, `smooth` 7,
+`epsilon_frac` 0.008, `max_bubbles` 64. Nothing here needs tuning per page —
+verified against `test_pages/bubble_counts.txt`, which the artist wrote.
+
+| Page | Balloons | Found |
 |---|---|---|
-| `min/max_glyph_height_frac` | 0.4 / 2.5 | band around median small-component height |
-| `max_glyph_aspect` | 4.0 | rejects frames and speed lines |
-| `min_glyphs_per_cluster` | 3 | a lone blob is dirt |
-| `cluster_dilate_px` | 15 | merges lines of one text block |
-| `max_area_frac` | 0.35 | the leak cap — **needs tuning on real pages** |
-| `min_area_frac` | 0.001 | smaller is a hole in the ink |
-| `min_ground_brightness` | 127 | below this it is artwork, not paper |
-| `max_bubbles` | 64 | hard ceiling |
+| `tintin_page.jpg` | 12 | 12 |
+| `laurine_page.jpg` | 4 (spiky, tailed, one open) | 4 |
+| `manga_page.jpg` | 4 | 4 |
+| `antoine_page.png`, `moebius_page.jpg`, `teddy_page.png` | 0 | 0 |
 
-**SFX lettering gets no automatic detection.** A "BOOM" over artwork has no
-white to fill. If SFX gets coloured, that is acceptable — the artist masks it by
-hand if they care. Revisit later.
+**Known limits, both from the trace being star-shaped.** A long tail is bridged
+rather than followed. A balloon with no outline drawn at all comes back as its
+lettering, so its white margin stays unprotected and gets coloured.
 
-No learned model here. Every open-source bubble detector that works is GPL,
-restricted by its training dataset, or ships without weights.
+**SFX lettering gets no automatic proposal.** This is now a choice, not a
+limitation: the model returns a `text_free` class which is exactly SFX outside
+balloons. Turning it on is one line, whenever hand-masking stops being enough.
+
+#### Why the heuristic version was abandoned
+The original rule — *a bubble is text surrounded by white*, read left to right:
+find glyphs, cluster them, flood-fill outward, cap the area — was measured
+against all six real pages and failed on every one:
+
+- `tintin_page.jpg`: 39 proposals, **not one of them a balloon**. The glyph
+  filter keyed on the page's *median* component height, which on a scan is
+  compression speckle — 4 px where the lettering is 7 px. It therefore excluded
+  the real lettering and admitted the noise.
+- `moebius_page.jpg`, `antoine_page.png`: hatching read as `iiii`.
+  `teddy_page.png`: cup holders read as `OOO`. All three have no balloons.
+- `laurine_page.jpg`: a whole panel proposed as one bubble.
+
+One cause: deciding *is this text?* from the geometry of ink blobs. Height
+similarity plus a shared baseline does not separate lettering from hatching in
+real artwork, and no parameter fixes that.
+
+**The licence objection is answered, not dodged.** The reason for "no learned
+model here" was that every working open-source detector is GPL, dataset-
+restricted, or shipped without weights. That is still true of most of them — and
+there is a sharper trap underneath it: nearly every "manga bubble YOLO" needs
+the `ultralytics` package to run, and that package is **AGPL-3.0**, whatever
+licence its own weights carry. RT-DETR-v2 under Apache-2.0 through
+`onnxruntime` is the one mainstream path with no AGPL code in the chain. Keep
+it that way.
 
 ### Zones
 Existing: trapped-ball fill via vendored LineFiller (MIT), with `merge_fill`.

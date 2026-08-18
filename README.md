@@ -11,7 +11,7 @@ Then open <http://127.0.0.1:8000>.
 |---|---|---|
 | 1 Upload page | `load_line_art` | `segmentation/preprocess.py` |
 | 2 Detect panels | gutter network → boxes → 4-corner polygons | `segmentation/panels.py` |
-| 3 Detect bubbles | glyph clusters → flood fill → polygon | `segmentation/bubbles.py` |
+| 3 Detect bubbles | RT-DETR box → radial trace → polygon | `segmentation/bubbles.py` |
 | 4 Segment zones | MangaLineExtraction → LineFiller trapped-ball, per panel | `extract/`, `segmentation/segmenter.py` |
 | 5 Generate flats | proposer → per-zone mode → CIELAB snap | `colour/` |
 | 6 Export PSD | group per panel, layer per colour | `export/psd.py` |
@@ -35,13 +35,40 @@ the figure §2.2 recorded.
 
 Panel and bubble detection deliberately stay on the raw mask —
 `segment_panels` needs spot blacks solid or the gutter network leaks through
-them, and `detect_bubbles` reads glyphs as filled components. `expand_under_lines`
-also stays on raw ink, because the layer the artist drops on top is real ink and
+them, and `detect_bubbles` traces the balloon outline the artist actually
+drew. `expand_under_lines` also stays on raw ink, because the layer the artist drops on top is real ink and
 that is what the flats have to reach under.
 
 Tick **extracted lines** in the Show panel to see what segmentation actually
 received. `--extractor raw` turns it off; use it only when the ink layer is
 already a clean line image.
+
+## Detecting bubbles
+
+`detect_bubbles` is a model, not a heuristic. The heuristic version it replaced
+returned 39 bubbles on `tintin_page.jpg` and not one of them was a balloon; it
+read hatching as `iiii` and cup holders as `OOO` on the three pages that have
+no balloons at all. Deciding "is this text?" from the geometry of ink blobs
+does not survive real artwork.
+
+    comiccolor serve      # pulls the weights on first use, 161 MB into models/
+
+RT-DETR-v2 (`ogkalu/comic-text-and-bubble-detector`, **Apache-2.0**), run
+through `onnxruntime`. No GPU, ~0.85 s per page whatever its size. The licence
+matters more than it looks: nearly every other comic balloon detector on GitHub
+needs `ultralytics` to run, and that is AGPL-3.0 — which P1 established must
+never enter this chain, whatever the model card claims.
+
+Measured against the artist's own counts in `test_pages/bubble_counts.txt`,
+score ≥ 0.7: tintin 12/12, laurine 4/4 (spiky, tailed and open balloons, with
+its Blop/Pop/Hiii sound effects correctly ignored), manga 4/4, and zero on all
+three pages with no balloons.
+
+The model gives boxes. The shape comes from the artwork: 128 rays cast outward
+from the box centre, each keeping the furthest ink it finds, then a circular
+median so a ray that escapes through a gap in the outline is out-voted by its
+neighbours. That is what handles a balloon outline Otsu leaves *dotted*, which
+`manga_page.jpg`'s is.
 
 ## Plugging Cobra in
 
@@ -92,11 +119,10 @@ comment there before anyone "simplifies" it back to a plain `psd.save()`.
 
 ## Known rough edges
 
-**Bubble detection over-proposes on artwork.** On a crowd scene it claims white
-shirts and props as bubbles, and a protected area is never coloured, so those
-come out as holes in the flats. `max_area_frac` is flagged in the spec as
-needing tuning against real pages. Until then: the button is optional, and
-skipping it costs nothing on a page with no balloons.
+**A balloon with a long tail loses its tail**, and a balloon with no outline
+drawn at all comes back as its lettering rather than its white. Both follow
+from the trace being star-shaped, which is also what stops it folding inward
+around the text. See `segmentation/bubbles.py`.
 
 **Nothing is correctable in-app.** No dragging corners, no merging zones, no
 reassigning a colour — that is the deliberate scope of this version. A wrong

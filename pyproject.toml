@@ -10,6 +10,10 @@ dependencies = [
     "pillow>=11.0",
     "scikit-image>=0.26",
     "psd-tools>=1.18",
+    # Speech-bubble detection. Deliberately onnxruntime and not ultralytics:
+    # every YOLO-based comic bubble detector needs an AGPL-3.0 package to
+    # run, whatever licence its own weights carry.
+    "onnxruntime>=1.20",
 ]
 
 [project.optional-dependencies]

@@ -33,7 +33,7 @@ from ..extract.base import LineExtractor
 from ..extract.manga_line import MangaLineExtractor
 from ..model.entities import PaletteEntry
 from ..model.masks import UNASSIGNED
-from ..segmentation.bubbles import detect_bubbles, mask_to_polygon
+from ..segmentation.bubbles import BubbleDetector, detect_bubbles
 from ..segmentation.panels import box_to_polygon, segment_panels
 from ..segmentation.preprocess import binarise_lines, load_line_art
 from ..segmentation.protected import rasterize_protected_for_panel
@@ -101,6 +101,9 @@ class Session:
         # will double-click; two passes mutating the same panel list is the
         # one race worth spending a lock on.
         self.lock = threading.RLock()
+        # Loaded on the first press of Detect bubbles rather than here: it is
+        # 161 MB off disk, and a page with no balloons never needs it.
+        self.bubble_detector: BubbleDetector | None = None
         self.reset()
 
     # -- state -----------------------------------------------------------
@@ -176,8 +179,11 @@ class Session:
     def detect_bubbles(self) -> list[list[tuple[int, int]]]:
         with self.lock:
             self._require_page()
-            masks = detect_bubbles(self.grey, self.line_mask)
-            polygons = [mask_to_polygon(mask) for mask in masks]
+            if self.bubble_detector is None:
+                self.bubble_detector = BubbleDetector()
+            polygons = detect_bubbles(
+                self.grey, self.line_mask, detector=self.bubble_detector
+            )
             self.protected = [p for p in polygons if len(p) >= 3]
             # Protection feeds segmentation, so zones computed before it are
             # stale (rule 4).
@@ -233,9 +239,9 @@ class Session:
 
         Panel and bubble detection deliberately keep the raw mask.
         `segment_panels` needs solid blacks to stay solid, or the gutter
-        network leaks straight through them; `detect_bubbles` reads glyphs as
-        filled components and paper brightness off the original grey, and the
-        extractor turns lettering into outlines.
+        network leaks straight through them; `detect_bubbles` shows the model
+        the page as the artist drew it, and traces the balloon outline off the
+        raw ink, which is the line the artist will drop back on top.
 
         Computed once per page and cached: it is seconds on a GPU, minutes on
         a CPU, and it does not change until a new page is loaded.
