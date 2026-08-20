@@ -73,7 +73,82 @@ def main(argv: list[str] | None = None) -> int:
         help="line extractor before segmentation; raw skips it (§2.2 chose manga)",
     )
 
+    flatten = sub.add_parser(
+        "flatten",
+        help="run every step on one page headlessly, snapping all segments",
+    )
+    flatten.add_argument("page", help="the line-art page")
+    flatten.add_argument(
+        "-r",
+        "--reference",
+        action="append",
+        default=[],
+        help="character sheet or coloured page; repeatable. Cobra needs one",
+    )
+    flatten.add_argument("-o", "--out", default=None, help="where the PSD lands")
+    flatten.add_argument(
+        "--proposer", default="distinct", choices=["distinct", "cobra"]
+    )
+    flatten.add_argument(
+        "--threshold",
+        type=float,
+        default=None,
+        help=(
+            "max weighted CIELAB distance to snap; omit for the default guard, "
+            "pass 0 to snap nothing, pass inf to snap everything regardless"
+        ),
+    )
+    flatten.add_argument(
+        "--no-snap",
+        action="store_true",
+        help="stop after flats, leaving every segment its own colour",
+    )
+
     args = parser.parse_args(argv)
+
+    if args.command == "flatten":
+        from .colour.snap import SNAP_MAX_DELTA
+        from .web.session import Session
+
+        proposer = None
+        if args.proposer == "cobra":
+            from .colour.cobra import CobraProposer
+
+            proposer = CobraProposer()
+
+        workdir = Path(args.out or ".comiccolor-work/flatten")
+        session = Session(workdir=workdir, proposer=proposer)
+        for reference in args.reference:
+            session.add_reference(reference, original_name=Path(reference).name)
+        session.load_page(args.page, original_name=Path(args.page).name)
+
+        session.detect_panels()
+        session.detect_bubbles()
+        session.segment_zones()
+        flats = session.generate_flats()
+        print(
+            f"{len(session.panels)} panels, {len(session.protected)} bubbles, "
+            f"{flats['segments']} segments, {flats['colours']} palette entries"
+        )
+
+        if args.no_snap:
+            print("not snapping: every segment keeps its own proposed colour")
+        else:
+            threshold = SNAP_MAX_DELTA if args.threshold is None else args.threshold
+            if threshold == float("inf"):
+                threshold = None
+            result = session.snap_all(threshold)
+            print(
+                f"snap-all: {result['snapped']} snapped, "
+                f"{result['skipped']} left as proposed "
+                f"(threshold {'none' if threshold is None else threshold})"
+            )
+
+        psd = session.export_psd()
+        print(f"PSD: {psd}")
+        return 0
+
+
 
     if args.command == "serve":
         import os

@@ -33,7 +33,8 @@ from ..colour.proposer import (
     ReferenceImage,
 )
 from ..colour.references import Reference, ReferenceStore
-from ..colour.snap import SNAP_MAX_DELTA, assign_zones
+from ..colour.segments import Segment, build_segments
+from ..colour.snap import SNAP_MAX_DELTA, assign_zones, nearest_entry
 from ..export.psd import PanelFlats, flats_preview, write_psd
 from ..extract.base import LineExtractor
 from ..extract.manga_line import MangaLineExtractor
@@ -140,6 +141,12 @@ class Session:
         # Tracked apart from `self.protected` because a page with no bubbles
         # on it is a legitimate outcome of pressing the button, not a step
         # that never ran.
+        # One per zone, built by `generate_flats`. The artist's unit of work
+        # from here on: everything after flats is per-segment.
+        self.segments: list[Segment] = []
+        # (panel, label) -> the private entry `generate_flats` gave that
+        # segment, so `unsnap_segment` can put back what the proposer said.
+        self._auto_entry: dict[tuple[int, int], int] = {}
         self._bubbles_done = False
         self._zones_done = False
         self._flats_done = False
@@ -412,14 +419,19 @@ class Session:
             if not self._zones_done:
                 raise StepError("Segment zones first — there is nothing to colour yet.")
 
-            # With no palette uploaded there is nothing to snap to, so every
-            # zone's mode becomes its own entry (see snap.assign_zones).
-            # Decided once, before the loop: entries created for panel 1 are
-            # not a palette to snap panel 2 against.
-            threshold = SNAP_MAX_DELTA if self.palette else None
+            # `threshold=None` unconditionally: **flats never snap**. Every
+            # zone's modal colour becomes its own entry and stays that way
+            # until the artist says otherwise, one segment at a time.
+            #
+            # Snapping used to happen here, in the same pass, which left it
+            # the one stage of the pipeline with no boundary the artist could
+            # inspect or disagree with — and it is the stage that quietly
+            # folded every neutral zone into a sheet's ink black. Splitting it
+            # out is what makes "every place the machine got it wrong is one
+            # click to fix" true of colour and not only of geometry.
+            threshold = None
 
             assigned = 0
-            flagged = 0
             for panel in self.panels:
                 if panel.label_map is None:
                     continue
@@ -442,14 +454,151 @@ class Session:
                 self._next_entry_id += len(created)
 
                 panel.assignments = {a.label: a.palette_entry_id for a in assignments}
-                panel.flagged = {a.label for a in assignments if a.flagged}
+                panel.flagged = set()
                 assigned += len(assignments)
-                flagged += len(panel.flagged)
+
+            self.segments = []
+            for panel in self.panels:
+                if panel.label_map is None:
+                    continue
+                self.segments.extend(
+                    build_segments(
+                        panel.order, panel.label_map, panel.assignments, (panel.x, panel.y)
+                    )
+                )
+            self._auto_entry = {
+                segment.key: segment.palette_entry_id for segment in self.segments
+            }
 
             self._flats_done = True
-            return {"assigned": assigned, "flagged": flagged, "colours": len(self.palette)}
+            return {
+                "assigned": assigned,
+                "segments": len(self.segments),
+                "colours": len(self.palette),
+                "snapped": 0,
+            }
 
-    # -- 6. export -------------------------------------------------------
+    # -- 6. snap ---------------------------------------------------------
+
+    def _require_flats(self) -> None:
+        if not self._flats_done:
+            raise StepError("Generate flats first — there are no segments to snap yet.")
+
+    def segment(self, panel: int, label: int) -> Segment | None:
+        for candidate in self.segments:
+            if candidate.key == (panel, label):
+                return candidate
+        return None
+
+    def segment_at(self, x: int, y: int) -> Segment | None:
+        """The segment under a page-space point, or None.
+
+        Read off the label map rather than off segment bounds: bounds overlap
+        for interlocking zones, and a click has to resolve to the zone the
+        artist actually pointed at.
+        """
+        with self.lock:
+            for panel in self.panels:
+                if panel.label_map is None:
+                    continue
+                local_x, local_y = x - panel.x, y - panel.y
+                if not (0 <= local_x < panel.width and 0 <= local_y < panel.height):
+                    continue
+                label = int(panel.label_map[local_y, local_x])
+                if label == UNASSIGNED:
+                    continue
+                return self.segment(panel.order, label)
+            return None
+
+    def snap_suggestion(self, segment: Segment) -> tuple[PaletteEntry | None, float]:
+        """Nearest *reference* colour to what the proposer suggested, and its distance.
+
+        Measured against the reference half only. The created half holds the
+        segments' own private entries, so including it would offer every
+        segment itself at distance zero.
+
+        This suggests and never acts. The distance comes back with it so the
+        artist can see the number the old automatic snap decided on silently.
+        """
+        entry = self.palette_by_id.get(segment.palette_entry_id)
+        if entry is None or not self._reference_palette:
+            return None, float("inf")
+        return nearest_entry(entry.rgb, self._reference_palette)
+
+    def snap_segment(self, panel: int, label: int, entry_id: int | None = None) -> Segment:
+        """Point one segment at a palette entry. A single-row change.
+
+        `entry_id` of None takes the suggestion whatever its distance: the
+        artist asked for this one, and `SNAP_MAX_DELTA` orders their attention
+        rather than vetoing their instruction.
+        """
+        with self.lock:
+            self._require_flats()
+            segment = self.segment(panel, label)
+            if segment is None:
+                raise StepError(f"No segment {label} in panel {panel + 1}.")
+
+            if entry_id is None:
+                entry, _ = self.snap_suggestion(segment)
+                if entry is None:
+                    raise StepError(
+                        "No reference colours to snap to — upload a character sheet."
+                    )
+                entry_id = int(entry.id or 0)
+            elif entry_id not in self.palette_by_id:
+                raise StepError(f"No palette entry {entry_id}.")
+
+            segment.palette_entry_id = entry_id
+            segment.snapped = entry_id != self._auto_entry.get(segment.key)
+            self.panels[panel].assignments[label] = entry_id
+            return segment
+
+    def unsnap_segment(self, panel: int, label: int) -> Segment:
+        """Put back what the proposer said. A snap the artist cannot undo is a
+        decision taken away from them, which is the thing this step exists to
+        stop."""
+        with self.lock:
+            self._require_flats()
+            segment = self.segment(panel, label)
+            if segment is None:
+                raise StepError(f"No segment {label} in panel {panel + 1}.")
+            original = self._auto_entry.get(segment.key)
+            if original is None:
+                raise StepError(f"Segment {label} has no original colour recorded.")
+            segment.palette_entry_id = original
+            segment.snapped = False
+            self.panels[panel].assignments[label] = original
+            return segment
+
+    def snap_all(self, threshold: float | None = SNAP_MAX_DELTA) -> dict[str, int]:
+        """Snap every segment whose suggestion falls within `threshold`.
+
+        The bulk shortcut, for a page whose references are good enough that the
+        artist would have agreed with the machine anyway. It goes through the
+        same per-segment call, so it can never do something clicking could not,
+        and every segment it touches stays individually reversible.
+
+        `threshold=None` snaps every segment to its nearest reference colour
+        whatever the distance. That is the artist overriding the guard
+        deliberately, and it is the one call that repaints a page wholesale.
+        """
+        with self.lock:
+            self._require_flats()
+            snapped = skipped = 0
+            for segment in self.segments:
+                entry, distance = self.snap_suggestion(segment)
+                if entry is None or (threshold is not None and distance > threshold):
+                    skipped += 1
+                    continue
+                self.snap_segment(segment.panel, segment.label, int(entry.id or 0))
+                snapped += 1
+            return {
+                "snapped": snapped,
+                "skipped": skipped,
+                "segments": len(self.segments),
+            }
+
+    # -- 7. export -------------------------------------------------------
 
     def _panel_flats(self) -> list[PanelFlats]:
         return [
@@ -512,6 +661,8 @@ class Session:
             panel.label_map = None
             panel.assignments = {}
             panel.flagged = set()
+        self.segments = []
+        self._auto_entry = {}
         self._zones_done = False
         self._flats_done = False
 

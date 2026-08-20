@@ -56,8 +56,11 @@ async function step(label, path, options) {
 
 function summary(next, label) {
   if (next.result) {
-    const { assigned, flagged, colours } = next.result;
-    return `${assigned} zones coloured, ${flagged} flagged, ${colours} palette entries.`;
+    const { assigned, segments, colours, snapped, skipped } = next.result;
+    if (snapped !== undefined && skipped !== undefined) {
+      return `${snapped} segments snapped, ${skipped} left as proposed.`;
+    }
+    return `${assigned} zones coloured, ${segments} segments, ${colours} palette entries.`;
   }
   return label + " — done.";
 }

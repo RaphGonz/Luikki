@@ -25,6 +25,7 @@ from PIL import Image
 
 from ..colour.extract import EmptyImageError
 from ..colour.references import UnknownKind
+from ..colour.snap import SNAP_MAX_DELTA
 from .session import Session, StepError
 
 _STATIC = Path(__file__).parent / "static"
@@ -215,7 +216,68 @@ def create_app(
             raise HTTPException(404, "flats not generated")
         return _png(session.flats_rgba())
 
-    # -- 6. export -------------------------------------------------------
+    # -- 6. snap ---------------------------------------------------------
+
+    def _segment_payload(segment):
+        entry, distance = session.snap_suggestion(segment)
+        return {
+            "panel": segment.panel,
+            "label": segment.label,
+            "palette_entry_id": segment.palette_entry_id,
+            "area": segment.area,
+            "bounds": list(segment.bounds),
+            "anchor": list(segment.anchor),
+            "snapped": segment.snapped,
+            "suggestion": None
+            if entry is None
+            else {
+                "palette_entry_id": entry.id,
+                "rgb": list(entry.rgb),
+                # The number the old automatic snap decided on without showing
+                # anyone. Above SNAP_MAX_DELTA it is a warning, not a veto.
+                "delta": round(distance, 2),
+                "within_threshold": distance <= SNAP_MAX_DELTA,
+            },
+        }
+
+    @app.get("/api/segments")
+    def segments(unsnapped: bool = False, limit: int = 0):
+        """Every segment, worst suggestion first.
+
+        Sorted by descending area so the artist meets the background before a
+        300px speck: the ordering is the whole ergonomics of clicking through
+        a page one zone at a time.
+        """
+        chosen = [s for s in session.segments if not (unsnapped and s.snapped)]
+        chosen.sort(key=lambda s: -s.area)
+        if limit:
+            chosen = chosen[:limit]
+        return {"count": len(chosen), "segments": [_segment_payload(s) for s in chosen]}
+
+    @app.get("/api/segment")
+    def segment_at(x: int, y: int):
+        """The segment under a page-space point — what a click resolves to."""
+        found = session.segment_at(x, y)
+        if found is None:
+            raise HTTPException(404, "no segment at that point")
+        return _segment_payload(found)
+
+    @app.post("/api/segment/{panel}/{label}/snap")
+    def snap_segment(panel: int, label: int, entry_id: int | None = None):
+        """Snap one segment. `entry_id` omitted takes the suggestion."""
+        segment = session.snap_segment(panel, label, entry_id)
+        return _segment_payload(segment)
+
+    @app.post("/api/segment/{panel}/{label}/unsnap")
+    def unsnap_segment(panel: int, label: int):
+        return _segment_payload(session.unsnap_segment(panel, label))
+
+    @app.post("/api/snap-all")
+    def snap_all(threshold: float | None = SNAP_MAX_DELTA):
+        """The bulk shortcut. `threshold` of null ignores the guard entirely."""
+        return {**session.state(), "result": session.snap_all(threshold)}
+
+    # -- 7. export -------------------------------------------------------
 
     @app.post("/api/export")
     def export():

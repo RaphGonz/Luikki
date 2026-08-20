@@ -13,12 +13,55 @@ Then open <http://127.0.0.1:8000>.
 | 2 Detect panels | gutter network → traced polygons, box fallback | `segmentation/panels.py` |
 | 3 Detect bubbles | RT-DETR box → radial trace → polygon | `segmentation/bubbles.py` |
 | 4 Segment zones | MangaLineExtraction → LineFiller trapped-ball, per panel | `extract/`, `segmentation/segmenter.py` |
-| 5 Generate flats | proposer → per-zone mode → CIELAB snap | `colour/` |
-| 6 Export PSD | group per panel, layer per colour | `export/psd.py` |
+| 5 Generate flats | proposer → per-segment mode, **no snap** | `colour/` |
+| 6 Snap | per segment, artist-driven; `snap all` for the bulk | `colour/segments.py` |
+| 7 Export PSD | group per panel, layer per colour | `export/psd.py` |
 
 Character sheet / swatch upload is optional and does two jobs at once: its
 colours become the palette that zones snap to, and the image itself is what
 the model is shown as reference.
+
+## Flats propose, the artist snaps
+
+Step 5 resolves one modal colour per segment and stops. It does not snap, even
+with a palette loaded. Every segment comes out holding its own colour and its
+own palette entry.
+
+Snapping is step 6, and it happens one segment at a time because the artist
+decides it. `session.segment_at(x, y)` resolves a click off the label map,
+`snap_segment` points that segment at a palette entry, and `unsnap_segment`
+puts back what the proposer said. Because a segment stores a
+`palette_entry_id` and never an RGB, each of those is a single-row change.
+
+These were one pass until the split, which made snapping the only step with no
+boundary the artist could see or refuse — and it was the step that quietly
+folded every neutral zone into a character sheet's ink black. `snap_suggestion`
+now returns the nearest reference colour *and its distance*, so the number the
+old pass decided on silently is the number the artist is shown.
+
+**Segments are never merged or grouped by colour.** Two segments that agree are
+still two segments. Measured on `diagonal_page.jpg`, 752 zones collapse to 39
+colour groups — which looks like an efficiency win and is not: those are 752
+correctly-found segments that a reference-starved proposal could not tell
+apart. Merging on that signal would bake a model failure into the data and
+destroy exactly the zones the artist needs in order to bucket the page. The
+answer to "too many zones" is more references, not fewer zones.
+
+`snap all` is the bulk shortcut, for a page whose references are good enough
+that the artist would have agreed anyway. It goes through the same per-segment
+call, so it can do nothing clicking could not, and every segment it touches
+stays individually reversible.
+
+## Running a page without the browser
+
+    comiccolor flatten test_pages/diagonal_page.jpg -r sheet.jpg --proposer cobra
+
+Every step headlessly, then `snap all`, then the PSD. `--no-snap` stops after
+flats; `--threshold` moves the guard, and `--threshold inf` snaps everything
+regardless of distance. On `diagonal_page.jpg` with one character sheet:
+752 segments, 501 snapped, 251 left as proposed — including the page
+background, whose suggestion sits at dE 15.6 and is correctly left alone
+rather than tinting the paper.
 
 Nothing runs on its own, and re-running a step clears what depended on it.
 There is no editing yet — corrections happen in Photoshop.
