@@ -58,7 +58,13 @@ stays individually reversible.
 
 Every step headlessly, then `snap all`, then the PSD. `--no-snap` stops after
 flats; `--threshold` moves the guard, and `--threshold inf` snaps everything
-regardless of distance. On `diagonal_page.jpg` with one character sheet:
+regardless of distance.
+
+`--steps` writes one image per stage boundary — page, panel polygons, bubble
+polygons, zone map, flats before and after snapping, what snapping left for the
+artist, and the exported PSD composited back down. The pipeline's claim is that
+every boundary is inspectable, which is hard to check while the only artefact
+is the PSD at the end. On `diagonal_page.jpg` with one character sheet:
 752 segments, 501 snapped, 251 left as proposed — including the page
 background, whose suggestion sits at dE 15.6 and is correctly left alone
 rather than tinting the paper.

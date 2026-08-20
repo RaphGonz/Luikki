@@ -25,6 +25,97 @@ def _collect_pages(inputs: list[str]) -> list[Path]:
     return pages
 
 
+def _dump_steps(session, out: Path) -> list[Path]:
+    """One image per stage boundary, numbered in the order the buttons run.
+
+    The pipeline's claim is that every boundary is inspectable. That is easy
+    to believe and hard to check while the only artefact is the PSD at the
+    end, so this writes what each step actually handed to the next one.
+    """
+    import cv2
+    import numpy as np
+
+    out.mkdir(parents=True, exist_ok=True)
+    written: list[Path] = []
+
+    def save(name, image):
+        path = out / name
+        cv2.imwrite(str(path), image)
+        written.append(path)
+
+    def over_page():
+        """The page as BGR, to draw overlays on without touching the original."""
+        return cv2.cvtColor(session.grey, cv2.COLOR_GRAY2BGR)
+
+    save("01_page.png", session.grey)
+
+    panels = over_page()
+    for panel in session.panels:
+        points = np.array(panel.polygon, np.int32).reshape(-1, 1, 2)
+        cv2.polylines(panels, [points], True, (0, 0, 255), 3)
+        cv2.putText(
+            panels, str(panel.order + 1), (panel.x + 12, panel.y + 44),
+            cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3,
+        )
+    save("02_panels.png", panels)
+
+    bubbles = over_page()
+    for polygon in session.protected:
+        points = np.array(polygon, np.int32).reshape(-1, 1, 2)
+        cv2.polylines(bubbles, [points], True, (255, 0, 0), 3)
+    save("03_bubbles.png", bubbles)
+
+    save("04_zones.png", cv2.cvtColor(session.zones_rgba(), cv2.COLOR_RGBA2BGRA))
+    return written
+
+
+def _dump_flats(session, out: Path, name: str) -> Path:
+    import cv2
+
+    out.mkdir(parents=True, exist_ok=True)
+    path = out / name
+    cv2.imwrite(str(path), cv2.cvtColor(session.flats_rgba(), cv2.COLOR_RGBA2BGRA))
+    return path
+
+
+def _dump_remaining(session, out: Path, name: str) -> Path:
+    """What the artist is still holding after `snap all`.
+
+    The unsnapped segments in white on black. This is the step-6 workload made
+    visible: everything the machine declined to decide.
+    """
+    import cv2
+    import numpy as np
+
+    canvas = np.zeros((session.height, session.width), np.uint8)
+    for segment in session.segments:
+        if segment.snapped:
+            continue
+        panel = session.panels[segment.panel]
+        if panel.label_map is None:
+            continue
+        mask = (panel.label_map == segment.label).astype(np.uint8) * 255
+        region = canvas[panel.y : panel.y + panel.height, panel.x : panel.x + panel.width]
+        np.maximum(region, mask, out=region)
+    path = out / name
+    cv2.imwrite(str(path), canvas)
+    return path
+
+
+def _dump_psd(psd_path, out: Path, name: str) -> Path | None:
+    """The exported PSD, composited back down — proof it opens and has content."""
+    try:
+        from psd_tools import PSDImage
+    except ImportError:  # pragma: no cover - psd-tools is a hard dependency
+        return None
+    image = PSDImage.open(psd_path).composite()
+    if image is None:
+        return None
+    path = out / name
+    image.convert("RGB").save(path)
+    return path
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="comiccolor")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -103,6 +194,14 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="stop after flats, leaving every segment its own colour",
     )
+    flatten.add_argument(
+        "--steps",
+        nargs="?",
+        const=True,
+        default=None,
+        metavar="DIR",
+        help="write one image per stage boundary (default: <out>/steps)",
+    )
 
     args = parser.parse_args(argv)
 
@@ -122,10 +221,19 @@ def main(argv: list[str] | None = None) -> int:
             session.add_reference(reference, original_name=Path(reference).name)
         session.load_page(args.page, original_name=Path(args.page).name)
 
+        steps_dir = None
+        if args.steps is not None:
+            steps_dir = Path(workdir / "steps" if args.steps is True else args.steps)
+
         session.detect_panels()
         session.detect_bubbles()
         session.segment_zones()
+        if steps_dir is not None:
+            _dump_steps(session, steps_dir)
+
         flats = session.generate_flats()
+        if steps_dir is not None:
+            _dump_flats(session, steps_dir, "05_flats_unsnapped.png")
         print(
             f"{len(session.panels)} panels, {len(session.protected)} bubbles, "
             f"{flats['segments']} segments, {flats['colours']} palette entries"
@@ -143,9 +251,15 @@ def main(argv: list[str] | None = None) -> int:
                 f"{result['skipped']} left as proposed "
                 f"(threshold {'none' if threshold is None else threshold})"
             )
+            if steps_dir is not None:
+                _dump_flats(session, steps_dir, "06_flats_snapped.png")
+                _dump_remaining(session, steps_dir, "07_left_for_the_artist.png")
 
         psd = session.export_psd()
         print(f"PSD: {psd}")
+        if steps_dir is not None:
+            _dump_psd(psd, steps_dir, "08_psd_composite.png")
+            print(f"steps: {steps_dir}")
         return 0
 
 
