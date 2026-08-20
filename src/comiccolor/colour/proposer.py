@@ -46,6 +46,16 @@ class PanelRequest:
     # Character sheets, HxWx3 uint8 RGB, page-scoped so every panel gets the
     # same list. May be empty.
     references: list[np.ndarray] = field(default_factory=list)
+    # Optional spatial colour hints, in the panel's own frame: `hint_colours`
+    # HxWx3 uint8 RGB, meaningful only where `hint_mask` is True.
+    #
+    # A palette cannot be turned into these — a palette is a set of colours
+    # with no positions, and the position is the whole content of a hint. They
+    # come from somewhere that knows *where*: an artist clicking a zone, or a
+    # page that has already been coloured. A deterministic proposer ignores
+    # both fields.
+    hint_colours: np.ndarray | None = None
+    hint_mask: np.ndarray | None = None
 
     @property
     def size(self) -> tuple[int, int]:

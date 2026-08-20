@@ -15,11 +15,18 @@ high-frequency detail is exactly the part that cannot reach the output. Both
 the `shadow_GSRP` weights and that pass are skipped. `expand_under_lines`
 already handles what happens at line edges.
 
-**Resolution.** §1.6 runs at 384-512px: mode extraction is all we do with the
-raster, so pixel detail past that is wasted compute — roughly an order of
-magnitude off cost and latency versus full resolution. Cobra quantises to a
-fixed bucket list; `_target_resolution` picks the closest-aspect bucket and
-scales it down toward `resolution`.
+**Resolution.** §1.6 argued for 384-512px on the grounds that mode extraction
+is all we do with the raster, so pixel detail past that is wasted compute. That
+reasoning is sound and the default still ignores it, because it assumes the
+raster is *usable*. Measured on `diagonal_page.jpg` panel 0 (1065x493, aspect
+2.16) the 512 proposal is RGB noise and the 1024 one is correct flats; a
+near-square panel survives 512, so the failure tracks how far the panel is from
+the buckets' own aspect range.
+
+Upstream `get_rate` returns its bucket *unscaled*, at ~1024. `_target_resolution`
+scales the long side toward `resolution`, so a wide panel at 512 lands near
+512x320 — far below anything the DiT trained on, and it collapses. A mode taken
+over noise is noise, so the cheaper raster is not cheaper at all.
 
 **Licence.** `pretrained_model_name_or_path` below is pinned to the diffusers
 repo `PixArt-alpha/PixArt-XL-2-1024-MS`, which is `openrail++`. The
@@ -43,6 +50,7 @@ an edit.
 from __future__ import annotations
 
 import sys
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -73,6 +81,36 @@ _DIT_CONFIG_KEYS = (
     "num_embeds_ada_norm", "upcast_attention", "norm_type",
     "norm_elementwise_affine", "norm_eps", "caption_channels", "attention_type",
 )
+
+
+@contextmanager
+def _vendored_prompt_tensors(repo_dir: Path):
+    """Resolve Cobra's hardcoded `./prompt_tensor/` loads against `repo_dir`.
+
+    `pipeline_cobra_pixart.py` loads its fixed prompt embedding with a literal
+    relative path, so the pipeline only runs when the process CWD happens to be
+    the vendored repo. We serve HTTP from wherever the artist started us, and a
+    process-global `os.chdir` around a GPU call is not something a server can
+    do safely, so the two paths are redirected for the duration of the call and
+    nothing else is touched.
+
+    Cobra takes no prompt — the embedding is a constant baked in upstream,
+    which is why the pipeline loads no text encoder at all.
+    """
+    import torch
+
+    original = torch.load
+
+    def load(f, *args, **kwargs):
+        if isinstance(f, str) and "prompt_tensor" in f and not Path(f).is_absolute():
+            f = str(repo_dir / "prompt_tensor" / Path(f).name)
+        return original(f, *args, **kwargs)
+
+    torch.load = load
+    try:
+        yield
+    finally:
+        torch.load = original
 
 
 class CobraUnavailable(RuntimeError):
@@ -106,7 +144,9 @@ class CobraProposer:
     """
 
     repo_dir: Path = _REPO_DIR
-    resolution: int = 512
+    # 1024, not §1.6's 384-512 — see the Resolution note above: wide panels
+    # come back as noise at 512.
+    resolution: int = 1024
     num_inference_steps: int = 10
     top_k: int = 3
     seed: int = 0
@@ -225,13 +265,16 @@ class CobraProposer:
         import torch.nn.functional as F
         from PIL import Image
 
+        # Must precede the `cobra_utils` import: `load` -> `_import_cobra` is
+        # what puts the vendored repo on `sys.path`, so importing from it
+        # first is a ModuleNotFoundError on every call but the second.
+        self.load()
+
         from cobra_utils.utils import (
             process_image,
             process_image_Q_varres,
             process_image_ref_varres,
         )
-
-        self.load()
 
         height, width = request.size
         target_w, target_h = _target_resolution(width, height, self.resolution)
@@ -278,20 +321,56 @@ class CobraProposer:
             ]
 
         generator = torch.Generator(device=self.device).manual_seed(self.seed)
-        # No colour hints in the barebone version: an all-black mask means
-        # "nothing is hinted", which is what Cobra's own app passes when the
-        # artist has not painted a hint.
+        # No colour hints in the barebone version. An all-black *mask* is
+        # right — `draw_square` sets 255 where the artist painted, so 0 is
+        # "nothing is hinted".
+        #
+        # The hint *colour* is not a blank canvas though. Upstream binds it to
+        # the line drawing itself and paints swatches onto that, so it is
+        # always mostly-white line art; the pipeline VAE-encodes it and
+        # concatenates it into the control input ungated by the mask
+        # (`pipeline_cobra_pixart.py` L739/L791). Passing black feeds the
+        # controlnet a confident "this panel is black" and the generation
+        # comes back dark and desaturated whatever the references say.
         hint_mask = Image.new("RGB", (target_w // 8, target_h // 8), "black")
-        hint_colour = Image.new("RGB", (target_w, target_h), "black")
+        hint_colour = query
 
-        coloured = self._pipeline(
-            cond_input=query,
-            cond_refs=selected,
-            hint_mask=hint_mask,
-            hint_color=hint_colour,
-            num_inference_steps=self.num_inference_steps,
-            generator=generator,
-        )[0][0]
+        if request.hint_mask is not None and request.hint_mask.any():
+            # Paint the hinted colours onto the line art, exactly as
+            # `draw_square` paints swatches onto the drawing upstream, and mark
+            # the same pixels in the mask.
+            #
+            # The hints arrive in the panel's frame while `query` is already at
+            # target resolution, so both are resampled first. NEAREST
+            # throughout: interpolating a hint invents colours nobody asked for
+            # and softens the mask edge onto pixels that were never hinted. The
+            # mask reaches the pipeline at latent resolution, so a hint thinner
+            # than 8 panel-pixels cannot be expressed at all.
+            mask_img = Image.fromarray(
+                np.where(request.hint_mask.astype(bool), 255, 0).astype(np.uint8)
+            ).resize((target_w, target_h), Image.NEAREST)
+            colours_img = Image.fromarray(
+                np.ascontiguousarray(request.hint_colours, dtype=np.uint8)
+            ).resize((target_w, target_h), Image.NEAREST)
+
+            where = np.asarray(mask_img, dtype=np.uint8) > 0
+            painted = np.asarray(query, dtype=np.uint8).copy()
+            painted[where] = np.asarray(colours_img, dtype=np.uint8)[where]
+
+            hint_colour = Image.fromarray(painted)
+            hint_mask = mask_img.convert("RGB").resize(
+                (target_w // 8, target_h // 8), Image.NEAREST
+            )
+
+        with _vendored_prompt_tensors(self.repo_dir):
+            coloured = self._pipeline(
+                cond_input=query,
+                cond_refs=selected,
+                hint_mask=hint_mask,
+                hint_color=hint_colour,
+                num_inference_steps=self.num_inference_steps,
+                generator=generator,
+            )[0][0]
 
         # Back to the panel's own frame: mode extraction indexes the raster by
         # the label map, so the two must agree pixel for pixel.
