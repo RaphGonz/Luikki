@@ -39,9 +39,15 @@ from ..model.masks import UNASSIGNED
 # Unvalidated starting value, same caveat as every constant in extract.py.
 MODE_BIN = 16
 
-# Weight on the L* difference relative to a*/b*. §1.7 suggests ~0.3.
-# Unvalidated starting value.
+# Weight on the L* difference relative to a*/b*, for a *chromatic* colour.
+# §1.7 suggests ~0.3. Unvalidated starting value.
 L_WEIGHT = 0.3
+
+# Chroma (sqrt(a*^2 + b*^2)) at or above which a colour counts as fully
+# chromatic and `L_WEIGHT` applies unmodified. Below it the weight ramps back
+# toward 1.0 — see `weighted_delta` for why neutral colours cannot afford the
+# downweight. Skin, the case the downweight exists for, sits near chroma 20.
+NEUTRAL_CHROMA = 15.0
 
 # Weighted-CIELAB distance above which a mode is *not* snapped and becomes a
 # new flagged entry instead. §1.7: reject before snapping — silently coercing
@@ -126,13 +132,40 @@ def _to_lab(colours: np.ndarray) -> np.ndarray:
 
 
 def weighted_delta(lab_a: np.ndarray, lab_b: np.ndarray) -> np.ndarray:
-    """Euclidean CIELAB distance with `L*` scaled by L_WEIGHT.
+    """Euclidean CIELAB distance with `L*` downweighted, but only where that is safe.
+
+    The downweight exists so lit and shadowed skin read as one colour rather
+    than two (`test_shading_does_not_split_one_flat_in_two`). It is correct for
+    chromatic colours, where a* and b* still carry the identity of the colour
+    while L* carries only how lit it is.
+
+    It is wrong for neutral ones. Two greys have a*≈b*≈0 on both sides, so
+    chroma discriminates nothing and lightness is the *only* signal left —
+    exactly the term a flat 0.3 throws away. At `L_WEIGHT` 0.3 and
+    `SNAP_MAX_DELTA` 12 a matching chroma tolerates 40 L* points, so every
+    neutral zone up to about grey(135) fell inside the ink-black entry of a
+    character sheet. Measured on `diagonal_page` panel 3, whose desaturated
+    proposal came back 51% near-black.
+
+    So the weight ramps with the chroma of the *less* colourful of the two: a
+    pair that is chromatic on both sides keeps the full downweight, and one
+    that is neutral anywhere recovers L* as its discriminator.
 
     Broadcasts, so `lab_a` may be (N,3) and `lab_b` (M,3) → (N,M) when the
     caller adds the axis.
     """
-    scale = np.array([L_WEIGHT, 1.0, 1.0])
-    return np.sqrt((((lab_a - lab_b) * scale) ** 2).sum(axis=-1))
+    difference = lab_a - lab_b
+
+    chroma_a = np.hypot(lab_a[..., 1], lab_a[..., 2])
+    chroma_b = np.hypot(lab_b[..., 1], lab_b[..., 2])
+    chromatic = np.clip(np.minimum(chroma_a, chroma_b) / NEUTRAL_CHROMA, 0.0, 1.0)
+    l_weight = 1.0 - (1.0 - L_WEIGHT) * chromatic
+
+    return np.sqrt(
+        (difference[..., 0] * l_weight) ** 2
+        + difference[..., 1] ** 2
+        + difference[..., 2] ** 2
+    )
 
 
 def nearest_entry(

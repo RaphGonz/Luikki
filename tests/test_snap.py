@@ -78,6 +78,38 @@ def test_shading_does_not_split_one_flat_in_two():
     assert shadow_distance <= SNAP_MAX_DELTA
 
 
+def test_a_grey_zone_does_not_disappear_into_the_ink_black():
+    """The other half of the L* downweight, stated as its consequence.
+
+    A character sheet's black is a palette entry like any other. Downweighting
+    L* uniformly let every neutral zone up to about grey(135) land inside it,
+    because two greys share a*≈b*≈0 and lightness was the only thing telling
+    them apart. `diagonal_page` panel 3 came back 51% near-black that way.
+    """
+    palette = [entry(1, (39, 43, 44)), entry(2, (192, 212, 230))]
+
+    for grey in ((110, 110, 110), (130, 130, 130), (141, 141, 147)):
+        nearest, distance = nearest_entry(grey, palette)
+        assert nearest.id != 1 or distance > SNAP_MAX_DELTA, (
+            f"{grey} snapped to the ink black at dE {distance:.1f}"
+        )
+
+
+def test_shading_still_survives_the_grey_guard():
+    """The guard must not cost the case the downweight was built for.
+
+    Skin sits near chroma 20, so lit and shadowed skin keep the full
+    downweight and still resolve to one entry.
+    """
+    palette = [entry(1, (232, 190, 160)), entry(2, (70, 60, 130))]
+
+    lit, _ = nearest_entry((240, 200, 172), palette)
+    shadowed, shadow_distance = nearest_entry((150, 120, 100), palette)
+
+    assert lit.id == shadowed.id == 1
+    assert shadow_distance <= SNAP_MAX_DELTA
+
+
 def test_a_distant_colour_is_flagged_not_snapped():
     """§1.7 reject-before-snapping. A wrong snap is worse than an extra entry."""
     palette = [entry(1, (232, 190, 160))]
