@@ -21,7 +21,7 @@ line art
   → bubble/SFX detection (protected masks)
   → line gap closure
   → trapped-ball region segmentation        [exact, deterministic]
-  → Cobra colour proposal @ 384–512px        [semantic, probabilistic]
+  → Cobra colour proposal @ 1024px           [semantic, probabilistic]
   → per-region mode extraction
   → CIELAB snap to palette table             [palette IDs, not RGB]
   → layered export
@@ -136,7 +136,7 @@ CSP imports PSD natively with groups intact. One export path serves both apps
 and matches what studios already pass around.
 
 **Structure: one layer group per panel.** Panels are coloured separately by
-Cobra anyway — §1.6 runs at 384–512px, so per-panel inference gives each panel
+Cobra anyway — §1.6 runs at 1024px, so per-panel inference gives each panel
 the full pixel budget instead of a downscaled share of the page. The export
 structure and the inference structure agree.
 
@@ -269,9 +269,16 @@ you something collapsed; it cannot tell you the flats are good.
 Implemented per §3. Volume-scoped, versioned, editable.
 
 ### 1.6 Cobra as colour proposer
-Wrap as a black box. **Do not modify the DiT.** Run at 384–512px — you only read
-per-region modes, so pixel detail is wasted compute. Roughly an order of magnitude
-off cost and latency versus full resolution.
+Wrap as a black box. **Do not modify the DiT.**
+
+~~Run at 384–512px~~ — **superseded by measurement, 2026-08-20. Run at 1024.**
+The reasoning below is still correct and still does not survive contact with the
+model: reading only per-region modes does make pixel detail wasted compute, but
+it assumes the raster is *usable*. Upstream `get_rate` returns its aspect bucket
+unscaled at ~1024, so scaling the long side to 512 puts a wide panel near
+512×320, far below anything the DiT trained on. Measured on `diagonal_page.jpg`
+panel 0 (aspect 2.16): noise at 512, correct flats at 1024. Near-square panels
+survive 512. A mode taken over noise is noise, so the cheap raster is not cheap.
 
 Inputs: line art, reference images (character sheets, prior coloured panels),
 optional colour hints.

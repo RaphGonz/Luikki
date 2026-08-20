@@ -50,13 +50,22 @@ zone its own colour, which is classical flatting output. Cobra makes those
 colours *mean* something, and needs an NVIDIA GPU with real VRAM.
 
     git clone https://github.com/zhuang2002/Cobra.git third_party/Cobra
-    pip install -e third_party/Cobra/diffusers      # the patched fork
-    pip install -r third_party/Cobra/requirements.txt
+    pip install -e third_party/Cobra/diffusers      # the patched fork, required
+    pip install transformers peft accelerate einops sentencepiece matplotlib
     comiccolor serve --proposer cobra              # pulls the weights on first use
 
-`colour/cobra.py` is written against Cobra `48d6168` and **has never been
-executed** — it was built on a 6 GB card with nothing installed. Verify it on
-the GPU machine before trusting a pixel of it.
+**Do not `pip install -r third_party/Cobra/requirements.txt`.** It pins
+`torch==2.5.1`, `numpy==1.26.4` and `opencv-python==4.11`, which downgrades
+numpy below this project's `numpy>=2.0` floor and replaces a CUDA torch build.
+The line above installs what `cobra.py` actually imports, unpinned. `matplotlib`
+is not optional — `cobra_utils/utils.py` imports it at module scope.
+
+`colour/cobra.py` was written against Cobra `48d6168` on a machine with no GPU
+and first executed on 2026-08-20. Three defects only a real run could surface
+were fixed then: an import ordering bug, Cobra's hardcoded relative path to its
+prompt tensors, and an all-black `hint_color` that made every generation dark
+regardless of the references. Verified end to end on `teddy_page.png`,
+`diagonal_page.jpg` and `laurine_page.jpg`.
 
 Everything downstream consumes a proposal raster and cannot tell which
 proposer produced it, so swapping them changes one constructor call. The
@@ -97,6 +106,27 @@ shirts and props as bubbles, and a protected area is never coloured, so those
 come out as holes in the flats. `max_area_frac` is flagged in the spec as
 needing tuning against real pages. Until then: the button is optional, and
 skipping it costs nothing on a page with no balloons.
+
+**Cobra's proposal quality tracks line-art cleanliness, hard.** On
+`teddy_page.png` — uniform line weight, closed regions, no hatching — 74-92% of
+a panel comes back saturated. On `laurine_page.jpg` — loose brush, heavy spot
+black, dense crowds — the same settings give 7-40%, and one panel comes back
+near-monochrome. When a page colours badly, check the drawing before tuning
+steps, `top_k` or resolution. Panel aspect ratio is *not* the lever it looks
+like: `teddy_page` panel 0 is aspect 3.38, far outside Cobra's bucket list, and
+colours cleanly.
+
+**A tight reference beats a whole page, for characters.** A crop of one coloured
+face reproduced that character's skin correctly where a whole finished page of
+the same character in the same colour world produced a cold blue face. Most
+patches on a full page are backgrounds and props, so the query patch covering a
+face can retrieve something that is not a face. This matters for promoting
+corrected pages to references: crop them to character scale first.
+
+**Colour hints propagate, but not reliably.** A hint filled a whole ink-bounded
+region in one test and only tinted it in another. When measuring one, sample
+*outside* the hinted rectangle — inside it the colour is whatever was painted
+there, so the measurement always succeeds and means nothing.
 
 **Nothing is correctable in-app.** No dragging corners, no merging zones, no
 reassigning a colour — that is the deliberate scope of this version. A wrong
