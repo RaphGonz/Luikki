@@ -168,6 +168,11 @@ masking feeds the `protected` argument the `Segmenter` protocol already takes.
 Research existing open-source comic text/bubble detectors before writing one.
 Deferred to project start.
 
+> **Settled.** The research was skipped the first time and a heuristic was
+> written instead; it returned 39 bubbles on the Tintin page, none of them a
+> balloon. Doing the research produced `ogkalu/comic-text-and-bubble-detector`
+> (RT-DETR-v2, Apache-2.0), which is exact on all six test pages. §1.2 below.
+
 ---
 
 ## 3. Data model — build this first
@@ -222,19 +227,44 @@ No item here is optional. Build in this order.
 
 ### 1.1 Ingest and panel segmentation
 Gutter detection, panel bounds, reading order. Geometric; a fixed layout grammar.
-Manga109 provides an annotated benchmark for panels, bubbles and text.
+Manga109 provides an annotated benchmark for panels, bubbles and text — as a
+benchmark only. Its licence is research-only, so nothing trained on it can ship
+here (§1.2).
 Everything downstream addresses by panel.
 
 **Output:** panel polygons + reading order per page.
 
 ### 1.2 Bubble and SFX detection → protected masks
-Bubbles: closed high-luminance regions with tails and enclosed text. SFX:
-hard-edged glyph clusters. Both are excluded from every generative and fill
-stage and passed through untouched.
+Both are excluded from every generative and fill stage and passed through
+untouched.
 
 Frame this as **protection**, not detection: these are the regions diffusion
 models corrupt most visibly. Detecting them removes the largest artifact class
 in the pipeline.
+
+**Bubbles — built.** A detection model gives boxes; the artwork gives the shape.
+`ogkalu/comic-text-and-bubble-detector` (RT-DETR-v2, Apache-2.0) via
+`onnxruntime`, then a radial trace from each box centre. Exact against the
+artist's counts on all six test pages, ~0.85 s per page on CPU. Details and the
+failure history in `SPEC.md`.
+
+Two assumptions in the sentence this section used to open with — *"bubbles are
+closed high-luminance regions with tails and enclosed text"* — turned out to be
+wrong on real pages, and both cost a rewrite:
+
+- **Not closed.** `manga_page.jpg`'s balloon outlines come out of Otsu as
+  *dotted* lines. Anything tracing a closed curve fails there: an open outline
+  is a `C`, and filling a `C` fills the stroke and leaves the middle out.
+- **Enclosed text is not a usable signal.** Finding text by the geometry of ink
+  blobs reads hatching as `iiii` and cup holders as `OOO`. It is the model's job.
+
+**SFX — not built, and now a choice.** The same model returns a `text_free`
+class, which is SFX lettering outside balloons. Hand-masking covers it until it
+does not.
+
+**Licence, the load-bearing constraint.** Nearly every open-source comic balloon
+detector needs `ultralytics` at runtime, and that is **AGPL-3.0** regardless of
+the licence on its weights. Any replacement must run without it.
 
 **Output:** `ProtectedMask[]` per panel.
 
@@ -455,4 +485,9 @@ Average-case flatting is straightforward. The tail is the product.
   Colorize Mask.
 - **FlatMagic** (CHI 2022) — the workflow study. Source of the ~50%-of-colorisation
   figure and the documented reason professionals reject opaque auto-colorisation.
-- **Manga109** — annotated benchmark for panels, bubbles, text.
+- **Manga109** — annotated benchmark for panels, bubbles, text. Research-only;
+  a model trained on it inherits that, whatever its own card claims.
+- **ogkalu/comic-text-and-bubble-detector** — RT-DETR-v2, Apache-2.0, ~11k
+  manga, webtoon, manhua *and western comic* pages. Classes: `bubble`,
+  `text_bubble`, `text_free`. Ships ONNX, so it runs without `ultralytics`.
+  This is the bubble detector §1.2 uses.

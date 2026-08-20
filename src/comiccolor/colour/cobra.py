@@ -54,9 +54,10 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
+import cv2
 import numpy as np
 
-from .proposer import PanelRequest
+from .proposer import PanelRequest, ReferenceImage
 
 _REPO_DIR = Path(__file__).resolve().parents[3] / "third_party" / "Cobra"
 
@@ -111,6 +112,239 @@ def _vendored_prompt_tensors(repo_dir: Path):
         yield
     finally:
         torch.load = original
+# Cobra's own tolerance (`cobra_utils.utils.process_image`): an aspect within
+# 15% of the target is close enough to resize outright. Reused rather than
+# invented, so a page-shaped reference against a page-shaped query keeps
+# taking exactly the path Cobra's own app takes.
+_ASPECT_TOLERANCE = 0.15
+
+# How many tiles one reference may contribute. A sheet is a montage of
+# separate drawings and earns more of them; a page or a panel is one
+# composition. Unvalidated starting values in the sense `colour/extract.py`
+# uses the phrase -- hypotheses to measure on the GPU machine, not spec.
+_TILE_BUDGET = {"sheet": 6, "page": 3, "panel": 3}
+
+# -- finding the drawings on a character sheet ------------------------------
+# Closing radius as a fraction of the sheet's shorter side, used to join the
+# strokes of one drawing. Small on purpose: measured on `laurine_ref.jpg`,
+# 0.002 finds the 13 drawings the artist put there, while 0.012 fuses the
+# whole sheet into 2 blobs.
+_SUBJECT_MERGE_FRAC = 0.002
+# Anything under this share of the sheet is a stray mark, not a drawing.
+_SUBJECT_MIN_AREA_FRAC = 0.002
+# Anything this far from paper white counts as drawn.
+_SUBJECT_INK_DELTA = 18
+# Breathing room around a drawing before its window is fitted to the target.
+_SUBJECT_MARGIN = 1.15
+# Two windows overlapping by more than this are the same view twice.
+_SUBJECT_MAX_OVERLAP = 0.6
+# Below this many drawings the sheet is not a montage -- one big drawing, or a
+# photograph -- and the grid is the honest fallback.
+_MIN_SUBJECTS = 2
+
+
+def _letterbox(image, target_w: int, target_h: int):
+    """Fit an image into the target frame on white, without distorting it.
+
+    Returns `(canvas, box)`, where `box` is where the image landed so the
+    coloured result can be cropped back out of it.
+
+    This replaces a plain `resize` to the bucket, and the reason is measured.
+    Cobra quantises to a fixed list of aspect buckets topping out at 2.06:1,
+    while real panels on the test pages run from 0.63:1 to 3.38:1: thirteen of
+    twenty-three were being squashed by more than 5% and one by 1.69x. A
+    squashed face is a face the model has to recognise through a distortion
+    that never occurs in comics, and recognising faces is what we are paying
+    it for. White costs a little resolution instead, and resolution is the one
+    thing this pipeline does not need -- the raster is reduced to one modal
+    colour per zone and thrown away.
+
+    It is also what makes a non-rectangular panel work. `PanelRequest.line_art`
+    arrives masked to the panel's polygon, so an L-shaped or a round panel is
+    already white outside its own outline; letterboxing is the same operation
+    one level out, where the shape happens to be the bounding box.
+    """
+    from PIL import Image
+
+    width, height = image.size
+    scale = min(target_w / width, target_h / height)
+    inner = (max(1, round(width * scale)), max(1, round(height * scale)))
+    left = (target_w - inner[0]) // 2
+    top = (target_h - inner[1]) // 2
+
+    canvas = Image.new("RGB", (target_w, target_h), "white")
+    canvas.paste(image.resize(inner, Image.BICUBIC), (left, top))
+    return canvas, (left, top, left + inner[0], top + inner[1])
+
+
+def _subjects(image) -> list[tuple[int, int, int, int, float, float]]:
+    """The separate drawings on a character sheet.
+
+    A sheet is drawings with paper between them, so the drawings are the
+    connected components of not-paper — the same reasoning the bubble detector
+    uses for what white encloses, one level up. Returns
+    `(x, y, width, height, centre_x, centre_y)` per drawing, largest first.
+    """
+    pixels = np.asarray(image.convert("RGB")).astype(np.int16)
+    drawn = (255 - pixels).max(axis=2) > _SUBJECT_INK_DELTA
+
+    radius = max(1, int(_SUBJECT_MERGE_FRAC * min(drawn.shape)))
+    kernel = np.ones((2 * radius + 1,) * 2, np.uint8)
+    merged = cv2.morphologyEx(drawn.astype(np.uint8), cv2.MORPH_CLOSE, kernel)
+    merged = cv2.dilate(merged, kernel)
+
+    count, _, stats, centroids = cv2.connectedComponentsWithStats(merged, connectivity=8)
+    floor = _SUBJECT_MIN_AREA_FRAC * drawn.size
+
+    found = []
+    for i in range(1, count):
+        if stats[i, cv2.CC_STAT_AREA] < floor:
+            continue
+        found.append(
+            (
+                int(stats[i, cv2.CC_STAT_LEFT]),
+                int(stats[i, cv2.CC_STAT_TOP]),
+                int(stats[i, cv2.CC_STAT_WIDTH]),
+                int(stats[i, cv2.CC_STAT_HEIGHT]),
+                float(centroids[i][0]),
+                float(centroids[i][1]),
+            )
+        )
+    return sorted(found, key=lambda s: -s[2] * s[3])
+
+
+def _window_for(subject, target_ratio: float, size: tuple[int, int]):
+    """A target-shaped window around one drawing, centred on it and clipped.
+
+    The window is grown to the target's aspect rather than the drawing being
+    padded to it, so the patch stays full of artwork: whatever else on the
+    sheet falls inside the window comes along, which is context, not waste.
+    """
+    _, _, width, height, centre_x, centre_y = subject
+    sheet_w, sheet_h = size
+
+    need_w, need_h = width * _SUBJECT_MARGIN, height * _SUBJECT_MARGIN
+    if need_w / need_h > target_ratio:
+        window_w, window_h = need_w, need_w / target_ratio
+    else:
+        window_h, window_w = need_h, need_h * target_ratio
+
+    # Clip to the sheet, keeping the aspect exact.
+    window_w = min(window_w, sheet_w, sheet_h * target_ratio)
+    window_h = window_w / target_ratio
+
+    left = int(round(min(max(centre_x - window_w / 2, 0), sheet_w - window_w)))
+    top = int(round(min(max(centre_y - window_h / 2, 0), sheet_h - window_h)))
+    return (left, top, left + int(round(window_w)), top + int(round(window_h)))
+
+
+def _overlap(a, b) -> float:
+    """Intersection over union of two boxes."""
+    inner_w = max(0, min(a[2], b[2]) - max(a[0], b[0]))
+    inner_h = max(0, min(a[3], b[3]) - max(a[1], b[1]))
+    intersection = inner_w * inner_h
+    if not intersection:
+        return 0.0
+    area_a = (a[2] - a[0]) * (a[3] - a[1])
+    area_b = (b[2] - b[0]) * (b[3] - b[1])
+    return intersection / (area_a + area_b - intersection)
+
+
+def _subject_tiles(image, target_w: int, target_h: int, budget: int) -> list:
+    """Tiles placed on the drawings rather than on a grid.
+
+    A grid stride over a character sheet gives bands: against a tall panel the
+    Laurine sheet comes back as two vertical halves, each a wall of seven
+    figures too small to match anything. Placing the windows on the drawings
+    instead gives one character per patch at a readable size, which is the
+    unit the CLIP retrieval is actually comparing against a panel.
+
+    Returns `[]` when the sheet is not a montage — one large drawing, or a
+    photograph — and the caller falls back to the grid.
+    """
+    found = _subjects(image)
+    if len(found) < _MIN_SUBJECTS:
+        return []
+
+    from PIL import Image
+
+    target_ratio = target_w / target_h
+    kept: list = []
+    for subject in found:
+        window = _window_for(subject, target_ratio, image.size)
+        if any(_overlap(window, other) > _SUBJECT_MAX_OVERLAP for other in kept):
+            continue
+        kept.append(window)
+        if len(kept) >= budget:
+            break
+
+    return [image.crop(w).resize((target_w, target_h), Image.BICUBIC) for w in kept]
+
+
+def _tiles(image, target_w: int, target_h: int, budget: int, kind: str = "sheet") -> list:
+    """Cut a reference into patches the model can read.
+
+    A `sheet` is a montage, so its tiles are placed on the drawings
+    (`_subject_tiles`). A `page` or a `panel` is one composition with no paper
+    between its subjects, so there is nothing to place tiles on and the grid
+    below is used instead.
+
+    The grid path covers the reference with target-shaped tiles, losing
+    nothing.
+
+    Cobra's `process_image` centre-crops a reference whose aspect is far from
+    the query's, which for a tall character sheet against a wide panel keeps a
+    horizontal band through the middle and throws away the heads and the feet.
+    That is a preprocessing choice in a helper, not a property of the model --
+    the pipeline only ever requires a patch to be half the query's size -- so
+    it is replaced here rather than inherited.
+
+    A reference is *not* letterboxed. White padding would put white in the
+    patches the retrieval step ranks and the DiT reads, and a reference exists
+    to supply colour. Tiling keeps every pixel of it at full scale instead.
+
+    Tiles overlap by half, so a face landing on a seam still falls whole in
+    the neighbouring tile. Retrieval then picks whichever tiles match; that is
+    what retrieval is for.
+    """
+    from PIL import Image
+
+    if kind == "sheet":
+        placed = _subject_tiles(image, target_w, target_h, budget)
+        if placed:
+            return placed
+
+    width, height = image.size
+    target_ratio = target_w / target_h
+    ratio = width / height
+
+    if abs(ratio - target_ratio) / target_ratio < _ASPECT_TOLERANCE:
+        return [image.resize((target_w, target_h), Image.BICUBIC)]
+
+    if ratio > target_ratio:  # source is wider: cut vertical slices
+        extent = max(1, round(height * target_ratio))
+        span = width
+    else:  # source is taller: cut horizontal bands
+        extent = max(1, round(width / target_ratio))
+        span = height
+
+    stride = max(1, extent // 2)
+    starts = list(range(0, max(1, span - extent + 1), stride))
+    if starts[-1] + extent < span:
+        starts.append(span - extent)
+
+    # Keep the tiles nearest the middle: on a character sheet the outer edge
+    # is margin, and on a page it is usually gutter.
+    if len(starts) > budget:
+        middle = (span - extent) / 2
+        starts = sorted(sorted(starts, key=lambda s: abs(s - middle))[:budget])
+
+    boxes = (
+        [(s, 0, s + extent, height) for s in starts]
+        if ratio > target_ratio
+        else [(0, s, width, s + extent) for s in starts]
+    )
+    return [image.crop(box).resize((target_w, target_h), Image.BICUBIC) for box in boxes]
 
 
 class CobraUnavailable(RuntimeError):
@@ -271,7 +505,6 @@ class CobraProposer:
         self.load()
 
         from cobra_utils.utils import (
-            process_image,
             process_image_Q_varres,
             process_image_ref_varres,
         )
@@ -280,16 +513,21 @@ class CobraProposer:
         target_w, target_h = _target_resolution(width, height, self.resolution)
 
         line_art = Image.fromarray(request.line_art).convert("L").convert("RGB")
-        query = line_art.resize((target_w, target_h), Image.BICUBIC)
+        query, inner = _letterbox(line_art, target_w, target_h)
 
         if not request.references:
             raise CobraUnavailable(
                 "Cobra colours from reference images; upload at least one character sheet."
             )
-        references = [
-            process_image(Image.fromarray(ref).convert("RGB"), target_w, target_h)
-            for ref in request.references
-        ]
+        references: list = []
+        for reference in request.references:
+            references += _tiles(
+                Image.fromarray(reference.pixels).convert("RGB"),
+                target_w,
+                target_h,
+                _TILE_BUDGET.get(reference.kind, _TILE_BUDGET["sheet"]),
+                reference.kind,
+            )
 
         # Retrieval: rank reference patches against query patches by CLIP
         # cosine similarity and keep the top k per query patch. This is the
@@ -340,18 +578,32 @@ class CobraProposer:
             # `draw_square` paints swatches onto the drawing upstream, and mark
             # the same pixels in the mask.
             #
-            # The hints arrive in the panel's frame while `query` is already at
-            # target resolution, so both are resampled first. NEAREST
-            # throughout: interpolating a hint invents colours nobody asked for
-            # and softens the mask edge onto pixels that were never hinted. The
-            # mask reaches the pipeline at latent resolution, so a hint thinner
-            # than 8 panel-pixels cannot be expressed at all.
-            mask_img = Image.fromarray(
-                np.where(request.hint_mask.astype(bool), 255, 0).astype(np.uint8)
-            ).resize((target_w, target_h), Image.NEAREST)
-            colours_img = Image.fromarray(
-                np.ascontiguousarray(request.hint_colours, dtype=np.uint8)
-            ).resize((target_w, target_h), Image.NEAREST)
+            # The hints arrive in the panel's frame, so they have to be
+            # letterboxed exactly as the line art was: scaled to `inner` and
+            # pasted at the same offset. Resizing them to the full target
+            # instead would stretch every hint across the white margin and
+            # misalign it with the art it marks.
+            #
+            # NEAREST throughout: interpolating a hint invents colours nobody
+            # asked for and softens the mask edge onto pixels that were never
+            # hinted. The mask reaches the pipeline at latent resolution, so a
+            # hint thinner than 8 panel-pixels cannot be expressed at all.
+            inner_size = (inner[2] - inner[0], inner[3] - inner[1])
+
+            mask_img = Image.new("L", (target_w, target_h), 0)
+            mask_img.paste(
+                Image.fromarray(
+                    np.where(request.hint_mask.astype(bool), 255, 0).astype(np.uint8)
+                ).resize(inner_size, Image.NEAREST),
+                inner[:2],
+            )
+            colours_img = Image.new("RGB", (target_w, target_h), "white")
+            colours_img.paste(
+                Image.fromarray(
+                    np.ascontiguousarray(request.hint_colours, dtype=np.uint8)
+                ).resize(inner_size, Image.NEAREST),
+                inner[:2],
+            )
 
             where = np.asarray(mask_img, dtype=np.uint8) > 0
             painted = np.asarray(query, dtype=np.uint8).copy()
@@ -373,5 +625,8 @@ class CobraProposer:
             )[0][0]
 
         # Back to the panel's own frame: mode extraction indexes the raster by
-        # the label map, so the two must agree pixel for pixel.
-        return np.asarray(coloured.convert("RGB").resize((width, height), Image.BICUBIC))
+        # the label map, so the two must agree pixel for pixel. The white
+        # margin `_letterbox` added comes off first -- whatever the model
+        # painted out there is not part of this panel.
+        panel = coloured.convert("RGB").crop(inner)
+        return np.asarray(panel.resize((width, height), Image.BICUBIC))

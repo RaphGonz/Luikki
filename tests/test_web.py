@@ -165,3 +165,73 @@ def test_the_proposal_raster_is_not_reachable(client, page):
     assert client.get("/api/proposal.png").status_code == 404
     routes = {route.path for route in client.app.routes}
     assert not any("proposal" in route for route in routes)
+
+
+# -- the reference pool over HTTP -------------------------------------------
+
+
+def _sheet(path):
+    """A character sheet: flat colour bands on paper, with an ink edge."""
+    import numpy as np
+    from PIL import Image
+
+    image = np.full((120, 120, 3), 250, dtype=np.uint8)
+    for i, colour in enumerate(((200, 30, 40), (30, 90, 200), (240, 220, 60))):
+        image[10 + i * 30 : 34 + i * 30, 10:110] = colour
+    image[:4, :] = 0
+    Image.fromarray(image).save(path)
+    return path
+
+
+def _add_reference(client, path, kind="sheet"):
+    with path.open("rb") as handle:
+        return client.post(
+            "/api/reference",
+            files={"file": (path.name, handle, "image/png")},
+            data={"kind": kind},
+        )
+
+
+def test_reference_round_trip_over_http(tmp_path, client):
+    """Upload, see it listed with its kind, fetch its thumbnail, delete it.
+    Rule 3: a route with no way to reach it is a feature that does not exist,
+    so every one of these has a button behind it in `app.js`."""
+    sheet = _sheet(tmp_path / "sheet.png")
+
+    response = _add_reference(client, sheet, kind="page")
+    assert response.status_code == 200
+    state = response.json()
+    assert len(state["references"]) == 1
+    assert state["references"][0]["kind"] == "page"
+    assert state["palette"], "a sheet with three colour bands must yield colours"
+
+    reference_id = state["references"][0]["id"]
+    thumbnail = client.get(f"/api/reference/{reference_id}.png")
+    assert thumbnail.status_code == 200
+    assert thumbnail.headers["content-type"] == "image/png"
+
+    deleted = client.request("DELETE", f"/api/reference/{reference_id}")
+    assert deleted.status_code == 200
+    assert deleted.json()["references"] == []
+    assert deleted.json()["palette"] == []
+
+
+def test_deleting_an_absent_reference_is_404(client):
+    assert client.request("DELETE", "/api/reference/99").status_code == 404
+
+
+def test_unknown_kind_is_refused_by_the_api(tmp_path, client):
+    response = _add_reference(client, _sheet(tmp_path / "sheet.png"), kind="nonsense")
+    assert response.status_code == 422
+    assert client.get("/api/state").json()["references"] == []
+
+
+def test_a_reference_that_is_not_an_image_is_refused(tmp_path, client):
+    broken = tmp_path / "broken.png"
+    broken.write_bytes(b"not a png")
+    with broken.open("rb") as handle:
+        response = client.post(
+            "/api/reference", files={"file": ("broken.png", handle, "image/png")}
+        )
+    assert response.status_code == 422
+    assert client.get("/api/state").json()["references"] == []

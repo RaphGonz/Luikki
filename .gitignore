@@ -30,6 +30,10 @@ third_party/
 *.ckpt
 *.safetensors
 
+# Bubble detector weights, pulled from Hugging Face on first use.
+# 161 MB, Apache-2.0, reproducible from bubbles.DETECTOR_URL.
+models/
+
 # The running app's workdir: uploaded pages, exported PSDs, server logs.
 # Same rule as test_pages/ — the uploads are the artist's material.
 .comiccolor-work/

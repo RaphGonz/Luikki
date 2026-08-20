@@ -99,3 +99,49 @@ canvas { display: block; width: 100%; height: 100%; }
 }
 .status.bad { color: var(--warn); border-color: var(--warn); }
 body.busy { cursor: progress; }
+
+.kind {
+  margin-top: 0.4rem;
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.2rem 0.3rem;
+}
+
+.refs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.refs figure {
+  position: relative;
+  margin: 0;
+  width: 72px;
+}
+
+.refs img {
+  width: 72px;
+  height: 72px;
+  object-fit: cover;
+  display: block;
+  border-radius: 3px;
+}
+
+.refs figcaption {
+  font-size: 0.7rem;
+  opacity: 0.7;
+  text-align: center;
+}
+
+.refs .x {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  line-height: 1;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+}

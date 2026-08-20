@@ -34,18 +34,37 @@ from ..model.masks import UNASSIGNED
 
 
 @dataclass
+class ReferenceImage:
+    """One image the proposer may colour from, with what the artist called it.
+
+    `kind` travels with the pixels because fitting a reference to a panel is
+    the proposer's job and the answer depends on what the image *is*: a
+    finished page is one composition, a character sheet is a montage of
+    separate drawings that wants cutting up. Only the artist knows which.
+    """
+
+    # HxWx3 uint8 RGB.
+    pixels: np.ndarray
+    # `page`, `panel` or `sheet` — see `colour.references.KINDS`.
+    kind: str = "sheet"
+    label: str = ""
+
+
+@dataclass
 class PanelRequest:
     """One panel's worth of input, in the panel's own pixel frame."""
 
     # HxWx3 uint8 RGB. The panel crop of the page, greyscale replicated across
-    # channels for a plain ink layer.
+    # channels for a plain ink layer, and masked to the panel's polygon —
+    # everything outside the panel is paper white, so a proposer never reasons
+    # about a neighbouring panel that happens to fall in this one's bounding
+    # box. For a rectangular panel that masking is a no-op.
     line_art: np.ndarray
     # HxW int32 zone map from segmentation. UNASSIGNED on line and protected
     # pixels. A model proposer ignores this; a deterministic one needs it.
     label_map: np.ndarray
-    # Character sheets, HxWx3 uint8 RGB, page-scoped so every panel gets the
-    # same list. May be empty.
-    references: list[np.ndarray] = field(default_factory=list)
+    # Book-scoped, so every panel gets the same list. May be empty.
+    references: list[ReferenceImage] = field(default_factory=list)
     # Optional spatial colour hints, in the panel's own frame: `hint_colours`
     # HxWx3 uint8 RGB, meaningful only where `hint_mask` is True.
     #

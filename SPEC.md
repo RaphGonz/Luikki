@@ -57,6 +57,41 @@ That is the whole product. Everything else is an improvement to one of those ste
     border is one shape.
 13. Protected areas never receive colour. That is all "protected" means.
 
+### References and the retrieval pool
+Cobra colours from references. Its only hard constraint is that every
+reference patch is exactly half the query's width and height — whole pages are
+a convention of its demo, not a requirement, so a character sheet is an
+equally valid pool entry.
+
+`ReferenceStore` keeps them in `<workdir>/references/` with a JSON index. Each
+carries a `kind` (`page` | `panel` | `sheet`) that the artist sets, because it
+is the one thing we cannot infer and it decides how the image is fitted:
+
+- **sheet** — a montage, so windows are placed on the drawings themselves
+  (connected components of not-paper), one character per patch.
+- **page / panel** — one composition with no paper between subjects, so a grid
+  of target-shaped tiles, overlapping by half.
+
+**Nothing becomes a reference by itself.** A validated page is promoted by the
+artist, never automatically — rule 2 applied to the pool. This is what keeps
+it bounded, and it is the cheapest of all the available controls.
+
+**Pool growth, for when this is measured on the GPU.** The DiT always sees
+`4 × top_k` patches whatever the pool size, so the pool costs retrieval time,
+never inference time. At `T=3` tiles per reference, a 50-page book is ~750
+patches against the ~1000 the paper describes; 200 pages would be 3× beyond
+it. Two risks, in this order:
+
+1. *Near-duplicate crowding* — our tiles overlap, so `top_k` could return the
+   same pose repeatedly and lose the diversity the whole design is for. Fix:
+   dedupe the selection by overlap, not the candidate pool.
+2. *CLIP cost, linear in pool.* Fix: cache embeddings by `(reference, bucket)`
+   — a page's panels collapse to 2–3 distinct buckets, not one per panel.
+
+Neither is built. Neither is measurable without the GPU, and tuning a
+retrieval system that cannot be run is how the first bubble detector went
+wrong.
+
 ### Zones
 14. **Segment zones** button. Fills each panel with flat regions.
 15. Click two zones to merge them.
@@ -109,6 +144,35 @@ Parameters (`PanelParams`):
 | `frame_length_frac` | 0.05 | shortest run counted as a frame |
 | `frame_gap_frac` | 0.10 | longest frame break to repair |
 
+**Panels are polygons, not boxes (D-17 revised).** D-17 originally forbade
+`findContours` here, because with no frame to seal the gutter network against,
+a borderless panel's surviving blob is the ink silhouette of the drawing and
+tracing it returns a character-shaped polygon. That reason still holds, so the
+reversal is conditional rather than total.
+
+`diagonal_page.jpg` shows both halves at once. Its five framed panels trace
+exactly — the diamond comes back as a rotated square and its four neighbours
+come back notched where it bites into them — and no bounding box can express
+that page at all, since the diamond's box overlaps all four. Its top panel is
+borderless and traces the artwork itself at 40 vertices, which is D-17's case
+verbatim.
+
+The vertex count separates them, measured over the seven test pages at
+`polygon_epsilon_frac`: framed panels come back with 4–9 vertices, borderless
+artwork with 31–43. `max_polygon_vertices = 12` sits in that gap and falls
+back to the box above it. The epsilon must stay fine — at 0.02 every blob on
+every page collapsed to 4–5 vertices, erasing the notches and the signal with
+them.
+
+**`min_gutter_frac` is 0.009, and it is measured.** There is a cliff between
+0.009 and 0.010: `tintin_page.jpg` returns 12 panels at or below, and 5 above,
+because past it the disc no longer fits the gutters *between* panels of a row
+and whole rows survive as one blob. The previous 0.012 was on the wrong side.
+Two known failures are left alone: tintin's left column merges rows 1–2, and
+the page title comes back as a panel. Per D-19 a false positive is one click
+to delete, while a merge is not correctable at all — there is no split tool —
+so the merge is the one worth fixing next.
+
 **Borderless panels are the motivating case.** With no frame to seal the gutter
 network, the surviving component is the ink silhouette of the drawing, not a
 rectangle. So: no contour tracing (it would trace the character's outline), and
@@ -117,40 +181,67 @@ dropped. Over-propose; the artist deletes false positives. Never raise it back
 toward 0.55 — that silently drops every borderless panel.
 
 ### Bubble detection
-Already built, in `src/comiccolor/segmentation/bubbles.py`.
+Built, in `src/comiccolor/segmentation/bubbles.py`. Rewritten once, and the
+rewrite is the point of this section.
 
-**A bubble is text surrounded by white.**
+**The model says where. The artwork says what shape.**
 
-1. Find glyphs — small dark components of similar height, aligned, not long
-   straight runs. This is *detection*, not OCR: the text is never read, so no
-   OCR engine, no language pack, no licence question.
-2. Drop lonely blobs; cluster the rest into text blocks.
-3. Flood-fill the enclosing white outward from each cluster.
-4. Cap the filled area, so an unclosed bubble cannot leak across the page or
-   run along the gutters.
-5. Discard if the filled ground is dark — that is lettering on artwork, not a
-   bubble.
-6. Trace the fill to a polygon with `approxPolyDP`.
+1. `BubbleDetector` runs RT-DETR-v2 through `onnxruntime` and returns boxes of
+   class `bubble` scoring ≥ 0.7.
+2. For each box, `trace_bubble` casts 128 rays outward from its centre and
+   keeps the furthest ink pixel on each, capped at the box border + 15%.
+3. A circular median over the 128 lengths, then `approxPolyDP`.
 
-Parameters (`BubbleParams`):
+Step 2 is what makes lettering harmless — the text is always nearer the centre
+than the outline is. Step 3 is what makes a *broken* outline harmless: a ray
+escaping through a gap is one outlier its neighbours out-vote. The result is
+star-shaped, therefore always a simple polygon, and it lands **on** the outline
+so the balloon border is protected too.
 
-| Param | Value | Meaning |
+Parameters (`BubbleParams`): `score` 0.7, `rays` 128, `reach` 1.15, `smooth` 7,
+`epsilon_frac` 0.008, `max_bubbles` 64. Nothing here needs tuning per page —
+verified against `test_pages/bubble_counts.txt`, which the artist wrote.
+
+| Page | Balloons | Found |
 |---|---|---|
-| `min/max_glyph_height_frac` | 0.4 / 2.5 | band around median small-component height |
-| `max_glyph_aspect` | 4.0 | rejects frames and speed lines |
-| `min_glyphs_per_cluster` | 3 | a lone blob is dirt |
-| `cluster_dilate_px` | 15 | merges lines of one text block |
-| `max_area_frac` | 0.35 | the leak cap — **needs tuning on real pages** |
-| `min_area_frac` | 0.001 | smaller is a hole in the ink |
-| `min_ground_brightness` | 127 | below this it is artwork, not paper |
-| `max_bubbles` | 64 | hard ceiling |
+| `tintin_page.jpg` | 12 | 12 |
+| `laurine_page.jpg` | 4 (spiky, tailed, one open) | 4 |
+| `manga_page.jpg` | 4 | 4 |
+| `antoine_page.png`, `moebius_page.jpg`, `teddy_page.png` | 0 | 0 |
 
-**SFX lettering gets no automatic detection.** A "BOOM" over artwork has no
-white to fill. If SFX gets coloured, that is acceptable — the artist masks it by
-hand if they care. Revisit later.
+**Known limits, both from the trace being star-shaped.** A long tail is bridged
+rather than followed. A balloon with no outline drawn at all comes back as its
+lettering, so its white margin stays unprotected and gets coloured.
 
-No learned model here. Every open-source bubble detector that works is GPL,
-restricted by its training dataset, or ships without weights.
+**SFX lettering gets no automatic proposal.** This is now a choice, not a
+limitation: the model returns a `text_free` class which is exactly SFX outside
+balloons. Turning it on is one line, whenever hand-masking stops being enough.
+
+#### Why the heuristic version was abandoned
+The original rule — *a bubble is text surrounded by white*, read left to right:
+find glyphs, cluster them, flood-fill outward, cap the area — was measured
+against all six real pages and failed on every one:
+
+- `tintin_page.jpg`: 39 proposals, **not one of them a balloon**. The glyph
+  filter keyed on the page's *median* component height, which on a scan is
+  compression speckle — 4 px where the lettering is 7 px. It therefore excluded
+  the real lettering and admitted the noise.
+- `moebius_page.jpg`, `antoine_page.png`: hatching read as `iiii`.
+  `teddy_page.png`: cup holders read as `OOO`. All three have no balloons.
+- `laurine_page.jpg`: a whole panel proposed as one bubble.
+
+One cause: deciding *is this text?* from the geometry of ink blobs. Height
+similarity plus a shared baseline does not separate lettering from hatching in
+real artwork, and no parameter fixes that.
+
+**The licence objection is answered, not dodged.** The reason for "no learned
+model here" was that every working open-source detector is GPL, dataset-
+restricted, or shipped without weights. That is still true of most of them — and
+there is a sharper trap underneath it: nearly every "manga bubble YOLO" needs
+the `ultralytics` package to run, and that package is **AGPL-3.0**, whatever
+licence its own weights carry. RT-DETR-v2 under Apache-2.0 through
+`onnxruntime` is the one mainstream path with no AGPL code in the chain. Keep
+it that way.
 
 ### Zones
 Existing: trapped-ball fill via vendored LineFiller (MIT), with `merge_fill`.

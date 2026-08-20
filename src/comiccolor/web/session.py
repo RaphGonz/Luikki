@@ -26,15 +26,21 @@ import numpy as np
 from PIL import Image
 
 from ..colour.extract import extract_palette
-from ..colour.proposer import ColourProposer, DistinctColourProposer, PanelRequest
+from ..colour.proposer import (
+    ColourProposer,
+    DistinctColourProposer,
+    PanelRequest,
+    ReferenceImage,
+)
+from ..colour.references import Reference, ReferenceStore
 from ..colour.snap import SNAP_MAX_DELTA, assign_zones
 from ..export.psd import PanelFlats, flats_preview, write_psd
 from ..extract.base import LineExtractor
 from ..extract.manga_line import MangaLineExtractor
 from ..model.entities import PaletteEntry
 from ..model.masks import UNASSIGNED
-from ..segmentation.bubbles import detect_bubbles, mask_to_polygon
-from ..segmentation.panels import box_to_polygon, segment_panels
+from ..segmentation.bubbles import BubbleDetector, detect_bubbles
+from ..segmentation.panels import segment_panels
 from ..segmentation.preprocess import binarise_lines, load_line_art
 from ..segmentation.protected import rasterize_protected_for_panel
 from ..segmentation.segmenter import LineFillerSegmenter
@@ -101,7 +107,14 @@ class Session:
         # will double-click; two passes mutating the same panel list is the
         # one race worth spending a lock on.
         self.lock = threading.RLock()
+        # Loaded on the first press of Detect bubbles rather than here: it is
+        # 161 MB off disk, and a page with no balloons never needs it.
+        self.bubble_detector: BubbleDetector | None = None
+        # Built before `reset`, and deliberately not touched by it: the
+        # reference pool belongs to the book, not to the page in flight.
+        self.reference_store = ReferenceStore(self.workdir / "references")
         self.reset()
+        self._rebuild_reference_palette()
 
     # -- state -----------------------------------------------------------
 
@@ -116,9 +129,13 @@ class Session:
         self._structural: np.ndarray | None = None
         self.panels: list[PanelState] = []
         self.protected: list[list[tuple[int, int]]] = []
-        self.palette: list[PaletteEntry] = []
-        self.references: list[np.ndarray] = []
-        self.reference_names: list[str] = []
+        # Palette in two halves. The reference half is derived — delete a
+        # character sheet and its colours go with it — while the created half
+        # is what `generate_flats` invented for zones that matched nothing.
+        # One list would mean a reference deletion silently dropped the other
+        # kind, or that rebuilding after a deletion could not be done at all.
+        self._reference_palette: list[PaletteEntry] = []
+        self._created_palette: list[PaletteEntry] = []
         self._next_entry_id = 1
         # Tracked apart from `self.protected` because a page with no bubbles
         # on it is a legitimate outcome of pressing the button, not a step
@@ -137,13 +154,16 @@ class Session:
         """Replaces everything. A new page is a new session."""
         with self.lock:
             line_mask, grey = load_line_art(path)
-            references, reference_names = self.references, self.reference_names
-            palette, next_id = self.palette, self._next_entry_id
+            # The palette belongs to the book, not the page, so dropping in
+            # the next page must not throw it away. The references themselves
+            # need no carrying: they are on disk.
+            reference_palette = self._reference_palette
+            created_palette = self._created_palette
+            next_id = self._next_entry_id
             self.reset()
-            # Character sheets and the palette belong to the book, not the
-            # page, so dropping in the next page must not throw them away.
-            self.references, self.reference_names = references, reference_names
-            self.palette, self._next_entry_id = palette, next_id
+            self._reference_palette = reference_palette
+            self._created_palette = created_palette
+            self._next_entry_id = next_id
 
             self.source = Path(path)
             self.original_name = original_name or Path(path).name
@@ -156,17 +176,17 @@ class Session:
     def detect_panels(self) -> list[PanelState]:
         with self.lock:
             self._require_page()
-            boxes = segment_panels(self.line_mask)
+            found = segment_panels(self.line_mask)
             self.panels = [
                 PanelState(
                     order=order,
-                    x=box.x,
-                    y=box.y,
-                    width=box.width,
-                    height=box.height,
-                    polygon=box_to_polygon(box),
+                    x=panel.x,
+                    y=panel.y,
+                    width=panel.width,
+                    height=panel.height,
+                    polygon=panel.polygon,
                 )
-                for order, box in enumerate(boxes)
+                for order, panel in enumerate(found)
             ]
             self._invalidate_from_panels()
             return self.panels
@@ -176,8 +196,11 @@ class Session:
     def detect_bubbles(self) -> list[list[tuple[int, int]]]:
         with self.lock:
             self._require_page()
-            masks = detect_bubbles(self.grey, self.line_mask)
-            polygons = [mask_to_polygon(mask) for mask in masks]
+            if self.bubble_detector is None:
+                self.bubble_detector = BubbleDetector()
+            polygons = detect_bubbles(
+                self.grey, self.line_mask, detector=self.bubble_detector
+            )
             self.protected = [p for p in polygons if len(p) >= 3]
             # Protection feeds segmentation, so zones computed before it are
             # stale (rule 4).
@@ -233,9 +256,9 @@ class Session:
 
         Panel and bubble detection deliberately keep the raw mask.
         `segment_panels` needs solid blacks to stay solid, or the gutter
-        network leaks straight through them; `detect_bubbles` reads glyphs as
-        filled components and paper brightness off the original grey, and the
-        extractor turns lettering into outlines.
+        network leaks straight through them; `detect_bubbles` shows the model
+        the page as the artist drew it, and traces the balloon outline off the
+        raw ink, which is the line the artist will drop back on top.
 
         Computed once per page and cached: it is seconds on a GPU, minutes on
         a CPU, and it does not change until a new page is loaded.
@@ -245,6 +268,45 @@ class Session:
             lines = self.extractor.extract(self.grey).lines
             self._structural = binarise_lines(lines)
         return self._structural
+
+    def reference_images(self) -> list[ReferenceImage]:
+        """The book's references, with the kind the artist gave each one.
+
+        `kind` travels with the pixels because the proposer decides how to fit
+        a reference to a panel, and the right answer differs between one
+        composed page and a montage of separate character drawings.
+        """
+        return [
+            ReferenceImage(
+                pixels=self.reference_store.image(reference.id),
+                kind=reference.kind,
+                label=reference.label,
+            )
+            for reference in self.reference_store
+        ]
+
+    def _line_art_for(self, panel: PanelState) -> np.ndarray:
+        """The panel crop, masked to the panel's own polygon.
+
+        The crop is a bounding box, and a bounding box is only the panel for a
+        rectangle. For an L-shaped or a round panel it also contains whatever
+        the neighbouring panel put in the corner, and the proposer would be
+        reasoning about — and retrieving references for — a scene that is
+        partly not this panel. Everything outside the polygon becomes paper
+        white here, which for a rectangular panel is a no-op.
+
+        What is *painted* outside the polygon has never mattered: zones there
+        come back UNASSIGNED from `_blocked_for` and are never coloured. What
+        the model sees is the part that did.
+        """
+        crop = self.grey[
+            panel.y : panel.y + panel.height, panel.x : panel.x + panel.width
+        ]
+        inside = rasterize_protected_for_panel(
+            [panel.polygon], panel.x, panel.y, panel.width, panel.height
+        )
+        masked = np.where(inside, crop, 255).astype(np.uint8)
+        return np.repeat(masked[:, :, None], 3, axis=2)
 
     def _blocked_for(self, panel: PanelState) -> np.ndarray:
         """Protected areas plus everything outside the panel polygon.
@@ -262,31 +324,81 @@ class Session:
 
     # -- palette / references --------------------------------------------
 
-    def add_reference(self, path: str | Path, original_name: str = "") -> list[PaletteEntry]:
+    def add_reference(
+        self, path: str | Path, original_name: str = "", kind: str = "sheet"
+    ) -> list[PaletteEntry]:
         """One upload, two jobs: palette colours out, Cobra reference in.
 
         The barebone app has no separate swatch and character-sheet inputs
         (features 18 and 19 collapse to one) — the same image is where the
         colours come from and what the model is shown.
+
+        `kind` is `page`, `panel` or `sheet`. It changes nothing here; it is
+        recorded because the proposal-time fitting step needs it and only the
+        artist knows it.
         """
         with self.lock:
-            image = Image.open(path)
-            image.load()
-            self.references.append(np.asarray(image.convert("RGB")))
-            self.reference_names.append(original_name or Path(path).name)
+            self.reference_store.add(path, label=original_name or Path(path).name, kind=kind)
+            return self._rebuild_reference_palette()
 
-            added: list[PaletteEntry] = []
+    def remove_reference(self, reference_id: int) -> bool:
+        """Delete a reference and the colours it contributed.
+
+        Colours `generate_flats` invented for unmatched zones are kept: they
+        were never this reference's to give. The flats themselves are stale
+        either way, since the palette zones snapped to has changed (rule 4).
+        """
+        with self.lock:
+            if not self.reference_store.remove(reference_id):
+                return False
+            self._rebuild_reference_palette()
+            self._flats_done = False
+            return True
+
+    def _rebuild_reference_palette(self) -> list[PaletteEntry]:
+        """Re-extract the palette from every stored reference, in id order.
+
+        Rebuilding rather than patching is what makes deletion honest: there
+        is no record of which entry came from which image, and inventing one
+        would be a second source of truth. `extract_palette` is median cut,
+        so the same files in the same order give the same colours every time
+        — including across a restart, which is why the palette does not need
+        persisting separately.
+        """
+        self._reference_palette = []
+        self._next_entry_id = 1
+        for reference in self.reference_store:
+            image = Image.fromarray(self.reference_store.image(reference.id))
             for colour in extract_palette(image, sheet_mode=True):
-                entry = PaletteEntry(
-                    project_id=0,
-                    rgb=colour.rgb,
-                    label=f"colour {self._next_entry_id}",
-                    id=self._next_entry_id,
+                self._reference_palette.append(
+                    PaletteEntry(
+                        project_id=0,
+                        rgb=colour.rgb,
+                        label=f"colour {self._next_entry_id}",
+                        id=self._next_entry_id,
+                    )
                 )
                 self._next_entry_id += 1
-                self.palette.append(entry)
-                added.append(entry)
-            return added
+
+        # Created entries are renumbered above them, so ids stay unique after
+        # a rebuild shortens or lengthens the reference half.
+        for entry in self._created_palette:
+            entry.id = self._next_entry_id
+            self._next_entry_id += 1
+        return list(self._reference_palette)
+
+    @property
+    def palette(self) -> list[PaletteEntry]:
+        """What zones snap to: reference colours first, then invented ones."""
+        return [*self._reference_palette, *self._created_palette]
+
+    @property
+    def references(self) -> list[np.ndarray]:
+        return self.reference_store.images()
+
+    @property
+    def reference_names(self) -> list[str]:
+        return [r.label for r in self.reference_store]
 
     @property
     def palette_by_id(self) -> dict[int, PaletteEntry]:
@@ -311,13 +423,10 @@ class Session:
             for panel in self.panels:
                 if panel.label_map is None:
                     continue
-                crop = self.grey[
-                    panel.y : panel.y + panel.height, panel.x : panel.x + panel.width
-                ]
                 request = PanelRequest(
-                    line_art=np.repeat(crop[:, :, None], 3, axis=2),
+                    line_art=self._line_art_for(panel),
                     label_map=panel.label_map,
-                    references=self.references,
+                    references=self.reference_images(),
                 )
                 proposal = self.proposer.propose(request)
 
@@ -329,7 +438,7 @@ class Session:
                     next_id=self._next_entry_id,
                     label_prefix=f"p{panel.order + 1}",
                 )
-                self.palette.extend(created)
+                self._created_palette.extend(created)
                 self._next_entry_id += len(created)
 
                 panel.assignments = {a.label: a.palette_entry_id for a in assignments}
@@ -424,7 +533,10 @@ class Session:
                 "palette": [
                     {"id": e.id, "rgb": list(e.rgb), "label": e.label} for e in self.palette
                 ],
-                "references": self.reference_names,
+                "references": [
+                    {"id": r.id, "label": r.label, "kind": r.kind, "added": r.added}
+                    for r in self.reference_store
+                ],
                 "proposer": self.proposer.name,
                 "extractor": self.extractor.name,
                 "done": {

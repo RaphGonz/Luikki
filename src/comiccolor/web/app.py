@@ -18,12 +18,13 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
-from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi import FastAPI, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
 from ..colour.extract import EmptyImageError
+from ..colour.references import UnknownKind
 from .session import Session, StepError
 
 _STATIC = Path(__file__).parent / "static"
@@ -158,16 +159,41 @@ def create_app(
     # -- palette / references --------------------------------------------
 
     @app.post("/api/reference")
-    def upload_reference(file: UploadFile):
+    def upload_reference(file: UploadFile, kind: str = Form("sheet")):
         name = file.filename or "reference.png"
-        target = session.workdir / f"ref_{len(session.references)}{Path(name).suffix}"
-        with target.open("wb") as handle:
+        with tempfile.NamedTemporaryFile(
+            delete=False, suffix=Path(name).suffix, dir=session.workdir
+        ) as handle:
             shutil.copyfileobj(file.file, handle)
+            staged = Path(handle.name)
         try:
-            session.add_reference(target, original_name=name)
+            session.add_reference(staged, original_name=name, kind=kind)
+        except UnknownKind as exc:
+            raise HTTPException(422, str(exc)) from exc
         except EmptyImageError as exc:
             raise HTTPException(422, f"no colours in that image: {exc}") from exc
+        except (OSError, ValueError) as exc:
+            raise HTTPException(422, f"could not read that image: {exc}") from exc
+        finally:
+            # The store keeps its own copy, so the upload never lingers.
+            staged.unlink(missing_ok=True)
         return session.state()
+
+    @app.delete("/api/reference/{reference_id}")
+    def delete_reference(reference_id: int):
+        if not session.remove_reference(reference_id):
+            raise HTTPException(404, f"no reference {reference_id}")
+        return session.state()
+
+    @app.get("/api/reference/{reference_id}.png")
+    def reference_thumbnail(reference_id: int):
+        try:
+            thumbnail = session.reference_store.thumbnail(reference_id)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        buffer = io.BytesIO()
+        thumbnail.save(buffer, format="PNG")
+        return Response(buffer.getvalue(), media_type="image/png")
 
     # -- 5. flats --------------------------------------------------------
 

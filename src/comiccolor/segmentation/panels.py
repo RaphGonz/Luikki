@@ -46,7 +46,23 @@ class PanelParams:
     # This is the single load-bearing parameter: it is simultaneously the
     # smallest gutter that separates panels and the largest frame break that
     # will not leak between them.
-    min_gutter_frac: float = 0.012
+    #
+    # 0.009 is measured, not chosen. Swept against the artist's own counts in
+    # `test_pages/panel_counts.txt`, the behaviour has a cliff between 0.009
+    # and 0.010: `tintin_page.jpg` returns 12 boxes at or below 0.009 and 5 at
+    # or above 0.010, because above it the disc no longer fits in the gutters
+    # *between* panels of one row and whole rows survive as single blobs. The
+    # old 0.012 was on the wrong side of that cliff.
+    #
+    # Two things this does not fix, recorded so the next person does not
+    # re-derive them by tuning. On tintin the left column of rows 1-2 still
+    # merges into one box, and a merge is the expensive failure: an artist can
+    # drag a wrong panel's corners but cannot split one box into two, and
+    # there is no add-panel button. Separately, the page title and a balloon
+    # poking into the margin come back as panels; per D-19 that is the cheap
+    # failure and is left alone rather than filtered, because every filter
+    # that removes them also removes a genuinely thin panel.
+    min_gutter_frac: float = 0.009
     # Panels below this share of page area are debris, not panels.
     min_area_frac: float = 0.005
     # Reject blobs less solid than this (area over bounding-box area). Filters
@@ -62,6 +78,14 @@ class PanelParams:
     # a value near 0.55 again silently drops every ink-silhouette borderless
     # panel and looks, to the next contributor, like nothing changed.
     min_solidity: float = 0.25
+    # `approxPolyDP` tolerance for a traced panel outline, as a fraction of
+    # contour perimeter. Fine on purpose: at 0.02 every shape on every test
+    # page collapsed to 4-5 vertices, which flattens away the notch a diamond
+    # bites out of its neighbour -- the whole reason for tracing.
+    polygon_epsilon_frac: float = 0.005
+    # Above this many vertices the blob is artwork, not a panel, and its
+    # bounding box is used instead. See `_panel_polygon` for the measurement.
+    max_polygon_vertices: int = 12
     # Shortest run counted as a panel frame, as a fraction of the shorter side.
     frame_length_frac: float = 0.05
     # Longest break in a frame to repair, as a fraction of the shorter side.
@@ -88,6 +112,42 @@ class PanelBox:
         return self.width * self.height
 
 
+@dataclass
+class Panel:
+    """A panel as its outline, with the bounding box that contains it.
+
+    The polygon is the panel; the box is where to crop. Both are kept because
+    they answer different questions and a diamond makes the difference
+    obvious: its box overlaps four neighbours, and only the polygon says which
+    pixels are actually its own. Everything downstream already knew this --
+    `_blocked_for` has always rasterised the polygon and returned everything
+    outside it unlabelled.
+    """
+
+    polygon: list[tuple[int, int]]
+    box: PanelBox
+
+    @property
+    def x(self) -> int:
+        return self.box.x
+
+    @property
+    def y(self) -> int:
+        return self.box.y
+
+    @property
+    def width(self) -> int:
+        return self.box.width
+
+    @property
+    def height(self) -> int:
+        return self.box.height
+
+    @property
+    def area(self) -> int:
+        return self.box.area
+
+
 def box_to_polygon(box: PanelBox) -> list[tuple[int, int]]:
     """Seed a panel's four-vertex polygon from its bounding box (D-17).
 
@@ -106,10 +166,52 @@ def box_to_polygon(box: PanelBox) -> list[tuple[int, int]]:
     return [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
 
 
+def _panel_polygon(
+    blob: np.ndarray, box: PanelBox, params: PanelParams
+) -> list[tuple[int, int]]:
+    """Trace one blob's outline, or fall back to its box.
+
+    D-17 forbade `findContours` here outright, and the reason was sound: with
+    no frame to seal `_gutter_network` against, a borderless panel's surviving
+    blob is the ink silhouette of the drawing, so tracing it returns a polygon
+    shaped like the character. That reversal is conditional, not total, and
+    both halves are visible on `diagonal_page.jpg`:
+
+    * Its five framed panels trace exactly. The diamond comes back as a
+      rotated square and its four neighbours come back correctly notched where
+      it bites into them -- 6 to 8 vertices each. No bounding box can express
+      that page at all: the diamond's box overlaps all four neighbours.
+    * Its top panel is borderless, and the trace faithfully follows the
+      artwork -- wings, confetti, hair -- at 40 vertices. Exactly D-17's case.
+
+    The vertex count is what separates them. Measured over the seven test
+    pages at `polygon_epsilon_frac`, framed panels come back with 4 to 9
+    vertices and borderless artwork with 31 to 43. `max_polygon_vertices` sits
+    in that gap, and above it the box is used, which is what D-17 asked for.
+
+    The epsilon has to stay fine for this to work: at 0.02 every blob on every
+    page collapsed to 4-5 vertices, erasing both the notches and the signal.
+    """
+    contours, _ = cv2.findContours(
+        blob.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+    )
+    if not contours:
+        return box_to_polygon(box)
+
+    outline = max(contours, key=cv2.contourArea)
+    epsilon = params.polygon_epsilon_frac * cv2.arcLength(outline, True)
+    simplified = cv2.approxPolyDP(outline, epsilon, True)
+
+    if len(simplified) < 3 or len(simplified) > params.max_polygon_vertices:
+        return box_to_polygon(box)
+
+    return [(int(point[0][0]), int(point[0][1])) for point in simplified]
+
+
 def segment_panels(
     line_mask: np.ndarray, params: PanelParams | None = None
-) -> list[PanelBox]:
-    """Return panel boxes in reading order."""
+) -> list[Panel]:
+    """Return panels, as outlines, in reading order."""
     params = params or PanelParams()
     height, width = line_mask.shape
     short_side = min(height, width)
@@ -123,20 +225,22 @@ def segment_panels(
     )
 
     min_area = params.min_area_frac * height * width
-    boxes: list[PanelBox] = []
+    panels: list[Panel] = []
     for index in range(1, count):
         x, y, w, h, area = stats[index]
         if area < min_area:
             continue
         if area / float(w * h) < params.min_solidity:
             continue
-        boxes.append(PanelBox(int(x), int(y), int(w), int(h)))
+        box = PanelBox(int(x), int(y), int(w), int(h))
+        panels.append(Panel(_panel_polygon(labels == index, box, params), box))
 
-    if not boxes:
+    if not panels:
         # No gutters found at all: full bleed, or a page that is one image.
-        return [PanelBox(0, 0, width, height)]
+        whole = PanelBox(0, 0, width, height)
+        return [Panel(box_to_polygon(whole), whole)]
 
-    return _reading_order(boxes, params.reading)
+    return _reading_order(panels, params.reading)
 
 
 def _reinforce_frames(line_mask: np.ndarray, length: int, gap: int) -> np.ndarray:
@@ -211,14 +315,14 @@ def _gutter_network(line_mask: np.ndarray, radius: int) -> np.ndarray:
     return grown & ~line_mask
 
 
-def _reading_order(boxes: list[PanelBox], reading: ReadingDirection) -> list[PanelBox]:
+def _reading_order(boxes: list[Panel], reading: ReadingDirection) -> list[Panel]:
     """Group panels into tiers, then order within each tier.
 
     Tiers run top to bottom in both traditions; only the horizontal direction
     differs. A panel spanning several tiers on one side of the page joins the
     first tier it overlaps, which is what a reader does.
     """
-    tiers: list[list[PanelBox]] = []
+    tiers: list[list[Panel]] = []
 
     for box in sorted(boxes, key=lambda b: b.y):
         for tier in tiers:
@@ -231,7 +335,7 @@ def _reading_order(boxes: list[PanelBox], reading: ReadingDirection) -> list[Pan
         else:
             tiers.append([box])
 
-    ordered: list[PanelBox] = []
+    ordered: list[Panel] = []
     for tier in tiers:
         # Secondary sort by y keeps a stacked column reading top to bottom.
         tier.sort(key=lambda b: (-b.x if reading == "rtl" else b.x, b.y))

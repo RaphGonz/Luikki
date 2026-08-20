@@ -1,231 +1,271 @@
 """§1.2 Frame as protection, not detection. Speech-bubble proposal.
 
-D-22 (user's own design, adopted over every OSS detector surveyed): a bubble
-is text surrounded by white.
+D-22's rule -- *a bubble is text surrounded by white* -- was originally read
+left to right: find the text with connected-component heuristics, flood-fill
+outward from it, cap the area. That version was measured against the six real
+test pages and it did not work, in a way no amount of tuning would fix:
 
-1. Detect glyphs on the page.
-2. Flood-fill the enclosing white outward from the text as seed.
-3. Cap by maximum area, so an *unclosed* bubble cannot leak into the whole
-   page or run out along the gutters between panels.
-4. Discard when the text sits on a large white fill or on a coloured area --
-   that is lettering on artwork, not a bubble.
+* On `tintin_page.jpg` it returned 39 bubbles and not one of them was a
+  balloon. The glyph filter keyed on the *page's* median component height,
+  which on a scan is compression speckle -- 4 px where the lettering is 7 px.
+  It therefore excluded the lettering and admitted the speckle.
+* On `moebius_page.jpg` and `antoine_page.png`, which have no balloons at all,
+  it read hatching as `iiii` and proposed bubbles around it. On
+  `teddy_page.png` it read cup holders as `OOO`.
+* On `laurine_page.jpg` it proposed a whole panel as one bubble.
 
-D-23: this needs text *detection*, not OCR. The characters are never read,
-only located, so there is no OCR engine, no language pack and no licence
-question -- just `cv2.connectedComponentsWithStats` filtered by height
-similarity and aspect ratio, the signature of glyphs sitting on a shared
-baseline. Hatching has irregular heights and no shared baseline, which is
-why it does not survive to become a bubble seed.
+Every one of those is the same failure: deciding "is this text?" from the
+geometry of ink blobs. D-23's claim that height similarity plus a shared
+baseline separates lettering from hatching is not true of real art.
 
-D-24: SFX lettering gets no automatic proposal this phase. A glyph cluster
-with no enclosing white to fill produces nothing here by construction --
-`PROT-02`'s hand-drawing covers SFX completely, so this is not a missing
-feature, it is the designed shape of the algorithm.
+So detection is now a model -- see `DETECTOR_URL`. This is the seam D-25
+reserved for exactly this case ("if one is ever added it belongs behind an
+optional seam distributing no restricted weights"), and the licence question
+D-25 raised is answered rather than dodged: RT-DETR-v2 under Apache-2.0,
+executed through `onnxruntime`, so no AGPL-licensed Ultralytics code enters
+the chain. That last point rules out nearly every other comic bubble detector
+on GitHub, whatever their model cards say, because they cannot run without
+`ultralytics`.
 
-D-25: learned bubble detectors were surveyed and rejected on licence, not
-quality (GPL-3.0 derivatives, Manga109 research-only encumbrance, conflicts
-with Cobra's OpenRAIL++-M). If one is ever added it belongs behind an
-optional seam distributing no restricted weights, on the model of Cobra
-itself ("build the seam, spike inside") -- not bundled here.
+Measured against the artist's own counts (`test_pages/bubble_counts.txt`) at
+score >= 0.7: tintin 12/12, laurine 4/4, manga 4/4, and zero on all three
+pages that have no balloons. The SFX lettering laurine is covered in -- Blop,
+Pop, Hiii -- is correctly ignored.
+
+D-24 (no SFX proposal this phase) still holds, but is now a decision rather
+than a limitation: the model also returns a `text_free` class, which is
+exactly SFX lettering outside balloons. Turning it on is a one-line change
+whenever PROT-02's hand-drawing stops being enough.
 """
 
 from __future__ import annotations
 
+import os
+import urllib.request
 from dataclasses import dataclass
+from pathlib import Path
 
 import cv2
 import numpy as np
 
+DETECTOR_URL = (
+    "https://huggingface.co/ogkalu/comic-text-and-bubble-detector/"
+    "resolve/main/detector.onnx"
+)
+DEFAULT_MODEL_PATH = Path("models/comic_bubble_detector.onnx")
+
+# The model's own class ids. `TEXT_IN_BUBBLE` and `TEXT_FREE` are unused today
+# and named anyway, because the next person to open this file will want to
+# know what else came back before they go looking for another model.
+BUBBLE = 0
+TEXT_IN_BUBBLE = 1
+TEXT_FREE = 2
+
+# The detector was exported at a fixed input size and resizes to it, so a
+# 2048 px page costs exactly what a 600 px page costs: about 0.85 s on CPU.
+_INPUT_SIZE = 640
+
 
 @dataclass
 class BubbleParams:
-    # Band around the page's median small-component height a glyph must
-    # fall in -- D-23's "similar height" filter.
-    min_glyph_height_frac: float = 0.4
-    max_glyph_height_frac: float = 2.5
-    # Rejects long straight runs (panel frames, speed lines) that happen to
-    # be short in one dimension -- neither a glyph's width nor its height
-    # may exceed this multiple of the other.
-    max_glyph_aspect: float = 4.0
-    # A lone blob is dirt, not lettering; this is the "bounding-box
-    # clustering to drop lonely boxes" step the Rabbit1010 precedent names.
-    min_glyphs_per_cluster: int = 3
-    # Merges the lines of one text block so a bubble is filled once from its
-    # whole text block rather than once per character.
-    cluster_dilate_px: int = 15
-    # D-22 point 3's cap. [ASSUMED] per 02-RESEARCH.md A3 and needs tuning
-    # against real project pages: too low silently discards large legitimate
-    # bubbles, too high lets an unclosed bubble leak along a gutter.
-    max_area_frac: float = 0.35
-    # A fill smaller than this is a hole in the ink, not a bubble.
-    min_area_frac: float = 0.001
-    # Below this mean brightness (0-255) the filled ground is artwork or a
-    # coloured area, not paper -- D-22 point 4's "lettering on artwork"
-    # discard. Half of the 8-bit range is the natural midpoint, not tuned
-    # against real pages.
-    min_ground_brightness: float = 127.0
-    # A hard ceiling on returned masks, so a pathological page cannot
+    # Detector confidence. Measured on the six test pages, every true balloon
+    # scored 0.70-0.96 and the only two false positives scored below 0.5, so
+    # this sits in a wide empty band rather than on a cliff.
+    score: float = 0.7
+    # Rays cast outward from the box centre to find the balloon's outline.
+    rays: int = 128
+    # How far past the box border a ray may look, as a multiple of the
+    # distance from the centre to that border. The detector's box is tight on
+    # the balloon, so this is slack for the outline stroke itself.
+    reach: float = 1.15
+    # Circular median window over the ray lengths. A ray that escapes through
+    # a gap in the outline is a lone outlier and its neighbours out-vote it.
+    # This is what makes a broken outline a non-event -- see `_trace`.
+    smooth: int = 7
+    # `approxPolyDP` tolerance as a fraction of contour perimeter, never a
+    # fixed pixel constant (02-RESEARCH.md Pitfall 1).
+    epsilon_frac: float = 0.008
+    # A hard ceiling on returned polygons, so a pathological page cannot
     # produce an unbounded list (T-2-05).
     max_bubbles: int = 64
-    # `approxPolyDP` tolerance as a fraction of contour perimeter, never a
-    # fixed pixel constant (02-RESEARCH.md Pitfall 1). [ASSUMED] per A2,
-    # needs tuning against real detected bubbles.
-    epsilon_frac: float = 0.01
 
 
-def _glyph_candidates(line_mask: np.ndarray, params: BubbleParams) -> np.ndarray:
-    """Small dark blobs of similar height and modest aspect ratio.
+def model_path() -> Path:
+    """Where the detector weights live, downloading them on first use.
 
-    D-23's claim: these two filters together reject hatching, because
-    hatching has irregular heights and no shared baseline, while a line of
-    lettering has near-uniform glyph heights sitting on one baseline. Text
-    *detection*, not OCR -- the components are never read, only located.
+    `COMICCOLOR_BUBBLE_MODEL` overrides the location. Otherwise the file is
+    fetched once into `models/` -- the same shape as Cobra's runtime weight
+    pull, and for the same reason: 161 MB does not belong in git history.
     """
-    count, labels, stats, _ = cv2.connectedComponentsWithStats(
-        line_mask.astype(np.uint8), connectivity=8
-    )
-    glyph_mask = np.zeros_like(line_mask, dtype=bool)
-    if count <= 1:
-        return glyph_mask
+    override = os.environ.get("COMICCOLOR_BUBBLE_MODEL")
+    path = Path(override) if override else DEFAULT_MODEL_PATH
+    if path.exists():
+        return path
+    if override:
+        raise FileNotFoundError(f"COMICCOLOR_BUBBLE_MODEL points at nothing: {path}")
 
-    heights = stats[1:, cv2.CC_STAT_HEIGHT]
-    median_height = float(np.median(heights))
-    low = params.min_glyph_height_frac * median_height
-    high = params.max_glyph_height_frac * median_height
-
-    for index in range(1, count):
-        height = stats[index, cv2.CC_STAT_HEIGHT]
-        width = stats[index, cv2.CC_STAT_WIDTH]
-        if not (low <= height <= high):
-            continue
-        if width == 0 or height == 0:
-            continue
-        if width / height > params.max_glyph_aspect:
-            continue
-        if height / width > params.max_glyph_aspect:
-            continue
-        glyph_mask |= labels == index
-
-    return glyph_mask
+    path.parent.mkdir(parents=True, exist_ok=True)
+    partial = path.with_suffix(".part")
+    urllib.request.urlretrieve(DETECTOR_URL, partial)
+    partial.replace(path)
+    return path
 
 
-def _glyph_clusters(glyphs: np.ndarray, params: BubbleParams) -> list[np.ndarray]:
-    """One seed mask per text block, dropping lonely glyphs.
+class BubbleDetector:
+    """The ONNX session, loaded once and reused.
 
-    Glyphs are dilated by `cluster_dilate_px` and grouped by connectivity so
-    the lines of one text block merge into one cluster; a cluster surviving
-    with fewer than `min_glyphs_per_cluster` *original* glyph components is
-    dirt, not lettering, and is dropped.
+    An object rather than a module global, so a test can point it at another
+    file and so the app pays the load cost at startup rather than on the
+    artist's first click.
     """
-    if not glyphs.any():
+
+    def __init__(self, path: str | Path | None = None):
+        import onnxruntime
+
+        self.path = Path(path) if path else model_path()
+        self.session = onnxruntime.InferenceSession(
+            str(self.path), providers=["CPUExecutionProvider"]
+        )
+
+    def boxes(self, grey: np.ndarray, score: float) -> np.ndarray:
+        """Bubble boxes as `(x0, y0, x1, y1)` in page coordinates.
+
+        The export carries its own post-processing: it takes the original page
+        size and returns boxes already scaled back to it.
+        """
+        height, width = grey.shape
+        rgb = np.repeat(grey[:, :, None], 3, axis=2)
+        resized = cv2.resize(
+            rgb, (_INPUT_SIZE, _INPUT_SIZE), interpolation=cv2.INTER_LINEAR
+        )
+        tensor = (resized.astype(np.float32) / 255.0).transpose(2, 0, 1)[None]
+
+        labels, boxes, scores = self.session.run(
+            None,
+            {
+                "images": tensor,
+                "orig_target_sizes": np.array([[width, height]], dtype=np.int64),
+            },
+        )
+        keep = (scores[0] >= score) & (labels[0] == BUBBLE)
+        return boxes[0][keep]
+
+
+def _ray_limits(angles: np.ndarray, half_width: float, half_height: float) -> np.ndarray:
+    """Distance from the box centre to the box border, per angle."""
+    cos, sin = np.cos(angles), np.sin(angles)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        to_side = np.where(np.abs(cos) > 1e-9, half_width / np.abs(cos), np.inf)
+        to_top = np.where(np.abs(sin) > 1e-9, half_height / np.abs(sin), np.inf)
+    return np.minimum(to_side, to_top)
+
+
+def trace_bubble(
+    line_mask: np.ndarray, box: np.ndarray, params: BubbleParams | None = None
+) -> list[tuple[int, int]]:
+    """Radial trace of one balloon's outline, from the box the model gave.
+
+    Cast `rays` rays outward from the centre of the box and keep, on each, the
+    distance of the *furthest* ink pixel within reach. That is the balloon's
+    outline: the lettering is always nearer the centre than the outline is, so
+    text cannot be mistaken for the boundary and the polygon can never fold
+    inward around it.
+
+    This replaced a flood fill, and the reason is worth keeping. A balloon
+    outline is often not closed at pixel level -- on `manga_page.jpg` it comes
+    out of Otsu as a *dotted* line, with gaps on both sides and along the
+    bottom. Anything that traces a closed curve fails there completely: an
+    open outline is a `C`, and filling a `C` fills the stroke and leaves the
+    middle out, which is where the old version's polygons that dived inward
+    around the lettering came from. A ray does not care about topology. A gap
+    costs one ray, and the circular median puts it back.
+
+    The polygon lands *on* the outline rather than inside it, so the balloon
+    border is protected and stays the artist's black.
+
+    The result is star-shaped by construction, so it is always a simple
+    polygon. The price is that a genuinely concave balloon -- one with a long
+    tail -- is bridged rather than followed.
+    """
+    params = params or BubbleParams()
+    x0, y0, x1, y1 = (float(v) for v in box)
+    centre_x, centre_y = (x0 + x1) / 2, (y0 + y1) / 2
+    half_width, half_height = (x1 - x0) / 2, (y1 - y0) / 2
+    if half_width < 3 or half_height < 3:
         return []
 
-    _, glyph_labels = cv2.connectedComponents(glyphs.astype(np.uint8), connectivity=8)
+    height, width = line_mask.shape
+    # One pixel of dilation, so a ray stepping half a pixel at a time cannot
+    # slip between the two sides of a hairline stroke.
+    ink = cv2.dilate(line_mask.astype(np.uint8), np.ones((3, 3), np.uint8)).astype(bool)
 
-    kernel = cv2.getStructuringElement(
-        cv2.MORPH_RECT, (params.cluster_dilate_px, params.cluster_dilate_px)
+    angles = np.linspace(0, 2 * np.pi, params.rays, endpoint=False)
+    limits = _ray_limits(angles, half_width, half_height) * params.reach
+    steps = np.arange(0.0, float(limits.max()) + 1.0, 0.5)
+
+    # Every ray at every step, sampled in one indexing operation.
+    xs = np.clip(
+        (centre_x + np.outer(np.cos(angles), steps)).round().astype(int), 0, width - 1
     )
-    dilated = cv2.dilate(glyphs.astype(np.uint8), kernel)
-    cluster_count, cluster_labels = cv2.connectedComponents(dilated, connectivity=8)
+    ys = np.clip(
+        (centre_y + np.outer(np.sin(angles), steps)).round().astype(int), 0, height - 1
+    )
+    hit = ink[ys, xs] & (steps[None, :] <= limits[:, None])
 
-    clusters: list[np.ndarray] = []
-    for cluster_id in range(1, cluster_count):
-        seed_mask = (cluster_labels == cluster_id) & glyphs
-        glyph_ids = set(int(v) for v in np.unique(glyph_labels[seed_mask]) if v != 0)
-        if len(glyph_ids) < params.min_glyphs_per_cluster:
-            continue
-        clusters.append(seed_mask)
+    # Furthest hit per ray; a ray that found no ink falls back to its limit.
+    last = np.where(
+        hit.any(axis=1), hit.shape[1] - 1 - hit[:, ::-1].argmax(axis=1), -1
+    )
+    radii = np.where(last >= 0, steps[last], limits)
 
-    return clusters
+    if params.smooth > 1:
+        pad = params.smooth // 2
+        wrapped = np.concatenate([radii[-pad:], radii, radii[:pad]])
+        radii = np.array(
+            [np.median(wrapped[i : i + params.smooth]) for i in range(params.rays)]
+        )
+
+    points = np.stack(
+        [centre_x + radii * np.cos(angles), centre_y + radii * np.sin(angles)], axis=1
+    )
+    contour = points.round().astype(np.int32).reshape(-1, 1, 2)
+    simplified = cv2.approxPolyDP(
+        contour, params.epsilon_frac * cv2.arcLength(contour, True), True
+    )
+    if len(simplified) < 3:
+        return []
+
+    return [
+        (int(np.clip(p[0][0], 0, width - 1)), int(np.clip(p[0][1], 0, height - 1)))
+        for p in simplified
+    ]
 
 
 def detect_bubbles(
-    grey: np.ndarray, line_mask: np.ndarray, params: BubbleParams | None = None
-) -> list[np.ndarray]:
-    """Text-seeded flood fill: D-22's algorithm end to end.
+    grey: np.ndarray,
+    line_mask: np.ndarray,
+    params: BubbleParams | None = None,
+    detector: BubbleDetector | None = None,
+) -> list[list[tuple[int, int]]]:
+    """One editable polygon per speech balloon, in page coordinates.
 
-    Returns one boolean mask per detected bubble, in page space, same shape
-    as `line_mask`. A glyph cluster's fill is discarded when it is unclosed
-    (area above `max_area_frac`, D-22 point 3), too small to be a bubble
-    (below `min_area_frac`), or sitting on dark/textured ground rather than
-    paper (below `min_ground_brightness`, D-22 point 4). Two clusters inside
-    one bubble never yield two masks -- a cluster whose seed already lies
-    inside an accepted fill is skipped.
+    The model says *where* a balloon is; the artwork says what *shape* it is.
+    Keeping those two jobs apart is why a spiky balloon, a cloud balloon and a
+    borderless caption all come out right -- nothing in the tracing step
+    assumes a shape.
+
+    Takes both `grey` and `line_mask` because they answer different questions:
+    the model reads the page as the artist drew it, and the trace needs to
+    know which pixels are ink.
     """
     params = params or BubbleParams()
-    height, width = line_mask.shape
-    max_area = params.max_area_frac * height * width
-    min_area = params.min_area_frac * height * width
+    detector = detector or BubbleDetector()
 
-    glyphs = _glyph_candidates(line_mask, params)
-    clusters = _glyph_clusters(glyphs, params)
-
-    non_ink = ~line_mask
-    neighbourhood = np.ones((3, 3), dtype=np.uint8)
-    fill_target = non_ink.astype(np.uint8) * 255
-
-    bubbles: list[np.ndarray] = []
-    filled_so_far = np.zeros_like(line_mask, dtype=bool)
-
-    for seed_mask in clusters:
-        if len(bubbles) >= params.max_bubbles:
+    polygons: list[list[tuple[int, int]]] = []
+    for box in detector.boxes(grey, params.score):
+        if len(polygons) >= params.max_bubbles:
             break
-
-        # A seed point on the paper immediately adjacent to the cluster --
-        # not a glyph pixel itself, which is ink by construction and floods
-        # nothing.
-        border = cv2.dilate(seed_mask.astype(np.uint8), neighbourhood).astype(bool)
-        border &= non_ink & ~seed_mask
-        ys, xs = np.nonzero(border)
-        if ys.size == 0:
-            continue
-        seed_point = (int(xs[0]), int(ys[0]))
-        if filled_so_far[seed_point[1], seed_point[0]]:
-            continue  # already covered by an accepted bubble
-
-        flood_mask = np.zeros((height + 2, width + 2), dtype=np.uint8)
-        cv2.floodFill(
-            fill_target.copy(),
-            flood_mask,
-            seed_point,
-            255,
-            loDiff=0,
-            upDiff=0,
-            flags=4 | cv2.FLOODFILL_MASK_ONLY | (255 << 8),
-        )
-        filled = flood_mask[1:-1, 1:-1].astype(bool)
-        area = int(filled.sum())
-        if area < min_area or area > max_area:
-            continue  # too small to be a bubble, or an unclosed leak
-
-        mean_brightness = float(grey[filled].mean())
-        if mean_brightness < params.min_ground_brightness:
-            continue  # lettering on artwork, not a bubble (D-22 point 4)
-
-        bubbles.append(filled)
-        filled_so_far |= filled
-
-    return bubbles
-
-
-def mask_to_polygon(mask: np.ndarray, epsilon_frac: float = 0.01) -> list[tuple[int, int]]:
-    """Trace a detected bubble's outer contour into an editable vertex list.
-
-    `epsilon_frac` is perimeter-relative (Pitfall 1), never a fixed pixel
-    tolerance. Returns `[]` when there is no contour, or when the simplified
-    contour has fewer than 3 points, so a degenerate trace never reaches the
-    store as an unrenderable polygon.
-    """
-    contours, _ = cv2.findContours(
-        mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-    )
-    if not contours:
-        return []
-
-    largest = max(contours, key=cv2.contourArea)
-    epsilon = epsilon_frac * cv2.arcLength(largest, True)
-    approx = cv2.approxPolyDP(largest, epsilon, True)
-    if len(approx) < 3:
-        return []
-
-    return [(int(point[0][0]), int(point[0][1])) for point in approx]
+        polygon = trace_bubble(line_mask, box, params)
+        if polygon:
+            polygons.append(polygon)
+    return polygons

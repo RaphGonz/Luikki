@@ -190,6 +190,15 @@ function apply() {
   $("ref-note").textContent = state.palette.length
     ? `${state.references.length} reference(s), ${state.palette.length} colours — zones snap to these.`
     : "No palette — every zone gets its own colour.";
+  $("refs").innerHTML = state.references
+    .map(
+      (r) => `<figure data-id="${r.id}">
+        <img src="/api/reference/${r.id}.png" alt="${r.label}">
+        <figcaption>${r.kind}</figcaption>
+        <button class="x" data-id="${r.id}" title="Remove ${r.label}">&times;</button>
+      </figure>`
+    )
+    .join("");
   $("palette").innerHTML = state.palette
     .map((e) => `<i style="background: rgb(${e.rgb.join(",")})" title="${e.label}"></i>`)
     .join("");
@@ -197,18 +206,29 @@ function apply() {
   render();
 }
 
-function upload(input, path, label) {
+function upload(input, path, label, extra) {
   input.addEventListener("change", async () => {
     if (!input.files.length) return;
     const form = new FormData();
     form.append("file", input.files[0]);
+    if (extra) for (const [k, v] of Object.entries(extra())) form.append(k, v);
     await step(label, path, { method: "POST", body: form });
     input.value = "";
   });
 }
 
 upload($("page-file"), "/api/page", "Loading page");
-upload($("ref-file"), "/api/reference", "Reading colours");
+upload($("ref-file"), "/api/reference", "Reading colours", () => ({
+  kind: $("ref-kind").value,
+}));
+
+// Removing a reference removes the colours it contributed, so the flats that
+// snapped to them are stale — the server says so and `render` follows.
+$("refs").addEventListener("click", (event) => {
+  const id = event.target.dataset.id;
+  if (!id || event.target.tagName !== "BUTTON") return;
+  step("Removing reference", `/api/reference/${id}`, { method: "DELETE" });
+});
 
 const buttons = {
   "btn-panels": ["/api/panels", "Detecting panels"],
