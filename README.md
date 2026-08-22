@@ -340,6 +340,33 @@ face can retrieve something that is not a face. Uploading a finished page now
 splits it into its panels for this reason; cropping further, to character
 scale, is still the artist's call.
 
+**Dropping duplicate tiles is not what makes a page bland.** Tested because it
+looked like the obvious suspect: `_subject_tiles` skips a window overlapping a
+kept one by more than `_SUBJECT_MAX_OVERLAP`, and a starved retrieval pool
+would explain washed-out colour. It does not. On `diagonal_page.jpg` with
+`laurine_ref.jpg`, filter on against filter off moved the page by 0.03 mean
+CIELAB chroma — 5.78 to 5.81, where a saturated comic colour is 40 to 80 — and
+the only pixels that changed at all were in the one panel whose aspect makes
+the filter alter which tiles are chosen. The rest of the page came back
+byte-identical, because `_TILE_BUDGET` takes the first six windows and the
+dropped ones fall outside that six. The filter changes *which* tiles, never how
+many.
+
+The same run says where to look instead. That page's top panel measured 14.79
+chroma and its five diamond panels 2.46: the panels that come back grey are the
+non-rectangular ones, which reach the model masked to their polygon and then
+letterboxed, so most of what the DiT sees is white. Two knobs are left behind
+for the next attempt, both defaulting to today's behaviour and read at call
+time: `COMICCOLOR_TILE_OVERLAP=1.1` keeps every window, `COMICCOLOR_TILE_BUDGET`
+raises the ceiling.
+
+**References accumulate, and that is the plan.** The first page of a book is
+expensive: one character sheet, and a lot of correcting. Every panel coloured
+after that is a finished panel of *this* book in *this* colour world, and it
+goes back into the pool as a reference — which is why uploading a finished page
+splits it into panels rather than storing it whole. The pipeline gets better
+across a book by being used, not by being tuned.
+
 **Colour hints propagate, but not reliably.** A hint filled a whole ink-bounded
 region in one test and only tinted it in another. When measuring one, sample
 *outside* the hinted rectangle — inside it the colour is whatever was painted

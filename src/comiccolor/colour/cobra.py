@@ -52,6 +52,7 @@ from __future__ import annotations
 import sys
 from contextlib import contextmanager
 from dataclasses import dataclass
+import os
 from pathlib import Path
 
 import cv2
@@ -141,6 +142,23 @@ _SUBJECT_MAX_OVERLAP = 0.6
 # Below this many drawings the sheet is not a montage -- one big drawing, or a
 # photograph -- and the grid is the honest fallback.
 _MIN_SUBJECTS = 2
+
+
+# Both knobs above are read through these, not used directly, so a run can
+# change them without a code edit. `COMICCOLOR_TILE_OVERLAP=1.1` keeps every
+# window a sheet offers, since IoU never exceeds 1; `COMICCOLOR_TILE_BUDGET=12`
+# raises the ceiling on how many tiles one reference contributes. They exist to
+# answer one question — whether the retrieval pool is what makes a page come
+# back bland — and the answer belongs in `reports/`, not in a default.
+def _max_overlap() -> float:
+    return float(os.environ.get("COMICCOLOR_TILE_OVERLAP", _SUBJECT_MAX_OVERLAP))
+
+
+def _budget_for(kind: str) -> int:
+    override = os.environ.get("COMICCOLOR_TILE_BUDGET")
+    if override:
+        return int(override)
+    return _TILE_BUDGET.get(kind, _TILE_BUDGET["sheet"])
 
 
 def _letterbox(image, target_w: int, target_h: int):
@@ -272,7 +290,7 @@ def _subject_tiles(image, target_w: int, target_h: int, budget: int) -> list:
     kept: list = []
     for subject in found:
         window = _window_for(subject, target_ratio, image.size)
-        if any(_overlap(window, other) > _SUBJECT_MAX_OVERLAP for other in kept):
+        if any(_overlap(window, other) > _max_overlap() for other in kept):
             continue
         kept.append(window)
         if len(kept) >= budget:
@@ -525,7 +543,7 @@ class CobraProposer:
                 Image.fromarray(reference.pixels).convert("RGB"),
                 target_w,
                 target_h,
-                _TILE_BUDGET.get(reference.kind, _TILE_BUDGET["sheet"]),
+                _budget_for(reference.kind),
                 reference.kind,
             )
 
