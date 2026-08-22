@@ -42,7 +42,15 @@ def _sheet(path, colours=((200, 30, 40), (30, 90, 200))):
 def _ready(tmp_path, with_sheet=True):
     session = Session(tmp_path / "work")
     if with_sheet:
-        session.add_reference(_sheet(tmp_path / "sheet.png"), original_name="sheet.png")
+        # A reference offers colours; the palette is what the artist took.
+        # These tests want the whole sheet in, which is a choice they have to
+        # make like anyone else.
+        colours = session.add_reference(
+            _sheet(tmp_path / "sheet.png"), original_name="sheet.png"
+        )
+        reference_id = session.reference_store.list()[-1].id
+        for rgb in colours:
+            session.include_candidate(reference_id, rgb)
     session.load_page(_page(tmp_path / "page.png"), original_name="page.png")
     session.detect_panels()
     session.segment_zones()
@@ -63,8 +71,8 @@ def test_flats_never_snap(tmp_path):
     assert not any(segment.snapped for segment in session.segments)
 
     entry_ids = {segment.palette_entry_id for segment in session.segments}
-    reference_ids = {entry.id for entry in session._reference_palette}
-    assert not (entry_ids & reference_ids), "a segment was snapped by generate_flats"
+    chosen_ids = {entry.id for entry in session._palette}
+    assert not (entry_ids & chosen_ids), "a segment was snapped by generate_flats"
 
 
 def test_each_segment_keeps_its_own_entry(tmp_path):
@@ -95,7 +103,7 @@ def test_snapping_one_segment_moves_only_that_segment(tmp_path):
     session = _ready(tmp_path)
     target = max(session.segments, key=lambda s: s.area)
     others = {s.key: s.palette_entry_id for s in session.segments if s.key != target.key}
-    entry_id = session._reference_palette[0].id
+    entry_id = session._palette[0].id
 
     session.snap_segment(target.panel, target.label, entry_id)
 
@@ -111,7 +119,7 @@ def test_a_snap_can_be_undone(tmp_path):
     target = session.segments[0]
     original = target.palette_entry_id
 
-    session.snap_segment(target.panel, target.label, session._reference_palette[0].id)
+    session.snap_segment(target.panel, target.label, session._palette[0].id)
     session.unsnap_segment(target.panel, target.label)
 
     assert target.palette_entry_id == original
@@ -132,7 +140,7 @@ def test_the_suggestion_never_offers_the_segment_itself(tmp_path):
     entry, distance = session.snap_suggestion(segment)
 
     assert entry is not None
-    assert entry.id in {e.id for e in session._reference_palette}
+    assert entry.id in {e.id for e in session._palette}
     assert distance > 0
 
 
@@ -147,14 +155,14 @@ def test_snap_all_respects_the_threshold(tmp_path):
 
 
 def test_snap_all_without_a_threshold_snaps_everything(tmp_path):
-    """The deliberate override — every segment onto its nearest reference colour."""
+    """The deliberate override — every segment onto its nearest palette colour."""
     session = _ready(tmp_path)
 
     result = session.snap_all(threshold=None)
 
     assert result["snapped"] == len(session.segments)
-    reference_ids = {entry.id for entry in session._reference_palette}
-    assert all(s.palette_entry_id in reference_ids for s in session.segments)
+    chosen_ids = {entry.id for entry in session._palette}
+    assert all(s.palette_entry_id in chosen_ids for s in session.segments)
 
 
 def test_snap_all_goes_through_the_same_door_as_a_click(tmp_path):

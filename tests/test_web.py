@@ -134,7 +134,7 @@ def test_rerunning_a_step_invalidates_what_depended_on_it(client, page):
 
 def test_a_swatch_gives_the_page_a_palette_to_snap_to(client, page, swatch):
     upload(client, "/api/page", page)
-    state = upload(client, "/api/reference", swatch).json()
+    state = _take_every_colour(client, upload(client, "/api/reference", swatch).json())
     assert len(state["palette"]) >= 2
 
     client.post("/api/panels")
@@ -277,11 +277,121 @@ def test_a_bubble_can_be_traced_corrected_and_removed(client, page):
     assert len(removed.json()["protected"]) == len(protected) - 1
     assert client.delete(f"/api/bubble/{index}").status_code == 409
 
+# -- the palette, as its own thing ------------------------------------------
+
+
+def _palette_of(state):
+    return [e for e in state["palette"] if e["source"] == "palette"]
+
+
+def test_changing_a_palette_colour_repaints_every_zone_holding_it(
+    client, page, tmp_path
+):
+    """Rule 1, as the thing the artist actually feels.
+
+    A zone stores `palette_entry_id` and never an RGB, so changing the entry
+    is the repaint — no re-segmentation, no re-proposal, and the snapped
+    zones stay snapped to the colour they were pointed at.
+    """
+    state = _through_flats(client, page, tmp_path)
+    entry = _palette_of(state)[0]
+
+    snapped = client.post("/api/snap-all?threshold=inf").json()
+    assert snapped["result"]["snapped"] > 0
+    before = client.get("/api/flats.png").content
+
+    recoloured = client.put(f"/api/palette/{entry['id']}", json={"rgb": [7, 240, 13]})
+    assert recoloured.status_code == 200
+    assert [e for e in recoloured.json()["palette"] if e["id"] == entry["id"]][0][
+        "rgb"
+    ] == [7, 240, 13]
+
+    # Still snapped, still the same segments — only the colour moved.
+    assert recoloured.json()["segments"]["snapped"] == snapped["segments"]["snapped"]
+    assert client.get("/api/flats.png").content != before
+
+
+def test_a_colour_that_is_not_a_colour_is_refused(client, page, tmp_path):
+    state = _through_flats(client, page, tmp_path)
+    entry = _palette_of(state)[0]
+    off_scale = client.put(f"/api/palette/{entry['id']}", json={"rgb": [7, 300, 13]})
+    assert off_scale.status_code == 409
+    assert "r,g,b" in off_scale.json()["error"]
+    assert client.put("/api/palette/9999", json={"rgb": [7, 24, 13]}).status_code == 409
+
+
+def test_dropping_a_colour_unsnaps_what_was_pointed_at_it(client, page, tmp_path):
+    """A zone cannot hold an id that is gone, so it goes back to what the
+    model proposed — the same thing Undo does, done for the artist."""
+    state = _through_flats(client, page, tmp_path)
+    entry = _palette_of(state)[0]
+    client.post("/api/snap-all?threshold=inf")
+
+    segment = client.get("/api/segments?limit=1").json()["segments"][0]
+    client.post(
+        f"/api/segment/{segment['panel']}/{segment['label']}/snap?entry_id={entry['id']}"
+    )
+
+    dropped = client.delete(f"/api/palette/{entry['id']}").json()
+    assert not [e for e in dropped["palette"] if e["id"] == entry["id"]]
+
+    back = client.get(f"/api/segment?x={segment['anchor'][0]}&y={segment['anchor'][1]}").json()
+    assert back["palette_entry_id"] != entry["id"]
+    assert back["snapped"] is False
+
+
+def test_a_colour_the_reference_does_not_have_is_refused(client, tmp_path):
+    state = _add_reference(client, _sheet(tmp_path / "sheet.png")).json()
+    reference_id = state["references"][0]["id"]
+    refused = client.post(
+        "/api/palette", json={"reference_id": reference_id, "rgb": [1, 2, 3]}
+    )
+    assert refused.status_code == 409
+    assert "not one of this reference" in refused.json()["error"]
+
+
+def test_a_palette_image_needs_no_clicking(client, tmp_path):
+    """Upload, and the colours are in. No chips, and not a reference."""
+    swatches = _sheet(tmp_path / "swatches.png")
+    with swatches.open("rb") as handle:
+        state = client.post(
+            "/api/palette/image",
+            files={"file": (swatches.name, handle, "image/png")},
+        ).json()
+
+    assert len(state["palettes"]) == 1
+    assert state["references"] == [], "a palette image is not a reference"
+    assert len(_palette_of(state)) == len(state["palettes"][0]["colours"])
+
+
+def test_removing_a_palette_leaves_the_colours_picked_from_a_sheet(client, tmp_path):
+    sheet = _add_reference(client, _sheet(tmp_path / "sheet.png")).json()
+    candidate = sheet["references"][0]["candidates"][0]
+    kept = client.post(
+        "/api/palette",
+        json={"reference_id": sheet["references"][0]["id"], "rgb": candidate["rgb"]},
+    ).json()["entry_id"]
+
+    swatches = _sheet(tmp_path / "swatches.png")
+    with swatches.open("rb") as handle:
+        state = client.post(
+            "/api/palette/image",
+            files={"file": (swatches.name, handle, "image/png")},
+        ).json()
+    assert len(_palette_of(state)) > 1
+
+    dropped = client.request(
+        "DELETE", f"/api/reference/{state['palettes'][0]['id']}"
+    ).json()
+    assert [e["id"] for e in _palette_of(dropped)] == [kept]
+    assert dropped["palettes"] == []
+
+
 # -- step 6, the way the browser presses it ---------------------------------
 
 
 def _through_flats(client, page, tmp_path):
-    _add_reference(client, _sheet(tmp_path / "sheet.png"))
+    _take_every_colour(client, _add_reference(client, _sheet(tmp_path / "sheet.png")).json())
     upload(client, "/api/page", page)
     client.post("/api/panels")
     client.post("/api/zones")
@@ -302,7 +412,7 @@ def test_the_sidebar_can_count_what_step_six_has_left(client, page, tmp_path):
     assert segments["threshold"] > 0
 
     sources = {entry["source"] for entry in state["palette"]}
-    assert sources == {"reference", "proposed"}
+    assert sources == {"palette", "proposed"}
 
 
 def test_clicking_a_zone_snaps_it_and_unsnapping_puts_it_back(client, page, tmp_path):
@@ -399,6 +509,18 @@ def _add_reference(client, path, kind="sheet"):
         )
 
 
+def _take_every_colour(client, state):
+    """Choose the whole of every reference's offer, the way clicking each chip
+    would. Upload extracts; only this puts anything in the palette."""
+    for reference in state["references"]:
+        for candidate in reference["candidates"]:
+            state = client.post(
+                "/api/palette",
+                json={"reference_id": reference["id"], "rgb": candidate["rgb"]},
+            ).json()
+    return state
+
+
 def test_reference_round_trip_over_http(tmp_path, client):
     """Upload, see it listed with its kind, fetch its thumbnail, delete it.
     Rule 3: a route with no way to reach it is a feature that does not exist,
@@ -410,17 +532,29 @@ def test_reference_round_trip_over_http(tmp_path, client):
     state = response.json()
     assert len(state["references"]) == 1
     assert state["references"][0]["kind"] == "page"
-    assert state["palette"], "a sheet with three colour bands must yield colours"
+    assert state["palette"] == [], "an upload put colours in the palette by itself"
+
+    candidates = state["references"][0]["candidates"]
+    assert candidates, "a sheet with three colour bands must offer colours"
+    assert all(candidate["entry_id"] is None for candidate in candidates)
 
     reference_id = state["references"][0]["id"]
     thumbnail = client.get(f"/api/reference/{reference_id}.png")
     assert thumbnail.status_code == 200
     assert thumbnail.headers["content-type"] == "image/png"
 
+    taken = client.post(
+        "/api/palette",
+        json={"reference_id": reference_id, "rgb": candidates[0]["rgb"]},
+    ).json()
+    assert len(taken["palette"]) == 1
+    assert taken["references"][0]["candidates"][0]["entry_id"] == taken["entry_id"]
+
     deleted = client.request("DELETE", f"/api/reference/{reference_id}")
     assert deleted.status_code == 200
     assert deleted.json()["references"] == []
-    assert deleted.json()["palette"] == []
+    # The image is gone; the colour taken from it is the artist's and stays.
+    assert len(deleted.json()["palette"]) == 1
 
 
 def test_deleting_an_absent_reference_is_404(client):

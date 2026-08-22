@@ -36,6 +36,19 @@ class Shape(BaseModel):
 
     polygon: list[tuple[int, int]]
 
+
+class Colour(BaseModel):
+    """One colour, as the picker left it."""
+
+    rgb: tuple[int, int, int]
+
+
+class Pick(BaseModel):
+    """One of a reference's extracted colours, chosen for the palette."""
+
+    reference_id: int
+    rgb: tuple[int, int, int]
+
 _STATIC = Path(__file__).parent / "static"
 
 def _build_proposer():
@@ -242,6 +255,52 @@ def create_app(
         thumbnail.save(buffer, format="PNG")
         return Response(buffer.getvalue(), media_type="image/png")
 
+    @app.post("/api/palette/image")
+    def upload_palette(file: UploadFile):
+        """A palette image: every colour in it, straight into the palette.
+
+        The other door. A character sheet is a drawing whose colours are a
+        proposal; a palette is the decision already made, so there is nothing
+        to confirm. It is never shown to the proposer.
+        """
+        name = file.filename or "palette.png"
+        with tempfile.NamedTemporaryFile(
+            delete=False, suffix=Path(name).suffix, dir=session.workdir
+        ) as handle:
+            shutil.copyfileobj(file.file, handle)
+            staged = Path(handle.name)
+        try:
+            session.add_palette(staged, original_name=name)
+        except EmptyImageError as exc:
+            raise HTTPException(422, f"no colours in that image: {exc}") from exc
+        except (OSError, ValueError) as exc:
+            raise HTTPException(422, f"could not read that image: {exc}") from exc
+        finally:
+            staged.unlink(missing_ok=True)
+        return session.state()
+
+    @app.post("/api/palette")
+    def include_colour(pick: Pick):
+        """Take one of a reference's colours into the palette."""
+        entry = session.include_candidate(pick.reference_id, pick.rgb)
+        return {**session.state(), "entry_id": entry.id}
+
+    @app.put("/api/palette/{entry_id}")
+    def recolour(entry_id: int, colour: Colour):
+        """Change a palette colour — and with it every zone holding that id.
+
+        No re-segmentation and no invalidation: the flats raster and the PSD
+        both resolve through the palette when they are asked for, so one row
+        changing is the whole repaint (rule 1).
+        """
+        session.set_palette_colour(entry_id, colour.rgb)
+        return session.state()
+
+    @app.delete("/api/palette/{entry_id}")
+    def drop_colour(entry_id: int):
+        session.delete_palette_entry(entry_id)
+        return session.state()
+
     # -- 5. flats --------------------------------------------------------
 
     @app.post("/api/flats")
@@ -336,7 +395,11 @@ def create_app(
     @app.post("/api/snap-all")
     def snap_all(threshold: float | None = SNAP_MAX_DELTA):
         """The bulk shortcut. `threshold` of null ignores the guard entirely."""
-        return {**session.state(), "result": session.snap_all(threshold)}
+        # Snap first, then read the state: inside one dict literal the state
+        # is built before the call that changes it, and the sidebar ends up
+        # reporting the page as it was a moment before the artist pressed.
+        result = session.snap_all(threshold)
+        return {**session.state(), "result": result}
 
     # -- 7. export -------------------------------------------------------
 

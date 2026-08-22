@@ -325,26 +325,8 @@ function apply() {
     : "";
   $("zones-note").textContent = done.zones ? `${zones} zones across the page.` : "";
 
-  const references = state.palette.filter((e) => e.source === "reference");
-  const proposed = state.palette.length - references.length;
-  $("ref-note").textContent = references.length
-    ? `${state.references.length} reference(s), ${references.length} colours — zones snap to these.`
-    : "No palette — every zone gets its own colour.";
-  $("refs").innerHTML = state.references
-    .map(
-      (r) => `<figure data-id="${r.id}">
-        <img src="/api/reference/${r.id}.png" alt="${r.label}">
-        <figcaption>${r.kind}</figcaption>
-        <button class="x" data-id="${r.id}" title="Remove ${r.label}">&times;</button>
-      </figure>`
-    )
-    .join("");
-  // Only the reference half is shown. The proposed half is one private entry
-  // per segment — on a real page that is hundreds of swatches, and none of
-  // them is a colour the artist chose.
-  $("palette").innerHTML = references
-    .map((e) => `<i style="background: ${rgb(e.rgb)}" title="${e.label}"></i>`)
-    .join("");
+  applyPalette();
+  const proposed = state.palette.length - chosen().length;
 
   // A click only means something once there are segments under it.
   stage.classList.toggle("pickable", done.flats);
@@ -354,6 +336,140 @@ function apply() {
   showInspector();
   render();
 }
+
+// ---- the palette, and the references that offer colours to it -------------
+//
+// Two different things, and the sidebar has to say so. A reference is an
+// image: Cobra is shown it, and colours are *found* in it. The palette is the
+// artist's list, and nothing lands in it without a click. The chips under a
+// thumbnail are that click — every colour the image offers, lit when it has
+// been taken.
+
+// The artist's half of the palette. The other half is one private entry per
+// segment, which is hundreds of swatches on a real page and not one of them a
+// colour anybody chose.
+const chosen = () => state.palette.filter((entry) => entry.source === "palette");
+
+const hex = (colour) =>
+  "#" + colour.map((part) => part.toString(16).padStart(2, "0")).join("");
+
+function applyPalette() {
+  const taken = chosen();
+  const offered = state.references.reduce((sum, r) => sum + r.candidates.length, 0);
+
+  $("ref-note").textContent = state.references.length
+    ? `${state.references.length} reference(s) shown to the model, ${offered} colours offered — click the ones this book uses.`
+    : "Shown to the model. Its colours are offered, not taken.";
+
+  // A palette image has no chips: every colour in it is already in, which is
+  // the difference between a decision and a proposal.
+  $("pal-note").textContent = state.palettes.length
+    ? `${state.palettes.length} palette image(s). Removing one takes its colours out again.`
+    : "An image of your swatches. Every colour in it joins the palette.";
+  $("palettes").innerHTML = state.palettes
+    .map(
+      (p) => `<figure data-id="${p.id}">
+        <img src="/api/reference/${p.id}.png" alt="${p.label}">
+        <figcaption>${p.colours.length} colours</figcaption>
+        <button class="x" data-id="${p.id}" title="Remove ${p.label} and its colours">&times;</button>
+      </figure>`
+    )
+    .join("");
+
+  $("refs").innerHTML = state.references
+    .map(
+      (r) => `<figure data-id="${r.id}">
+        <img src="/api/reference/${r.id}.png" alt="${r.label}">
+        <figcaption>${r.kind}</figcaption>
+        <button class="x" data-id="${r.id}" title="Remove ${r.label}">&times;</button>
+        <div class="chips">${r.candidates
+          .map(
+            (c) => `<i class="${c.entry_id === null ? "" : "on"}"
+              style="background: ${rgb(c.rgb)}"
+              data-ref="${r.id}" data-rgb="${c.rgb.join(",")}"
+              data-entry="${c.entry_id === null ? "" : c.entry_id}"
+              title="${c.entry_id === null ? "Add to the palette" : "Take out of the palette"}"></i>`
+          )
+          .join("")}</div>
+      </figure>`
+    )
+    .join("");
+
+  // A palette swatch is a colour input, because changing a colour here changes
+  // it on every zone holding that entry — one row, the whole page (rule 1).
+  $("palette").innerHTML = taken
+    .map(
+      (e) => `<span class="swatch">
+        <input type="color" value="${hex(e.rgb)}" data-id="${e.id}" title="${e.label}">
+        <button class="x" data-id="${e.id}" title="Remove ${e.label} from the palette">&times;</button>
+      </span>`
+    )
+    .join("");
+
+  $("palette-note").textContent = taken.length
+    ? "Click a colour to change it everywhere it is used."
+    : offered
+      ? "Nothing in the palette yet — a reference's colours are only offered."
+      : "";
+}
+
+// Chips add and remove; the palette is never a side effect of an upload.
+$("refs").addEventListener("click", (event) => {
+  const chip = event.target;
+  if (chip.tagName !== "I" || !chip.dataset.ref) return;
+  if (chip.dataset.entry) {
+    dropColour(chip.dataset.entry);
+    return;
+  }
+  takeColour(Number(chip.dataset.ref), chip.dataset.rgb.split(",").map(Number));
+});
+
+async function takeColour(reference_id, colour) {
+  try {
+    await adopt(
+      await call("/api/palette", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ reference_id, rgb: colour }),
+      })
+    );
+    say("Colour added to the palette.");
+  } catch (error) {
+    say(error.message, true);
+  }
+}
+
+async function dropColour(entryId) {
+  try {
+    await adopt(await call(`/api/palette/${entryId}`, { method: "DELETE" }));
+    say("Colour taken out — zones snapped to it went back to what was proposed.");
+  } catch (error) {
+    say(error.message, true);
+  }
+}
+
+$("palette").addEventListener("change", async (event) => {
+  const input = event.target;
+  if (input.type !== "color") return;
+  const value = input.value;
+  const colour = [1, 3, 5].map((at) => parseInt(value.slice(at, at + 2), 16));
+  try {
+    await adopt(
+      await call(`/api/palette/${input.dataset.id}`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ rgb: colour }),
+      })
+    );
+    say("Colour changed on every zone holding it.");
+  } catch (error) {
+    say(error.message, true);
+  }
+});
+
+$("palette").addEventListener("click", (event) => {
+  if (event.target.tagName === "BUTTON") dropColour(event.target.dataset.id);
+});
 
 // The "Correct" panel is the whole announcement that geometry is editable:
 // it appears when a layer can be corrected, names the gestures, and goes away
@@ -771,7 +887,7 @@ function showInspector() {
     : "Nothing to snap to";
   $("ins-unsnap").disabled = !selected.snapped;
 
-  const references = state.palette.filter((e) => e.source === "reference");
+  const references = chosen();
   $("ins-pick-note").hidden = !references.length;
   $("ins-palette").innerHTML = references
     .map(
@@ -887,13 +1003,21 @@ upload($("page-file"), "/api/page", "Loading page");
 upload($("ref-file"), "/api/reference", "Reading colours", () => ({
   kind: $("ref-kind").value,
 }));
+upload($("pal-file"), "/api/palette/image", "Taking the palette");
 
-// Removing a reference removes the colours it contributed, so the flats that
-// snapped to them are stale — the server says so and `render` follows.
+// Deleting a reference deletes the image, not the colours taken from it: the
+// flats are stale all the same, because the proposal came from an image that
+// is no longer there.
 $("refs").addEventListener("click", (event) => {
   const id = event.target.dataset.id;
   if (!id || event.target.tagName !== "BUTTON") return;
   step("Removing reference", `/api/reference/${id}`, { method: "DELETE" });
+});
+
+$("palettes").addEventListener("click", (event) => {
+  const id = event.target.dataset.id;
+  if (!id || event.target.tagName !== "BUTTON") return;
+  step("Removing palette", `/api/reference/${id}`, { method: "DELETE" });
 });
 
 const buttons = {

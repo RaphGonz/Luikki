@@ -18,6 +18,7 @@ re-running a step replaces its output, so each step clears what depended on it.
 
 from __future__ import annotations
 
+import json
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -32,7 +33,7 @@ from ..colour.proposer import (
     PanelRequest,
     ReferenceImage,
 )
-from ..colour.references import Reference, ReferenceStore
+from ..colour.references import PALETTE_KIND, Reference, ReferenceStore
 from ..colour.segments import Segment, build_segments
 from ..colour.snap import SNAP_MAX_DELTA, assign_zones, nearest_entry
 from ..export.psd import PanelFlats, flats_preview, write_psd
@@ -68,6 +69,14 @@ class PanelState:
             return 0
         present = np.unique(self.label_map)
         return int((present != UNASSIGNED).sum())
+
+
+def _rgb(value) -> tuple[int, int, int]:
+    """Three channels, 0-255, from whatever the wire or the store sent."""
+    channels = tuple(int(part) for part in value)
+    if len(channels) != 3 or any(not 0 <= part <= 255 for part in channels):
+        raise StepError(f"{value!r} is not an r,g,b colour.")
+    return channels
 
 
 class StepError(RuntimeError):
@@ -114,8 +123,12 @@ class Session:
         # Built before `reset`, and deliberately not touched by it: the
         # reference pool belongs to the book, not to the page in flight.
         self.reference_store = ReferenceStore(self.workdir / "references")
+        # reference id -> the colours found in it, cached; and
+        # (reference id, rgb) -> the palette entry the artist made from it.
+        self._candidates: dict[int, list[tuple[int, int, int]]] = {}
+        self._taken: dict[tuple[int, tuple[int, int, int]], int] = {}
+        self._load_palette()
         self.reset()
-        self._rebuild_reference_palette()
 
     # -- state -----------------------------------------------------------
 
@@ -130,14 +143,11 @@ class Session:
         self._structural: np.ndarray | None = None
         self.panels: list[PanelState] = []
         self.protected: list[list[tuple[int, int]]] = []
-        # Palette in two halves. The reference half is derived — delete a
-        # character sheet and its colours go with it — while the created half
-        # is what `generate_flats` invented for zones that matched nothing.
-        # One list would mean a reference deletion silently dropped the other
-        # kind, or that rebuilding after a deletion could not be done at all.
-        self._reference_palette: list[PaletteEntry] = []
+        # The palette itself is not reset: it belongs to the book, like the
+        # references, and outlives both the page and the process. What is
+        # page-scoped is the private entry `generate_flats` gives every zone
+        # that no colour was chosen for — those go with the page they describe.
         self._created_palette: list[PaletteEntry] = []
-        self._next_entry_id = 1
         # Tracked apart from `self.protected` because a page with no bubbles
         # on it is a legitimate outcome of pressing the button, not a step
         # that never ran.
@@ -161,17 +171,7 @@ class Session:
         """Replaces everything. A new page is a new session."""
         with self.lock:
             line_mask, grey = load_line_art(path)
-            # The palette belongs to the book, not the page, so dropping in
-            # the next page must not throw it away. The references themselves
-            # need no carrying: they are on disk.
-            reference_palette = self._reference_palette
-            created_palette = self._created_palette
-            next_id = self._next_entry_id
             self.reset()
-            self._reference_palette = reference_palette
-            self._created_palette = created_palette
-            self._next_entry_id = next_id
-
             self.source = Path(path)
             self.original_name = original_name or Path(path).name
             self.line_mask = line_mask
@@ -451,6 +451,7 @@ class Session:
                 label=reference.label,
             )
             for reference in self.reference_store
+            if reference.kind != PALETTE_KIND
         ]
 
     def _line_art_for(self, panel: PanelState) -> np.ndarray:
@@ -491,74 +492,241 @@ class Session:
         return protected | ~inside
 
     # -- palette / references --------------------------------------------
+    #
+    # A reference and the palette are two different things, and conflating
+    # them was costing the artist both. A reference is an image: it is what
+    # Cobra is shown, and it is where candidate colours are *found*. The
+    # palette is the artist's list: it is what zones snap to, and nothing
+    # reaches it without being chosen.
+    #
+    # The palette used to be re-derived from the references on every change,
+    # which made two things impossible at once — keeping a colour whose
+    # reference had been deleted, and editing a colour at all, since the next
+    # rebuild would put it back. So the palette is now held, not derived, and
+    # ids are handed out once and never renumbered: a zone stores an id, and
+    # an id that means a different colour tomorrow is worse than no id at all.
 
     def add_reference(
         self, path: str | Path, original_name: str = "", kind: str = "sheet"
-    ) -> list[PaletteEntry]:
-        """One upload, two jobs: palette colours out, Cobra reference in.
-
-        The barebone app has no separate swatch and character-sheet inputs
-        (features 18 and 19 collapse to one) — the same image is where the
-        colours come from and what the model is shown.
+    ) -> list[tuple[int, int, int]]:
+        """Store a drawing and read its colours out. Neither joins the palette.
 
         `kind` is `page`, `panel` or `sheet`. It changes nothing here; it is
         recorded because the proposal-time fitting step needs it and only the
         artist knows it.
+
+        A character sheet is a drawing that happens to contain colours, so
+        which of them the book actually uses is a judgement — the extraction
+        offers, the artist chooses. That is the whole difference from
+        `add_palette`, where choosing has already happened.
+        """
+        if kind == PALETTE_KIND:
+            raise StepError("A palette image goes in through Add palette.")
+        with self.lock:
+            reference = self.reference_store.add(
+                path, label=original_name or Path(path).name, kind=kind
+            )
+            return self.candidates(reference.id)
+
+    def add_palette(self, path: str | Path, original_name: str = "") -> list[PaletteEntry]:
+        """Store a palette image and take every colour in it.
+
+        Same extraction as a character sheet's, without the choosing: a
+        palette *is* the artist's decision about which colours this book uses,
+        already made, in the file. Asking them to confirm each swatch of a
+        strip they made on purpose is asking them to do the same work twice.
+
+        It is not shown to the proposer. See `references.PALETTE_KIND`.
         """
         with self.lock:
-            self.reference_store.add(path, label=original_name or Path(path).name, kind=kind)
-            return self._rebuild_reference_palette()
+            reference = self.reference_store.add(
+                path, label=original_name or Path(path).name, kind=PALETTE_KIND
+            )
+            return [
+                self.include_candidate(reference.id, rgb)
+                for rgb in self.candidates(reference.id)
+            ]
 
     def remove_reference(self, reference_id: int) -> bool:
-        """Delete a reference and the colours it contributed.
+        """Delete an image, and the colours it is answerable for.
 
-        Colours `generate_flats` invented for unmatched zones are kept: they
-        were never this reference's to give. The flats themselves are stale
-        either way, since the palette zones snapped to has changed (rule 4).
+        A palette image *is* its colours, so they go with it. A character
+        sheet is not: the artist picked those colours out of a drawing one at
+        a time, and deleting the drawing must not silently repaint every zone
+        snapped to them — that is a page-wide change made by a click that said
+        nothing about colour.
+
+        Only a reference invalidates the flats, and for a different reason
+        again: the proposal came from an image that is no longer there
+        (rule 4). A palette image was never shown to the proposer.
         """
         with self.lock:
-            if not self.reference_store.remove(reference_id):
+            reference = self.reference_store.get(reference_id)
+            if reference is None or not self.reference_store.remove(reference_id):
                 return False
-            self._rebuild_reference_palette()
-            self._flats_done = False
+            self._candidates.pop(reference_id, None)
+
+            if reference.kind == PALETTE_KIND:
+                for (owner, _), entry_id in list(self._taken.items()):
+                    if owner == reference_id:
+                        self.delete_palette_entry(entry_id)
+            else:
+                self._flats_done = False
             return True
 
-    def _rebuild_reference_palette(self) -> list[PaletteEntry]:
-        """Re-extract the palette from every stored reference, in id order.
+    def palette_images(self) -> list[Reference]:
+        return [r for r in self.reference_store if r.kind == PALETTE_KIND]
 
-        Rebuilding rather than patching is what makes deletion honest: there
-        is no record of which entry came from which image, and inventing one
-        would be a second source of truth. `extract_palette` is median cut,
-        so the same files in the same order give the same colours every time
-        — including across a restart, which is why the palette does not need
-        persisting separately.
+    def candidates(self, reference_id: int) -> list[tuple[int, int, int]]:
+        """The colours found in one reference, in extraction order.
+
+        Cached because `extract_palette` is a median cut over a full-size
+        image and `state()` is called after every button. Deterministic, so
+        the cache can never disagree with a re-extraction — it only skips it.
         """
-        self._reference_palette = []
-        self._next_entry_id = 1
-        for reference in self.reference_store:
-            image = Image.fromarray(self.reference_store.image(reference.id))
-            for colour in extract_palette(image, sheet_mode=True):
-                self._reference_palette.append(
-                    PaletteEntry(
-                        project_id=0,
-                        rgb=colour.rgb,
-                        label=f"colour {self._next_entry_id}",
-                        id=self._next_entry_id,
-                    )
-                )
-                self._next_entry_id += 1
+        with self.lock:
+            if reference_id not in self._candidates:
+                image = Image.fromarray(self.reference_store.image(reference_id))
+                self._candidates[reference_id] = [
+                    colour.rgb for colour in extract_palette(image, sheet_mode=True)
+                ]
+            return self._candidates[reference_id]
 
-        # Created entries are renumbered above them, so ids stay unique after
-        # a rebuild shortens or lengthens the reference half.
-        for entry in self._created_palette:
-            entry.id = self._next_entry_id
+    def include_candidate(self, reference_id: int, rgb) -> PaletteEntry:
+        """Put one of a reference's colours into the palette."""
+        with self.lock:
+            wanted = _rgb(rgb)
+            if wanted not in self.candidates(reference_id):
+                raise StepError("That colour is not one of this reference's.")
+            existing = self._taken.get((reference_id, wanted))
+            if existing is not None:
+                return self._entry(existing)
+
+            # Named after the image it came from: "colour 397" tells the
+            # artist nothing, and the id it is named after is an accident of
+            # how many zones the last page happened to have.
+            reference = self.reference_store.get(reference_id)
+            position = self.candidates(reference_id).index(wanted) + 1
+            entry = PaletteEntry(
+                project_id=0,
+                rgb=wanted,
+                label=f"{reference.label if reference else 'colour'} {position}",
+                id=self._next_entry_id,
+            )
             self._next_entry_id += 1
-        return list(self._reference_palette)
+            self._palette.append(entry)
+            self._taken[(reference_id, wanted)] = int(entry.id or 0)
+            self._save_palette()
+            return entry
+
+    def set_palette_colour(self, entry_id: int, rgb) -> PaletteEntry:
+        """Change what one palette entry *is*.
+
+        Every zone holding this id changes with it, everywhere on the page, in
+        one row — which is the whole reason regions store `palette_entry_id`
+        and never an RGB (rule 1). Nothing is invalidated and nothing is
+        re-segmented: the flats raster and the PSD are both resolved through
+        the palette at the moment they are asked for.
+        """
+        with self.lock:
+            entry = self._entry(entry_id)
+            entry.rgb = _rgb(rgb)
+            entry.revision += 1
+            self._save_palette()
+            return entry
+
+    def delete_palette_entry(self, entry_id: int) -> None:
+        """Take a colour out of the palette, and off every zone using it.
+
+        A zone cannot point at an entry that is gone, so the segments snapped
+        to it go back to the colour the model proposed for them. That is the
+        same thing `unsnap_segment` does, done for the artist rather than to
+        them.
+        """
+        with self.lock:
+            entry = self._entry(entry_id)
+            self._palette.remove(entry)
+            for key, taken in list(self._taken.items()):
+                if taken == entry_id:
+                    del self._taken[key]
+
+            for segment in self.segments:
+                if segment.palette_entry_id != entry_id:
+                    continue
+                original = self._auto_entry.get(segment.key)
+                if original is None:
+                    continue
+                segment.palette_entry_id = original
+                segment.snapped = False
+                self.panels[segment.panel].assignments[segment.label] = original
+            self._save_palette()
+
+    def _entry(self, entry_id: int) -> PaletteEntry:
+        for entry in self._palette:
+            if entry.id == entry_id:
+                return entry
+        raise StepError(f"No palette entry {entry_id}.")
+
+    # The palette outlives the page and the process, exactly as the reference
+    # pool does: it belongs to the book. Without this a restart would empty a
+    # palette the artist had built while leaving the references that fed it
+    # sitting on disk, which looks like a bug and is one.
+    @property
+    def _palette_path(self) -> Path:
+        return self.workdir / "palette.json"
+
+    def _save_palette(self) -> None:
+        self._palette_path.write_text(
+            json.dumps(
+                {
+                    "next_id": self._next_entry_id,
+                    "entries": [
+                        {"id": e.id, "rgb": list(e.rgb), "label": e.label,
+                         "revision": e.revision}
+                        for e in self._palette
+                    ],
+                    # Which reference each colour was taken from, so the chips
+                    # under it can show what is already in.
+                    "taken": [
+                        {"reference": ref, "rgb": list(rgb), "entry": entry}
+                        for (ref, rgb), entry in self._taken.items()
+                    ],
+                },
+                indent=1,
+            ),
+            encoding="utf-8",
+        )
+
+    def _load_palette(self) -> None:
+        self._palette = []
+        self._taken = {}
+        self._next_entry_id = 1
+        if not self._palette_path.exists():
+            return
+        try:
+            stored = json.loads(self._palette_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return  # A corrupt palette is an empty one, not a dead app.
+        self._palette = [
+            PaletteEntry(
+                project_id=0,
+                rgb=_rgb(entry["rgb"]),
+                label=entry.get("label", ""),
+                id=int(entry["id"]),
+                revision=int(entry.get("revision", 0)),
+            )
+            for entry in stored.get("entries", [])
+        ]
+        self._taken = {
+            (int(row["reference"]), _rgb(row["rgb"])): int(row["entry"])
+            for row in stored.get("taken", [])
+        }
+        self._next_entry_id = int(stored.get("next_id", 1))
 
     @property
     def palette(self) -> list[PaletteEntry]:
-        """What zones snap to: reference colours first, then invented ones."""
-        return [*self._reference_palette, *self._created_palette]
+        """What zones snap to, then the private entries flats invented."""
+        return [*self._palette, *self._created_palette]
 
     @property
     def references(self) -> list[np.ndarray]:
@@ -566,7 +734,7 @@ class Session:
 
     @property
     def reference_names(self) -> list[str]:
-        return [r.label for r in self.reference_store]
+        return [reference.label for reference in self.reference_store]
 
     @property
     def palette_by_id(self) -> dict[int, PaletteEntry]:
@@ -682,9 +850,9 @@ class Session:
         artist can see the number the old automatic snap decided on silently.
         """
         entry = self.palette_by_id.get(segment.palette_entry_id)
-        if entry is None or not self._reference_palette:
+        if entry is None or not self._palette:
             return None, float("inf")
-        return nearest_entry(entry.rgb, self._reference_palette)
+        return nearest_entry(entry.rgb, self._palette)
 
     def snap_segment(self, panel: int, label: int, entry_id: int | None = None) -> Segment:
         """Point one segment at a palette entry. A single-row change.
@@ -852,7 +1020,7 @@ class Session:
 
     def state(self) -> dict:
         with self.lock:
-            reference_ids = {e.id for e in self._reference_palette}
+            chosen = {e.id for e in self._palette}
             return {
                 "page": None
                 if self.line_mask is None
@@ -877,13 +1045,39 @@ class Session:
                         "id": e.id,
                         "rgb": list(e.rgb),
                         "label": e.label,
-                        "source": "reference" if e.id in reference_ids else "proposed",
+                        "source": "palette" if e.id in chosen else "proposed",
                     }
                     for e in self.palette
                 ],
+                # Each reference carries the colours found in it and, for
+                # each, the palette entry the artist made from it — or null.
+                # That pair is the whole of the chips under the thumbnail:
+                # what this image offers, and what has been taken.
                 "references": [
-                    {"id": r.id, "label": r.label, "kind": r.kind, "added": r.added}
+                    {
+                        "id": r.id,
+                        "label": r.label,
+                        "kind": r.kind,
+                        "added": r.added,
+                        "candidates": [
+                            {"rgb": list(rgb), "entry_id": self._taken.get((r.id, rgb))}
+                            for rgb in self.candidates(r.id)
+                        ],
+                    }
                     for r in self.reference_store
+                    if r.kind != PALETTE_KIND
+                ],
+                # A palette image has no chips to click: every colour in it is
+                # already in. What it shows is what it brought, and what
+                # deleting it would take away again.
+                "palettes": [
+                    {
+                        "id": r.id,
+                        "label": r.label,
+                        "added": r.added,
+                        "colours": [list(rgb) for rgb in self.candidates(r.id)],
+                    }
+                    for r in self.palette_images()
                 ],
                 # Which geometry the artist may still correct. Detection
                 # proposes it, they settle it, and once the zones are cut from
@@ -899,7 +1093,7 @@ class Session:
                 "segments": {
                     "count": len(self.segments),
                     "snapped": sum(1 for s in self.segments if s.snapped),
-                    "snappable": bool(self._reference_palette),
+                    "snappable": bool(self._palette),
                     "threshold": SNAP_MAX_DELTA,
                 },
                 "proposer": self.proposer.name,

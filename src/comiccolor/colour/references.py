@@ -42,9 +42,17 @@ from PIL import Image
 
 # `page` — a finished coloured page of this book, Cobra's own example input.
 # `panel` — one coloured panel.
-# `sheet` — a character sheet or colour swatch, the fallback when the book has
-# nothing coloured yet, and the case that needs tiling rather than cropping.
+# `sheet` — a character sheet, the fallback when the book has nothing coloured
+#   yet, and the case that needs tiling rather than cropping.
+#
+# `palette` is stored here too, because a palette image is an image and this is
+# what holds images — but it is not a reference and is deliberately absent from
+# `KINDS`. It is a strip of swatches, not a drawing: showing it to the proposer
+# would hand the model a grid of flat rectangles as an example of how this book
+# is coloured. `Session.reference_images` is where that separation is kept.
 KINDS = ("page", "panel", "sheet")
+PALETTE_KIND = "palette"
+STORED_KINDS = (*KINDS, PALETTE_KIND)
 
 INDEX_NAME = "index.json"
 
@@ -158,8 +166,8 @@ class ReferenceStore:
         never entering the index, rather than at the first press of Generate
         flats.
         """
-        if kind not in KINDS:
-            raise UnknownKind(f"kind must be one of {KINDS}, got {kind!r}")
+        if kind not in STORED_KINDS:
+            raise UnknownKind(f"kind must be one of {STORED_KINDS}, got {kind!r}")
 
         source = Path(source)
         with Image.open(source) as probe:

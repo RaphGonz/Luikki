@@ -14,13 +14,54 @@ Then open <http://127.0.0.1:8000>.
 | 2 Detect panels | gutter network → traced polygons, box fallback; corners then dragged | `segmentation/panels.py` |
 | 3 Detect bubbles | RT-DETR box → radial trace → polygon; corners then dragged | `segmentation/bubbles.py` |
 | 4 Segment zones | MangaLineExtraction → LineFiller trapped-ball, per panel | `extract/`, `segmentation/segmenter.py` |
+| Add reference | image for the model; its colours offered as chips | `colour/references.py` |
+| Add palette | image of swatches; every colour taken | `colour/extract.py` |
 | 5 Generate flats | proposer → per-segment mode, **no snap** | `colour/` |
 | 6 Snap | per segment, artist-driven; `snap all` for the bulk | `colour/segments.py` |
 | 7 Export PSD | group per panel, layer per colour | `export/psd.py` |
 
-Character sheet / swatch upload is optional and does two jobs at once: its
-colours become the palette that zones snap to, and the image itself is what
-the model is shown as reference.
+## The palette is not the references
+
+A reference is an image the model is shown. The palette is the artist's list
+of colours. They were one thing until now — the palette was re-derived from
+the references on every change — and that made two ordinary things
+impossible: keeping a colour whose reference had been deleted, and editing a
+colour at all, since the next rebuild put it back.
+
+There are two upload buttons, because there are two different things to
+upload:
+
+**Add reference** — a character sheet, a finished page, a finished panel.
+This is what Cobra is shown. Its colours are *extracted and offered*: chips
+under the thumbnail, dimmed until taken. Clicking one puts it in the palette,
+clicking a lit one takes it out. A drawing's colours are a proposal, because
+the extraction cannot tell the character's jacket from the wall behind it.
+
+**Add palette** — an image of your swatches. Same extraction, no chips: every
+colour in it goes straight into the palette. A palette *is* the decision about
+which colours this book uses, already made, in the file; confirming each
+swatch of a strip built on purpose is the same work twice. It is not shown to
+the proposer — a grid of flat rectangles is not an example of how a page is
+coloured (`references.PALETTE_KIND`).
+
+Deleting follows from that difference. Deleting a palette image takes its
+colours out with it. Deleting a reference leaves the palette alone: those
+colours were picked out of a drawing one at a time, and a click that said
+nothing about colour must not repaint every zone snapped to them. Either way,
+a colour leaving the palette un-snaps the zones that pointed at it — a zone
+cannot hold an id that is gone.
+
+**Clicking a palette swatch changes that colour everywhere it is used.** No
+re-segmentation, no re-proposal, no re-snapping: a zone stores a
+`palette_entry_id` and never an RGB, so the flats raster and the PSD both
+resolve through the palette at the moment they are asked for, and one row
+changing is the whole repaint. This is what rule 1 was for, and until the
+palette became editable there was nothing in the app that showed it.
+
+Ids are handed out once and never renumbered, and the palette is written to
+`palette.json` beside the reference pool — it belongs to the book, so it
+outlives the page and the process. An id that means a different colour
+tomorrow is worse than no id at all.
 
 ## Detection proposes the geometry, the artist settles it
 
@@ -248,8 +289,9 @@ region in one test and only tinted it in another. When measuring one, sample
 there, so the measurement always succeeds and means nothing.
 
 **Panels, balloons and colour are correctable in-app; zones are not.** Panel
-and balloon corners are draggable at steps 2 and 3, and clicking a zone at
-step 6 opens what the machine decided about it — the colour it holds, the
+and balloon corners are draggable at steps 2 and 3, a palette colour is
+editable wherever it is used, and clicking a zone at step 6 opens what the
+machine decided about it — the colour it holds, the
 nearest reference colour, and the distance between them — so snapping it, or
 putting the proposal back, is one click. What is still not correctable is the
 segmentation itself: no merging two zones, no cutting one in two. The answer
