@@ -12,10 +12,21 @@ active voice, one idea for each sentence, and the same word for the same thing.
 An artist gives the app one page of line art. The app divides the page into
 panels and into colour zones. The app then gives each zone a colour. The app
 writes a layered PSD file. The artist opens that file in Photoshop or in Clip
-Studio and corrects it there.
+Studio and finishes the page there.
 
-The app does not correct anything by itself. There is no editor in this
-version.
+The app does not correct anything by itself. The artist corrects it. Each
+stage gives a proposal, and the artist can refuse it:
+
+| Stage | What the artist corrects |
+|---|---|
+| 2 Detect panels | Drag a corner. Add a corner. Draw a panel. Delete a panel. |
+| 3 Detect bubbles | The same four actions, on the balloons. |
+| 4 Segment zones | Merge many zones into one. Cut one zone in two. |
+| Palette | Change a colour. Every zone with that colour changes. |
+| 6 Snap | Point one zone at one palette colour, or put the proposal back. |
+
+Each correction is possible at one stage only. The stage closes when the next
+stage uses its result. Section 4 gives the rule for each one.
 
 ## 2. How to run the app
 
@@ -45,15 +56,19 @@ Use these words only with these meanings. Do not rename them in the code.
 | palette entry | One colour with an id and a label. |
 | proposal | An RGB image. It says which colour each pixel must be. |
 | flats | The result: each zone points to one palette entry. |
+| segment | One zone after step 5. It holds the palette entry, the area, the box and one point inside the zone. |
+| candidate | One colour that a reference offers. It is not in the palette until the artist clicks it. |
+| palette image | An image of swatches. Every colour in it goes into the palette. |
 
 **Rule that you must not break:** a zone holds a `palette_entry_id`. A zone
 never holds an RGB value. This rule makes "change the hair colour on all
 pages" one change to one row.
 
-## 4. The six buttons
+## 4. The seven buttons
 
 Nothing runs by itself. The artist starts each step. If the artist runs a step
-again, the app deletes the results of all later steps.
+again, the app deletes the results of all later steps. A step that deletes
+work asks the artist first.
 
 | # | Button | Function | File |
 |---|---|---|---|
@@ -62,11 +77,16 @@ again, the app deletes the results of all later steps.
 | 3 | Detect bubbles | `detect_bubbles` (a model) | `segmentation/bubbles.py` |
 | 4 | Segment zones | `LineFillerSegmenter.segment` | `segmentation/segmenter.py` |
 | 5 | Generate flats | `propose` then `assign_zones` | `colour/` |
-| 6 | Export PSD | `write_psd` | `export/psd.py` |
+| 6 | Snap | `snap_segment`, `snap_all` | `colour/segments.py`, `colour/snap.py` |
+| 7 | Export PSD | `write_psd` | `export/psd.py` |
 
-A seventh input is optional: the artist can upload reference images. Each image
-does two jobs. Its colours become the palette. The image itself is what the
-colour model sees. See section 4a.
+Step 3 needs step 2. The app refuses step 3 before step 2. The steps run in
+one order, because the artist corrects the result of each one, and a step that
+runs again deletes those corrections.
+
+Two more inputs are optional, and they are not the same thing. **Add
+reference** gives the colour model an image to look at. **Add palette** gives
+the palette an image of swatches. See section 4a.
 
 ### Step 1 — Upload page
 
@@ -108,6 +128,20 @@ two groups.
 Keep the tolerance small. At 2%, all areas on all pages gave 4 or 5 corners.
 That removes the missing piece of a panel, which is the reason to trace.
 
+**The artist corrects the panels here.** Detection gives a proposal. The
+artist drags a corner, clicks an edge to add a corner, clicks the page to draw
+a new panel, or right-clicks to delete a corner or a panel. Each action sends
+the complete polygon to the server. The server does not receive an edit. It
+receives the shape.
+
+`set_panel_polygon`, `add_panel` and `delete_panel` are in `web/session.py`.
+Each one puts the panels back into reading order with `panels._reading_order`.
+The number in the corner of a panel is the order of the groups in the PSD.
+
+The artist can correct the panels until step 4 cuts the zones. After that the
+app refuses, because the zones come from the shape of the panel. To open the
+geometry again, press Detect panels. That deletes the corrections.
+
 ### Step 3 — Detect bubbles
 
 This step has two halves. **A model says where each balloon is. The artwork
@@ -145,47 +179,87 @@ outline is protected too.
 
 The app does not read the text. There is no OCR engine and no language pack.
 
-### Step 4a — References (optional, at any time)
+### Step 4a — References and the palette (optional, at any time)
 
-The references are the images that the colour model looks at. They belong to
-the book, not to the page. Thus they stay when the artist loads a new page,
-and they stay when the app stops and starts again.
+A reference and the palette are two different things. A reference is an image
+that the colour model looks at. The palette is the list of colours of the
+artist. Both belong to the book, not to the page. Thus they stay when the
+artist loads a new page, and they stay when the app stops and starts again.
 
 `ReferenceStore` (`colour/references.py`) keeps them in
 `<workdir>/references/`: one file for each image, and an `index.json`. Each
 record has an id, a filename, a label, a `kind` and a date. Ids increase and
 the app never uses an id again.
 
-`kind` is one of three values:
+`kind` is one of four values. Three of them are references:
 
 | kind | Meaning |
 |---|---|
-| `page` | A finished coloured page of this book. |
+| `page` | A finished coloured page of this book. The app stores its panels. |
 | `panel` | One finished coloured panel. |
-| `sheet` | A character sheet or a colour swatch. |
+| `sheet` | A character sheet. |
+| `palette` | An image of swatches. It is **not** a reference. |
 
 The artist selects the kind. The app cannot find it out from the image. The
-kind does not change how the app stores the image. The kind tells the colour
-step how to fit the image to the panel later.
+kind tells the colour step how to fit the image to the panel later.
 
-**The app stores each image complete. The app does not cut it.** Cobra needs
+`palette` is not in `KINDS` and `reference_images()` does not return it. The
+colour model never sees it. A strip of swatches is not an example of a
+coloured page.
+
+**A finished page becomes its panels.** `add_reference` runs panel detection
+on a `page` upload. The app stores one `panel` reference for each panel that
+it finds. The app does not keep the page. Cobra reads patches of a reference,
+and most patches of a whole page are background. A patch that covers a face
+can then find something that is not a face. A page with no panels that the app
+can find stays complete, because half of a split is worse than none.
+
+The app cuts each panel to its box. The app does not make the pixels outside
+the polygon white. White pixels give no colour, and a reference is there only
+to give colour. A part of the panel next to it is drawn colour, and that is
+better than white.
+
+**The app does not fit a reference to a panel at upload time.** Cobra needs
 each reference part to be one half of the width and the height of the panel.
-To get that size, the app must fit the image to the shape of the panel. The
-app does not know the shape of the panel before segmentation. Therefore the
-app cuts the image at colour time, not at upload time. Section 5a tells you
-how the app cuts it.
+The app does not know the shape of the panel before segmentation. Therefore
+the app tiles the image at colour time. Section 5a tells you how.
 
-The palette has two halves:
+**The palette is a list. It is not a result.** `extract_palette` reads the
+colours of an image. What happens next depends on the door:
 
-- The **reference half** comes from the references. If you remove a reference,
-  its colours go away with it. The app makes this half again from all the
-  references each time one changes.
-- The **created half** is what step 5 invented for zones that matched no
-  colour.
+- **Add reference** offers the colours. They are candidates. The app shows one
+  chip for each candidate below the thumbnail. The artist clicks a chip to put
+  that colour in the palette. A drawing is not a decision: the extraction
+  cannot tell the jacket of a character from the wall behind it.
+- **Add palette** takes all the colours. There are no chips. A palette image
+  is the decision of the artist, already made, in a file.
 
-`extract_palette` uses median cut, which always gives the same result.
-Therefore the app does not save the palette. The app makes it again from the
-files.
+To delete is not the same at the two doors. If you delete a palette image, its
+colours go with it. If you delete a reference, the palette does not change: the
+artist selected those colours one at a time, and a click about an image must
+not repaint the page.
+
+The app gives each palette entry an id one time. The app never uses an id
+again, and never renumbers. A zone holds an id. An id that means a different
+colour tomorrow is worse than no id.
+
+**To change a palette colour changes every zone that holds it.** There is no
+new segmentation and no new proposal. `flats_rgba` and `write_psd` read the
+palette when the artist asks for the image. One row changes the page. This is
+the reason for the rule in section 3.
+
+The app writes the palette to `<workdir>/palette.json`. The palette belongs to
+the book, like the references, so it must survive a restart.
+
+`_created_palette` is the other half of the palette. Step 5 makes one private
+entry for each zone. Those entries belong to the page. They are not offered to
+the artist and the artist never snaps to them: a segment must not be offered
+its own colour.
+
+**The artist corrects the balloons here.** The actions are the same four as
+for the panels, and they use the same code path in the browser. The methods
+are `set_bubble`, `add_bubble` and `delete_bubble`. The rule is the same too:
+the artist corrects the balloons until step 4 cuts the zones.
 
 ### Step 4 — Segment zones
 
@@ -204,6 +278,39 @@ Then, for each panel:
    **raw** line mask here, because the ink layer of the artist goes on top.
    Without this step each line leaves a white gap in the export.
 
+**The artist corrects the zones here.** Trapped-ball reads the ink, and the
+ink is not always closed. Two failures follow. The fill goes through a gap and
+one zone holds a garment and the background. Or the drawing is busy and one
+pair of trousers comes back as forty zones.
+
+The artist selects a zone while the button is down over it. To press picks up
+one zone. To hold the button and move picks up each zone that the pointer
+touches. Two zones far apart need two presses, and nothing between them is
+selected, because the button was up. To press a selected zone drops it. A
+sweep only adds.
+
+Right-click gives the actions. Two or more zones give **merge**. Exactly one
+zone gives **cut**: with more, the app cannot know which zone a stroke belongs
+to.
+
+- `merge_zones` writes the label of the largest zone over the others. The
+  zones do not need to touch. The panes of a glass are one thing to colour.
+  The zones must be in one panel: a label belongs to a panel, and the same
+  shirt in the next panel is the work of the palette.
+- `cut_zone` draws the stroke of the artist as a wall inside the zone, then
+  runs connected components. The stroke is the ink line that is not there. The
+  app makes both ends of the stroke longer, because to stop a few pixels short
+  is the usual reason a cut fails. The pixels of the stroke go to the piece
+  that is nearest, so the cut leaves no unassigned pixels for the export to
+  fringe around. A stroke that separates nothing changes nothing, and the app
+  says so.
+
+**These corrections are permanent.** There is no unmerge. To keep one would
+mean to hold the map of the segmenter beside the map of the artist, and each
+later stage would have to say which of the two it uses. The stage boundary
+protects the artist instead. The stage opens when the zones exist and closes
+when step 5 colours them.
+
 ### Step 5 — Generate flats
 
 For each panel the app builds a `PanelRequest` and calls the proposer. The
@@ -216,22 +323,31 @@ the panel next to it. The colour model must not look at that part. For a
 rectangular panel this step changes nothing.
 
 `assign_zones` then takes the **mode** colour of each zone from that raster.
-It does not take the average. Then it finds the nearest palette entry in
-CIELAB space. If the distance is more than `SNAP_MAX_DELTA`, the app flags the
-zone.
+It does not take the average.
 
-If the artist uploaded no palette, there is nothing to snap to. Each zone then
-becomes a new palette entry of its own.
+**Step 5 does not snap.** The app calls `assign_zones` with `threshold=None`
+every time. Each zone gets a new palette entry of its own, whatever the
+palette holds. Snapping is step 6, and the artist does it.
+
+The reason is a measured failure. Snapping used to happen in this same pass.
+It was then the one stage with no boundary: the artist could not see it and
+could not refuse it. It was also the stage that made every neutral zone the
+ink black of a character sheet.
 
 The proposal raster is never shown and never exported. It exists only to give
 one colour to each zone.
+
+Step 5 also builds the segments. `build_segments` gives each zone its area,
+its box in page space, and one point inside the zone. A crescent anchors on
+its own pixels, not on the centre of its box. The segments are the unit of
+work from here on.
 
 There are two proposers:
 
 - `DistinctColourProposer` (`distinct`) is the default. It gives a different
   colour to each zone. It needs no GPU. This is classical flatting output.
-- `CobraProposer` (`cobra`) needs an NVIDIA GPU with much VRAM. Its code is
-  written but **nobody has run it**. Test it on the GPU machine first.
+- `CobraProposer` (`cobra`) needs an NVIDIA GPU with much VRAM. It runs on the
+  machine of the artist. `README.md` has the numbers of the first real runs.
 
 Everything after this step reads the proposal raster only. To change the
 proposer, change one constructor call.
@@ -294,7 +410,30 @@ the search more costly, but never the model. Two dangers stay:
 An artist adds each reference by hand. Nothing becomes a reference by itself.
 This is the rule that keeps the pool small.
 
-### Step 6 — Export PSD
+### Step 6 — Snap
+
+One segment at a time, and the artist decides each one. The artist clicks a
+zone. `segment_at` finds it in the label map, not in the boxes of the
+segments: the boxes of two zones that interlock overlap, and a click must find
+the zone under the pointer.
+
+`snap_suggestion` gives the nearest colour of the palette **and the distance**
+to it. The artist sees the number that the old automatic pass used in silence.
+`SNAP_MAX_DELTA` orders the attention of the artist. It does not refuse the
+instruction of the artist.
+
+- `snap_segment` points one segment at one palette entry. One row changes.
+- `unsnap_segment` puts back the colour that the proposer gave. A snap that
+  the artist cannot undo takes the decision away from them.
+- `snap_all` is the bulk action for a page whose references are good. It calls
+  `snap_segment` for each segment, so it can do nothing that a click cannot,
+  and each segment stays reversible one at a time.
+
+The suggestion uses the palette of the artist only. It never uses the private
+entries of step 5. Those hold the colour of the segment itself, and each
+segment would find itself at distance zero.
+
+### Step 7 — Export PSD
 
 `write_psd` makes one layer group for each panel. It makes one layer for each
 palette colour. Read the comment on `_set_preview` in `export/psd.py` before
@@ -313,15 +452,29 @@ A lock makes the buttons sequential. The artist will click two times.
 This version of the app **does not use it**. Persistence is not the purpose of
 this version.
 
+The palette does not stay in memory only. `Session` writes it to
+`<workdir>/palette.json` at each change and reads it at start. The reference
+images and their `index.json` are in `<workdir>/references/`.
+
 `src/comiccolor/web/app.py` is the FastAPI layer. Each button is one POST
-route. Each preview image is one GET route that sends a PNG.
+route. Each preview image is one GET route that sends a PNG. A correction is
+also one route: the browser sends the complete shape, the complete stroke, or
+the complete colour. It never sends an edit.
+
+`src/comiccolor/web/static/` is the browser. `app.js` holds one screen-to-page
+transform, `view`. Nothing else in that file converts coordinates. Each hit
+test goes through `view.toImage` and then asks the server what is there. The
+browser never holds a second copy of the segmentation.
 
 ## 6. Map of the source files
 
     src/comiccolor/
       cli.py                  the `comiccolor` command
-      web/session.py          all state, the six buttons        <- start here
+      web/session.py          all state, the seven buttons      <- start here
       web/app.py              the HTTP routes
+      web/static/app.js       the canvas, the corrections, one transform
+      web/static/index.html   the sidebar: the buttons and the two uploads
+      web/static/app.css      the styles
       segmentation/
         preprocess.py         file -> line_mask + grey
         panels.py             gutter network -> panel polygons
@@ -336,7 +489,8 @@ route. Each preview image is one GET route that sends a PNG.
       colour/
         references.py         the reference images on disk + index.json
         proposer.py           the ColourProposer protocol, `distinct`
-        cobra.py              the Cobra proposer. Never executed.
+        cobra.py              the Cobra proposer
+        segments.py           one zone as a thing the artist can click
         snap.py               zone mode -> nearest palette entry (CIELAB)
         extract.py            image -> palette colours
       export/psd.py           panels -> a layered PSD
@@ -354,7 +508,8 @@ route. Each preview image is one GET route that sends a PNG.
   Clip Studio reads PSD and keeps the groups.
 - Keep Cobra as the `diffusers` repository dependency. The raw `.pth` mirror is
   AGPL and permits research only.
-- Do not install Cobra on the development machine. Its card is too small.
+- Do not install Cobra on the development machine. Its card is too small. The
+  machine of the artist runs it.
 - Cobra does not need complete pages. Its only rule is that each reference part
   is one half of the width and the height of the panel. A character sheet is
   as good as a page.
@@ -367,8 +522,17 @@ route. Each preview image is one GET route that sends a PNG.
   to 3.38:1, and 13 of 23 panels get squashed more than 5%.
 - Do not put a reference on a white rectangle. Cut it into tiles. White pixels
   give no colour, and a reference is there only to give colour.
-- `colour/cobra.py` has never run. Its shape functions have tests, but the
-  model itself is not tested. Verify it on the GPU machine.
+- A zone holds an id, and the app never uses a palette id again. To renumber
+  the palette would repaint a page in silence.
+- Step 5 must not snap. Snapping is step 6, and the artist does it. See the
+  reason in step 5.
+- A correction to the panels, the balloons or the zones happens at its own
+  stage and nowhere else. The stage closes when the next stage uses the
+  result.
+- A merge and a cut are permanent. Do not add an undo that keeps the map of
+  the segmenter beside the map of the artist.
+- Do not show a palette image to the colour model. It is a strip of swatches,
+  not an example of a coloured page.
 - Keep the bubble detector on `onnxruntime`. Nearly every other comic balloon
   detector on GitHub needs the `ultralytics` package, and that package is
   AGPL-3.0. The licence of the weights does not change this.
@@ -384,21 +548,31 @@ route. Each preview image is one GET route that sends a PNG.
   at the box border. This shows as slack around the oval balloons in
   `manga_page.jpg`.
 - **Panel detection joins two panels into one.** On `tintin_page.jpg` the two
-  panels at the left of rows 1 and 2 come back as one panel. This is the worst
-  failure of the app, because the artist cannot correct it: you can move the
-  corners of a panel, but you cannot cut one panel into two, and there is no
-  button to add a panel.
+  panels at the left of rows 1 and 2 come back as one panel. The artist now
+  corrects this: delete the joined panel and draw the two real ones. It is
+  still the failure that costs the most work.
 - **Panel detection also finds panels that are not there.** The title of
   `tintin_page.jpg` and a balloon at the edge of `manga_page.jpg` come back as
   panels. This is not important: the artist deletes them with one click. Every
   filter that removes them also removes a thin panel that is real.
-- **Nothing is correctable in the app.** A wrong panel or a wrong bubble goes
-  to Photoshop, or the artist does not press that button.
+- **The zones are not correctable after step 5.** The artist must merge and
+  cut before the colours arrive. To press Segment zones again opens the stage
+  and deletes every merge and every cut. The app says so before it does it.
+- **A split of a finished page can be wrong.** Panel detection reads the ink.
+  A page with no ink layer, such as a flats-only export, gives boxes that are
+  too small. The artist sees the thumbnails and deletes the bad ones.
 - Segmentation is slow. A large page takes approximately two minutes. The cost
   is in LineFiller.
 
 ## 9. Tests
 
 `pytest` runs all tests. `tests/test_web.py` presses each button in sequence
-through the HTTP API. It then opens the PSD that comes out. Keep that test
-working: it is the proof that each screen goes to the next one.
+through the HTTP API. It also does the work of the artist: it drags a corner
+of a panel, traces a balloon, sweeps up a dozen zones and merges them, cuts
+one zone in two, takes a colour into the palette, and snaps a segment. It then
+opens the PSD that comes out. Keep that test working: it is the proof that
+each screen goes to the next one.
+
+One test counts the coloured pixels before a cut and after it. A cut that
+loses the pixels of its own stroke shows only as a halo in the PSD of somebody
+else.

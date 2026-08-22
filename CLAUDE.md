@@ -59,7 +59,9 @@ wrong is one click to fix.
 
 ## Frameworks
 
-- None (library-based architecture, not web/application framework)
+- FastAPI + uvicorn (`[web]` extra) - The local app in `src/comiccolor/web/`. One route per button, plus one per correction and one per preview PNG. Handlers are plain `def`, not `async def`: segmentation and generation are seconds of CPU or GPU work, and FastAPI runs sync handlers in a threadpool instead of stalling the event loop.
+- pydantic - Request bodies for the corrections (`Shape`, `Stroke`, `Merge`, `Cut`, `Colour`, `Pick` in `web/app.py`)
+- Frontend: no framework and no build step - `web/static/` is one HTML, one CSS and one JS file, served as they are. Hand-rolled 2D canvas, one screen↔image transform (`view` in `app.js`), zero runtime dependencies.
 - argparse (Python standard library) - Command-line interface in `src/comiccolor/cli.py`
 - pytest 8.0+ - Configured in `pyproject.toml`, run via `pytest tests/`
 - setuptools 68+ - Project build and package management
@@ -70,8 +72,12 @@ wrong is one click to fix.
 - opencv-python-headless >=4.10 - Image loading, manipulation, morphological operations (in `segmentation/`, `extract/`, `spike/`)
 - scipy >=1.14 - Scientific computing, specifically `scipy.ndimage` for morphological operations (in `src/comiccolor/segmentation/closure.py`)
 - pillow >=11.0 - Image format support and I/O fallback
+- scikit-image >=0.26 - `skeletonize()` in `segmentation/closure.py`
+- psd-tools >=1.18 - The layered export in `export/psd.py`
+- onnxruntime >=1.20 - The RT-DETR balloon detector. Deliberately not `ultralytics`, which is AGPL-3.0 whatever licence its weights carry.
+- fastapi / uvicorn / python-multipart (`[web]`) - The local app and its uploads
+- httpx (`[dev]`) - Required by `fastapi.testclient`, which `tests/test_web.py` presses every button through
 - torch (PyTorch) - Required by `MangaLineExtraction` line extraction (in `src/comiccolor/extract/manga_line.py`, line 74), but NOT listed in project dependencies. Must be installed separately. Vendored model weights: `third_party/MangaLineExtraction/erika.pth`
-- skimage (scikit-image) - Visible in virtual environment (`scipy-1.18.0`), imported in `src/comiccolor/segmentation/closure.py` for `skeletonize()`. Likely indirect dependency via scipy or must be added.
 - pytest >=8.0 - Unit testing framework
 
 ## Vendored Third-Party
@@ -89,11 +95,20 @@ wrong is one click to fix.
 
 ## Configuration
 
-- No `.env` file or environment variable configuration documented
-- Configuration via CLI arguments only (see `src/comiccolor/cli.py`)
+- No `.env` file. Two environment variables, both read at call time so a flag can set them: `COMICCOLOR_PROPOSER` (`distinct` | `cobra`) and `COMICCOLOR_EXTRACTOR` (`manga` | `raw`). `comiccolor serve --proposer/--extractor` set them.
+- Otherwise configuration is CLI arguments only (see `src/comiccolor/cli.py`)
 - `pyproject.toml` - Standard Python project configuration, defines dependencies, entry point, test paths
 - CLI: `comiccolor = "comiccolor.cli:main"` - Command-line entry point in `src/comiccolor/cli.py`
 - Subcommands:
+  - `serve` - the local app. `--port`, `--workdir`, `--proposer`, `--extractor`
+  - `flatten` - one page headlessly, then snap-all, then the PSD. `--reference`, `--threshold` (`inf` snaps everything), `--no-snap`, `--steps` (one image per stage boundary)
+  - `p3` / `ab` - the segmentation experiments; reports land in `reports/`
+
+## State on disk
+
+- `<workdir>/references/` - the reference and palette images, plus `index.json`. Book-scoped: they survive a new page and a restart.
+- `<workdir>/palette.json` - the artist's palette. Held, not derived, since ids must never be reused and a colour must survive its reference being deleted.
+- The page itself is not persisted. One page is in flight at a time, in memory.
 
 ## Database
 
@@ -104,13 +119,13 @@ wrong is one click to fix.
 
 ## Model & Weights
 
-- Cobra (SIGGRAPH 2025, github.com/zhuang2002/Cobra)
+- Cobra (SIGGRAPH 2025, github.com/zhuang2002/Cobra) - Runs on the artist's machine; `README.md` records what the first real runs measured.
 
 ## Platform Requirements
 
 - Python 3.11+
 - pip and setuptools
-- For torch (MangaLineExtraction): CPU or GPU support (defaulted to CPU in `src/comiccolor/extract/manga_line.py`)
+- For torch (MangaLineExtraction): CPU or GPU. The web app picks CUDA when a card is present (`_best_device` in `web/session.py`) and degrades to CPU rather than refusing — minutes instead of seconds on a full page.
 - For GUI/visualization: OpenCV with headless mode (cv2 works without display server)
 - Python 3.11+ runtime
 - torch optional (only if line extraction is used; can skip for colour-only pipelines)
@@ -214,7 +229,30 @@ wrong is one click to fix.
 - Decorated with `@runtime_checkable`
 - Minimal, focused on contract
 
-See `SPEC.md` for what is being built and why.
+## The shape of the app
+
+Seven buttons, in one order, and nothing runs by itself: upload → panels →
+bubbles → zones → flats → snap → export. Re-running a step deletes what
+depended on it, and a step that would delete the artist's own corrections asks
+first.
+
+Every stage is a proposal the artist can refuse, and each correction belongs
+to its own stage:
+
+- panels and balloons (steps 2 and 3) - drag a corner, click an edge to add
+  one, click empty page to draw a new shape, right-click to delete. The
+  browser sends the whole polygon, never an edit.
+- zones (step 4) - press over a zone to select it, sweep to take several,
+  right-click to merge; or cut one with a stroke across it. Permanent, by
+  decision: there is no unmerge, and the stage boundary is the protection.
+- palette - a reference *offers* colours as chips the artist clicks; a palette
+  image gives all of its own. Changing a palette colour repaints every zone
+  holding it, in one row, which is rule 1 made visible.
+- colour (step 6) - flats propose and never snap; snapping is per segment and
+  artist-driven.
+
+`ARCHITECTURE.md` is the fast way into the code: where things are and how the
+data moves. See `SPEC.md` for what is being built and why.
 
 <!-- tokenade-scaffold -->
 ## Explore code with the `tokenade` CLI (cheaper than reading whole files)

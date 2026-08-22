@@ -65,7 +65,17 @@ equally valid pool entry.
 
 `ReferenceStore` keeps them in `<workdir>/references/` with a JSON index. Each
 carries a `kind` (`page` | `panel` | `sheet`) that the artist sets, because it
-is the one thing we cannot infer and it decides how the image is fitted:
+is the one thing we cannot infer and it decides how the image is fitted.
+A fourth kind, `palette`, is stored in the same place and is deliberately not
+a reference: it is a strip of swatches, and the model is never shown one.
+
+A `page` upload is stored as its panels rather than as itself. Retrieval ranks
+patches, and most patches of a whole page are backgrounds and props, so the
+patch covering a face can retrieve something that is not a face — measured: a
+crop of one coloured face reproduced a character's skin where a whole finished
+page of the same character produced a cold blue one. Panels are cropped to
+their boxes, never masked to their polygons, because white padding gives the
+retrieval no colour to rank.
 
 - **sheet** — a montage, so windows are placed on the drawings themselves
   (connected components of not-paper), one character per patch.
@@ -94,28 +104,49 @@ wrong.
 
 ### Zones
 14. **Segment zones** button. Fills each panel with flat regions.
-15. Click two zones to merge them.
+15. Select zones by pressing over them — a press takes one, a press-and-sweep
+    takes every zone the pointer crosses — then right-click to merge them.
+    Merged zones need not touch, and must share a panel.
 16. Draw a line across a zone to cut it in two. The line is a cut in the zone
     map only — it never appears in any export.
+16a. Both are corrections to the segmenter's proposal, so they happen at that
+    stage: after **Segment zones**, before **Generate flats**. They are
+    permanent — there is no unmerge, and the boundary is what protects the
+    artist instead of a history that every later stage would have to
+    interpret.
 
 ### Palette and character sheets
-17. Create, rename, recolour, delete colours by hand.
-18. Upload a swatch image, get colours out of it.
-19. Upload a character sheet. It belongs to a named character and is what Cobra
-    is given as reference.
-20. The app proposes palette colours from a character sheet; accept or reject
-    each one.
-21. Change a colour once and every page using it updates. No re-run, no
-    regeneration.
+17. Recolour and delete palette colours by hand. Removing a colour un-snaps
+    the zones that pointed at it: a zone cannot hold an id that is gone.
+18. **Add palette** — upload an image of swatches. Every colour in it joins
+    the palette, with nothing to confirm: a palette is the decision already
+    made, in a file. Deleting that image takes its colours back out.
+19. **Add reference** — upload a character sheet, a finished page or a
+    finished panel. This is what Cobra is shown. A finished page is stored as
+    its panels, because most patches of a whole page are background.
+20. A reference's colours are *offered*, not taken: one chip per extracted
+    colour, and the artist clicks the ones the book uses. Deleting the
+    reference leaves them in the palette — they were chosen.
+21. Change a colour once and every zone using it updates. No re-run, no
+    regeneration. The palette is written beside the reference pool, because it
+    belongs to the book.
 
 ### Generation
 22. **Generate flats** button. Cobra colours each panel using the character
     sheets as reference.
 23. Each zone takes the *mode* — the most common colour — of Cobra's output
-    inside it, then snaps to the nearest palette colour.
+    inside it, and stops there. **Flats do not snap**, even with a palette
+    loaded: every zone comes out holding its own colour and its own entry.
 24. Cobra's raw output is never shown. The artist sees flat, palette-bound
     zones or nothing.
-25. Click a zone and reassign it to a different palette colour.
+25. **Snap** is its own step. Click a zone to see the colour it holds, the
+    nearest palette colour and the distance between them; snap it, pick
+    another colour, or put the proposal back. `snap all` is the bulk
+    shortcut, and it can do nothing a click cannot.
+
+Snapping was part of 23 until it was measured. In one pass it was the only
+stage with no boundary the artist could see or refuse, and it was the stage
+that folded every neutral zone into a character sheet's ink black.
 
 ### Export
 26. **Export** button. PSD, one layer group per panel, one layer per colour.
@@ -322,6 +353,19 @@ the artist keeps their own line layer.
 
 ---
 
+## Where the barebone app stands
+
+Built and reachable from a button: 5–16a, 17–27. Every stage proposes, and the
+artist can refuse it — panel and balloon corners, zone merges and cuts, the
+palette, and the colour of each zone.
+
+Not built: 1–4 (the project folder and the SQLite store; `model/store.py`
+exists and the web app does not use it), the named character behind a sheet
+in 19, and creating or renaming a palette colour by hand in 17 — a colour
+arrives from an image today.
+
+---
+
 ## Not in the barebone version
 
 - Confidence scoring across multiple seeds, flagged-zone review queue.
@@ -329,7 +373,9 @@ the artist keeps their own line layer.
 - Undo/redo beyond a single step.
 - Metrics: post-correction time, acceptance rate, corrections per region.
 - Multiple export granularities — one layer per colour is enough.
-- Stage gates, confirmation dialogs, Go-Back. Buttons are the flow.
+- Stage gates and Go-Back. Buttons are the flow. One exception, which rule 4
+  asks for: a step that would delete the artist's own corrections asks before
+  it runs.
 - Colour identity propagation across pages from a single hint.
 - Shadow masks, shading, halftone.
 - Hosting, accounts, multi-user, remote GPU.
@@ -340,6 +386,7 @@ the artist keeps their own line layer.
 
 Python 3.11+, FastAPI, SQLite, numpy/opencv/scipy/pillow, pytest.
 Cobra via diffusers, on a local NVIDIA GPU.
-Frontend: Vite + TypeScript, no framework, no canvas library, zero runtime
-dependencies. Hand-rolled 2D canvas.
+Frontend: one HTML file, one CSS file, one JS file, served as they are. No
+framework, no canvas library, no build step, zero runtime dependencies.
+Hand-rolled 2D canvas.
 Runs on one machine, tested live over video call with the artist watching.

@@ -340,6 +340,17 @@ adjacent hair tones.
 silently coerced into an existing entry. Silent wrong snapping is worse than an
 empty region — the artist will not notice it.
 
+**Built, and split in two.** Mode extraction is step 5; snapping is step 6 and
+the artist drives it. In one pass this was the only stage with no boundary the
+artist could see or refuse, and "reject before snapping" was not enough on its
+own: with the L\* downweight, every neutral region — paper, grey props, the
+page background — sat inside the threshold of a character sheet's ink black
+and was coerced anyway. Step 5 therefore creates one entry per region
+unconditionally. `snap_suggestion` returns the nearest entry *and its
+distance*, so the number the automatic pass used silently is the number the
+artist is shown, and the threshold orders their attention instead of vetoing
+their instruction.
+
 ### 1.8 Confidence triage
 Sample 3 seeds. Compute per-region variance of the extracted mode. High variance
 = model uncertainty about that specific region. Route only those to review.
@@ -355,6 +366,19 @@ Every stage boundary is inspectable and editable.
 auto-colorisation specifically because intermediate stages were opaque and
 uncontrollable. A pipeline whose every boundary is an editable layer answers
 that objection by construction.
+
+**Built.** Panel and balloon polygons are edited at steps 2 and 3, regions are
+merged and cut at step 4, palette entries are recoloured at any time, and a
+region is reassigned by clicking it at step 6. Two decisions that this
+specification did not anticipate, both forced by use:
+
+- *Each correction belongs to one stage and closes when the next stage
+  consumes it.* Region merges and cuts are permanent, because the alternative
+  is carrying the segmenter's map beside the artist's and making every
+  downstream stage say which it means.
+- *A step that would discard the artist's corrections asks before it runs.*
+  §9's "no stage gates" stands for the flow; this is about work, not
+  navigation.
 
 ### 1.10 Layered export
 Line, flats (keyed to palette IDs), protected masks. Must round-trip into the
