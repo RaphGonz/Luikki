@@ -22,8 +22,16 @@
       <p class="note" id="panels-note"></p>
     </li>
     <li>
-      <button class="btn" id="btn-bubbles" data-needs="page">3 &middot; Detect bubbles</button>
+      <button class="btn" id="btn-bubbles" data-needs="panels">3 &middot; Detect bubbles</button>
       <p class="note" id="bubbles-note"></p>
+    </li>
+    <li>
+      <fieldset class="view edit" id="edit-mode" hidden>
+        <legend>Correct</legend>
+        <label><input type="radio" name="layer" id="layer-panels" value="panels"> panel corners</label>
+        <label><input type="radio" name="layer" id="layer-bubbles" value="bubbles"> bubble corners</label>
+        <p class="note" id="edit-note"></p>
+      </fieldset>
     </li>
     <li>
       <button class="btn" id="btn-zones" data-needs="panels">4 &middot; Segment zones</button>
@@ -46,19 +54,29 @@
       <p class="note" id="flats-note"></p>
     </li>
     <li>
-      <button class="btn primary" id="btn-export" data-needs="flats">6 &middot; Export PSD</button>
+      <button class="btn" id="btn-snap-all" data-needs="flats">6 &middot; Snap all</button>
+      <label class="thresh">
+        within &Delta;E
+        <input id="snap-threshold" type="number" min="0" step="0.5" value="12">
+      </label>
+      <label class="thresh"><input type="checkbox" id="snap-any"> ignore the guard</label>
+      <p class="note" id="snap-note">Nothing to snap until the flats exist.</p>
+    </li>
+    <li>
+      <button class="btn primary" id="btn-export" data-needs="flats">7 &middot; Export PSD</button>
       <p class="note">Flats only. Drop your own line layer on top.</p>
     </li>
   </ol>
 
   <fieldset class="view">
     <legend>Show</legend>
-    <label><input type="checkbox" id="v-page" checked> page</label>
+    <label><input type="checkbox" id="v-page" checked> line art</label>
     <label><input type="checkbox" id="v-lines"> extracted lines</label>
     <label><input type="checkbox" id="v-panels" checked> panels</label>
     <label><input type="checkbox" id="v-bubbles" checked> bubbles</label>
     <label><input type="checkbox" id="v-zones" checked> zones</label>
     <label><input type="checkbox" id="v-flats" checked> flats</label>
+    <label><input type="checkbox" id="v-left"> left to snap</label>
   </fieldset>
 
   <button class="btn subtle" id="btn-reset">Start over</button>
@@ -66,6 +84,31 @@
 
 <main>
   <canvas id="stage"></canvas>
+
+  <section id="inspector" class="inspector" hidden>
+    <header>
+      <span id="ins-title"></span>
+      <button class="x" id="ins-close" title="Close (Esc)">&times;</button>
+    </header>
+    <p class="note" id="ins-area"></p>
+
+    <p class="ins-row">
+      <i id="ins-current"></i>
+      <span id="ins-current-label"></span>
+    </p>
+    <p class="ins-row" id="ins-suggestion-row">
+      <i id="ins-suggestion"></i>
+      <span id="ins-suggestion-label"></span>
+    </p>
+
+    <button class="btn" id="ins-snap">Snap to suggestion</button>
+    <button class="btn subtle" id="ins-unsnap">Put back what the model proposed</button>
+
+    <p class="note" id="ins-pick-note">Or pick a reference colour:</p>
+    <div id="ins-palette" class="palette pick"></div>
+  </section>
+
+  <div id="menu" class="menu" hidden></div>
   <div id="status" class="status"></div>
 </main>
 

@@ -156,6 +156,213 @@ def test_previews_exist_for_every_stage_that_renders_one(client, page):
         assert response.headers["content-type"] == "image/png"
 
 
+# -- steps 2 and 3, corrected by hand ----------------------------------------
+#
+# Detection proposes the geometry and the artist settles it. These press the
+# routes the canvas presses: replace a polygon, add one, delete one — and
+# refuse all three everywhere the stage rules say they do not belong.
+
+SQUARE = [[100, 100], [300, 100], [300, 300], [100, 300]]
+
+
+def test_bubbles_wait_for_panels(client, page):
+    """The steps run in one order. A balloon traced onto a page whose panels
+    are about to be re-detected is work the artist cannot get back."""
+    upload(client, "/api/page", page)
+    refused = client.post("/api/bubbles")
+    assert refused.status_code == 409
+    assert "panel" in refused.json()["error"].lower()
+
+    client.post("/api/panels")
+    assert client.post("/api/bubbles").status_code == 200
+
+
+def test_a_panel_keeps_the_corners_the_artist_left_it_with(client, page):
+    upload(client, "/api/page", page)
+    state = client.post("/api/panels").json()
+    assert state["editable"] == {"panels": True, "bubbles": False}
+
+    order = state["panels"][0]["order"]
+    moved = client.put(f"/api/panel/{order}", json={"polygon": SQUARE})
+    assert moved.status_code == 200
+
+    corners = {tuple(point) for point in moved.json()["panels"][0]["polygon"]}
+    assert corners == {(100, 100), (300, 100), (300, 300), (100, 300)}
+
+
+def test_a_drawn_panel_takes_its_place_in_reading_order(client, page):
+    """A panel added last does not export last. The number in its corner is
+    the order the PSD groups run in, so it is re-derived, not appended."""
+    upload(client, "/api/page", page)
+    before = client.post("/api/panels").json()["panels"]
+
+    # Above every detected panel on the test page, so it must read first.
+    added = client.post(
+        "/api/panel", json={"polygon": [[30, 5], [560, 5], [560, 15], [30, 15]]}
+    )
+    assert added.status_code == 200
+    panels = added.json()["panels"]
+
+    assert len(panels) == len(before) + 1
+    assert [p["order"] for p in panels] == list(range(len(panels)))
+    assert panels[0]["polygon"][0] == [30, 5], "the new panel reads first"
+
+
+def test_a_panel_can_be_deleted_but_not_the_last_one(client, page):
+    upload(client, "/api/page", page)
+    panels = client.post("/api/panels").json()["panels"]
+    assert len(panels) >= 2
+
+    while len(panels) > 1:
+        response = client.delete(f"/api/panel/{panels[-1]['order']}")
+        assert response.status_code == 200
+        panels = response.json()["panels"]
+
+    refused = client.delete(f"/api/panel/{panels[0]['order']}")
+    assert refused.status_code == 409
+    assert "last panel" in refused.json()["error"]
+    assert len(client.get("/api/state").json()["panels"]) == 1
+
+
+def test_two_corners_are_not_a_panel(client, page):
+    upload(client, "/api/page", page)
+    order = client.post("/api/panels").json()["panels"][0]["order"]
+    refused = client.put(f"/api/panel/{order}", json={"polygon": [[10, 10], [20, 20]]})
+    assert refused.status_code == 409
+    assert "three corners" in refused.json()["error"]
+
+
+def test_correcting_a_panel_invalidates_what_was_cut_from_it(client, page):
+    """Rule 4, for geometry the artist moved rather than a button they pressed."""
+    upload(client, "/api/page", page)
+    order = client.post("/api/panels").json()["panels"][0]["order"]
+    client.post("/api/bubbles")
+    client.post("/api/zones")
+
+    # ...and once the zones exist, the shape they were cut from is settled.
+    refused = client.put(f"/api/panel/{order}", json={"polygon": SQUARE})
+    assert refused.status_code == 409
+    assert client.get("/api/state").json()["editable"] == {
+        "panels": False,
+        "bubbles": False,
+    }
+
+    # Detecting panels again reopens it, exactly as the message says.
+    client.post("/api/panels")
+    assert client.get("/api/state").json()["editable"]["panels"] is True
+
+
+def test_a_bubble_can_be_traced_corrected_and_removed(client, page):
+    upload(client, "/api/page", page)
+    client.post("/api/panels")
+
+    refused = client.post("/api/bubble", json={"polygon": SQUARE})
+    assert refused.status_code == 409, "no tracing before the step has run"
+
+    client.post("/api/bubbles")
+    added = client.post("/api/bubble", json={"polygon": SQUARE})
+    assert added.status_code == 200
+    protected = added.json()["protected"]
+    index = len(protected) - 1
+    assert [list(point) for point in protected[index]] == SQUARE
+
+    corrected = client.put(
+        f"/api/bubble/{index}", json={"polygon": [[10, 10], [60, 10], [60, 60]]}
+    )
+    assert corrected.status_code == 200
+    assert len(corrected.json()["protected"][index]) == 3
+
+    removed = client.delete(f"/api/bubble/{index}")
+    assert removed.status_code == 200
+    assert len(removed.json()["protected"]) == len(protected) - 1
+    assert client.delete(f"/api/bubble/{index}").status_code == 409
+
+# -- step 6, the way the browser presses it ---------------------------------
+
+
+def _through_flats(client, page, tmp_path):
+    _add_reference(client, _sheet(tmp_path / "sheet.png"))
+    upload(client, "/api/page", page)
+    client.post("/api/panels")
+    client.post("/api/zones")
+    return client.post("/api/flats").json()
+
+
+def test_the_sidebar_can_count_what_step_six_has_left(client, page, tmp_path):
+    """`state.segments` is what the snap step's note is written from.
+
+    Without it the browser has no way to say "501 snapped, 251 still the
+    model's guess" without pulling every segment down to count them.
+    """
+    state = _through_flats(client, page, tmp_path)
+    segments = state["segments"]
+    assert segments["count"] > 0
+    assert segments["snapped"] == 0, "flats never snap"
+    assert segments["snappable"] is True
+    assert segments["threshold"] > 0
+
+    sources = {entry["source"] for entry in state["palette"]}
+    assert sources == {"reference", "proposed"}
+
+
+def test_clicking_a_zone_snaps_it_and_unsnapping_puts_it_back(client, page, tmp_path):
+    """The inspector's whole loop: click, see the suggestion, snap, undo."""
+    state = _through_flats(client, page, tmp_path)
+
+    listed = client.get("/api/segments?limit=1").json()["segments"]
+    assert listed, "flats produced no segments to click"
+    biggest = listed[0]
+    x, y = biggest["anchor"]
+
+    clicked = client.get(f"/api/segment?x={x}&y={y}").json()
+    assert clicked["panel"] == biggest["panel"]
+    assert clicked["label"] == biggest["label"]
+    assert clicked["snapped"] is False
+    assert clicked["suggestion"]["delta"] >= 0
+
+    entry = clicked["suggestion"]["palette_entry_id"]
+    snapped = client.post(
+        f"/api/segment/{clicked['panel']}/{clicked['label']}/snap?entry_id={entry}"
+    ).json()
+    assert snapped["palette_entry_id"] == entry
+    assert snapped["snapped"] is True
+    assert client.get("/api/state").json()["segments"]["snapped"] == 1
+
+    back = client.post(
+        f"/api/segment/{clicked['panel']}/{clicked['label']}/unsnap"
+    ).json()
+    assert back["palette_entry_id"] == clicked["palette_entry_id"]
+    assert back["snapped"] is False
+    assert client.get("/api/state").json()["segments"]["snapped"] == 0
+
+
+def test_a_click_on_the_gutter_resolves_to_nothing(client, page, tmp_path):
+    _through_flats(client, page, tmp_path)
+    assert client.get("/api/segment?x=0&y=0").status_code == 404
+
+
+def test_ignoring_the_guard_snaps_everything(client, page, tmp_path):
+    """The checkbox sends `inf`, which is the CLI's `--threshold inf`."""
+    _through_flats(client, page, tmp_path)
+
+    guarded = client.post("/api/snap-all").json()["result"]
+    everything = client.post("/api/snap-all?threshold=inf").json()["result"]
+
+    assert everything["skipped"] == 0
+    assert everything["snapped"] >= guarded["snapped"]
+    assert everything["snapped"] == everything["segments"]
+
+
+def test_what_step_six_has_left_is_a_picture(client, page, tmp_path):
+    """The "left to snap" overlay. 404 before flats: there is no workload yet."""
+    assert client.get("/api/unsnapped.png").status_code == 404
+
+    _through_flats(client, page, tmp_path)
+    response = client.get("/api/unsnapped.png")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/png"
+
+
 def test_the_proposal_raster_is_not_reachable(client, page):
     """Rule 6: Cobra's raw output never reaches the artist's eye.
 

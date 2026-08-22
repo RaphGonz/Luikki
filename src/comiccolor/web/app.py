@@ -26,7 +26,15 @@ from PIL import Image
 from ..colour.extract import EmptyImageError
 from ..colour.references import UnknownKind
 from ..colour.snap import SNAP_MAX_DELTA
+from pydantic import BaseModel
+
 from .session import Session, StepError
+
+
+class Shape(BaseModel):
+    """A polygon in page space, as the artist left it on screen."""
+
+    polygon: list[tuple[int, int]]
 
 _STATIC = Path(__file__).parent / "static"
 
@@ -127,6 +135,44 @@ def create_app(
     @app.post("/api/bubbles")
     def detect_bubbles():
         session.detect_bubbles()
+        return session.state()
+
+    # -- 2b/3b. corrections to the detected geometry ---------------------
+    #
+    # Detection is a proposal, and these are how the artist disagrees with it.
+    # Every route takes a whole polygon: dragging a corner, adding one on an
+    # edge and deleting one all arrive here as "this is the shape now", which
+    # is the only description that cannot get out of step with what is drawn
+    # on the artist's screen.
+
+    @app.put("/api/panel/{order}")
+    def set_panel(order: int, shape: Shape):
+        session.set_panel_polygon(order, shape.polygon)
+        return session.state()
+
+    @app.post("/api/panel")
+    def add_panel(shape: Shape):
+        session.add_panel(shape.polygon)
+        return session.state()
+
+    @app.delete("/api/panel/{order}")
+    def delete_panel(order: int):
+        session.delete_panel(order)
+        return session.state()
+
+    @app.put("/api/bubble/{index}")
+    def set_bubble(index: int, shape: Shape):
+        session.set_bubble(index, shape.polygon)
+        return session.state()
+
+    @app.post("/api/bubble")
+    def add_bubble(shape: Shape):
+        session.add_bubble(shape.polygon)
+        return session.state()
+
+    @app.delete("/api/bubble/{index}")
+    def delete_bubble(index: int):
+        session.delete_bubble(index)
         return session.state()
 
     # -- 4. zones --------------------------------------------------------
@@ -271,6 +317,21 @@ def create_app(
     @app.post("/api/segment/{panel}/{label}/unsnap")
     def unsnap_segment(panel: int, label: int):
         return _segment_payload(session.unsnap_segment(panel, label))
+
+    @app.get("/api/unsnapped.png")
+    def unsnapped_png():
+        """What step 6 has left to do, as a mask over the page.
+
+        Flats show what the page currently resolves to; this shows which of it
+        is still the machine's guess. Without it "251 segments left as
+        proposed" is a number with nowhere to point.
+        """
+        if not session.state()["done"]["flats"]:
+            raise HTTPException(404, "flats not generated")
+        mask = session.unsnapped_mask()
+        rgba = np.zeros((*mask.shape, 4), dtype=np.uint8)
+        rgba[mask] = (240, 163, 94, 110)
+        return _png(rgba)
 
     @app.post("/api/snap-all")
     def snap_all(threshold: float | None = SNAP_MAX_DELTA):

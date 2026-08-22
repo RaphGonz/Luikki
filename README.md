@@ -1,6 +1,7 @@
 # ComicColor
 
-Upload a page, press five buttons, get a layered PSD.
+Upload a page, press the buttons in order, click the zones the machine got
+wrong, get a layered PSD.
 
     pip install -e ".[web,dev]"
     comiccolor serve
@@ -10,8 +11,8 @@ Then open <http://127.0.0.1:8000>.
 | Button | What runs | Where |
 |---|---|---|
 | 1 Upload page | `load_line_art` | `segmentation/preprocess.py` |
-| 2 Detect panels | gutter network → traced polygons, box fallback | `segmentation/panels.py` |
-| 3 Detect bubbles | RT-DETR box → radial trace → polygon | `segmentation/bubbles.py` |
+| 2 Detect panels | gutter network → traced polygons, box fallback; corners then dragged | `segmentation/panels.py` |
+| 3 Detect bubbles | RT-DETR box → radial trace → polygon; corners then dragged | `segmentation/bubbles.py` |
 | 4 Segment zones | MangaLineExtraction → LineFiller trapped-ball, per panel | `extract/`, `segmentation/segmenter.py` |
 | 5 Generate flats | proposer → per-segment mode, **no snap** | `colour/` |
 | 6 Snap | per segment, artist-driven; `snap all` for the bulk | `colour/segments.py` |
@@ -20,6 +21,41 @@ Then open <http://127.0.0.1:8000>.
 Character sheet / swatch upload is optional and does two jobs at once: its
 colours become the palette that zones snap to, and the image itself is what
 the model is shown as reference.
+
+## Detection proposes the geometry, the artist settles it
+
+Panels and balloons come out of a detector, which means some of them are
+wrong. At step 2 every panel corner is a handle; at step 3 every balloon
+corner is. Three gestures, and no modes to be in:
+
+- **drag a corner** to move it,
+- **click an edge** to put a new corner there — it comes up already in your
+  hand, so adding one and placing it are one gesture,
+- **click empty page** to start drawing a new panel or balloon, corner by
+  corner, and click the first corner again to close it.
+
+Right-click is the destructive half and always names what it is about to
+destroy: *delete this corner*, *delete this panel*, or *stop drawing this
+bubble* for the mis-click that started a shape you never wanted. Escape does
+the last one too.
+
+Each gesture sends the **whole polygon** — `PUT /api/panel/{order}`. The
+alternative, "corner 3 of panel 2 moved to here", is a second description of
+the shape, and the two go out of step the first time a corner is inserted
+mid-drag. A panel added by hand is renumbered into reading order like any
+other, because the number in its corner is the order the PSD groups run in.
+
+**The stage is the boundary.** Corrections happen at step 2 and step 3 and
+nowhere else: once `Segment zones` has run, the geometry is no longer a
+proposal — it is what the zones were cut from, and moving it silently would
+leave them describing a page that no longer exists. The server refuses, and
+says which button reopens it. For the same reason step 3 will not run before
+step 2: a balloon traced onto a page whose panels are about to be re-detected
+is work the artist cannot get back.
+
+Re-pressing a step still replaces what it produced (rule 4) — including the
+corrections. That is now worth a sentence before it happens, so every step
+that would destroy work asks first.
 
 ## Flats propose, the artist snaps
 
@@ -69,8 +105,9 @@ is the PSD at the end. On `diagonal_page.jpg` with one character sheet:
 background, whose suggestion sits at dE 15.6 and is correctly left alone
 rather than tinting the paper.
 
-Nothing runs on its own, and re-running a step clears what depended on it.
-There is no editing yet — corrections happen in Photoshop.
+Nothing runs on its own, and re-running a step clears what depended on it —
+including the artist's snapping, which is why the browser drops its selection
+whenever a step is re-pressed.
 
 ## The extraction stage
 
@@ -210,14 +247,19 @@ region in one test and only tinted it in another. When measuring one, sample
 *outside* the hinted rectangle — inside it the colour is whatever was painted
 there, so the measurement always succeeds and means nothing.
 
-**Nothing is correctable in-app.** No dragging corners, no merging zones, no
-reassigning a colour — that is the deliberate scope of this version. A wrong
-panel or a false bubble gets fixed in Photoshop, or by not pressing that button.
+**Panels, balloons and colour are correctable in-app; zones are not.** Panel
+and balloon corners are draggable at steps 2 and 3, and clicking a zone at
+step 6 opens what the machine decided about it — the colour it holds, the
+nearest reference colour, and the distance between them — so snapping it, or
+putting the proposal back, is one click. What is still not correctable is the
+segmentation itself: no merging two zones, no cutting one in two. The answer
+to a bad zone is a better line layer or a corrected panel, and then Photoshop.
 
 ## Tests
 
     pytest
 
-`tests/test_web.py` presses every button in order through the HTTP API and
-opens the PSD that comes out — rule 3's "every screen reaches the next one",
+`tests/test_web.py` presses every button in order through the HTTP API, drags
+a panel corner and traces a balloon the way the canvas does, clicks a zone and
+snaps it the way the inspector does, and opens the PSD that comes out — rule 3's "every screen reaches the next one",
 as a test rather than a promise.

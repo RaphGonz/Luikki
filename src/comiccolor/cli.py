@@ -85,20 +85,9 @@ def _dump_remaining(session, out: Path, name: str) -> Path:
     visible: everything the machine declined to decide.
     """
     import cv2
-    import numpy as np
 
-    canvas = np.zeros((session.height, session.width), np.uint8)
-    for segment in session.segments:
-        if segment.snapped:
-            continue
-        panel = session.panels[segment.panel]
-        if panel.label_map is None:
-            continue
-        mask = (panel.label_map == segment.label).astype(np.uint8) * 255
-        region = canvas[panel.y : panel.y + panel.height, panel.x : panel.x + panel.width]
-        np.maximum(region, mask, out=region)
     path = out / name
-    cv2.imwrite(str(path), canvas)
+    cv2.imwrite(str(path), session.unsnapped_mask().astype("uint8") * 255)
     return path
 
 

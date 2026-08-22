@@ -203,6 +203,14 @@ class Session:
     def detect_bubbles(self) -> list[list[tuple[int, int]]]:
         with self.lock:
             self._require_page()
+            # The steps run in one order and only one order. Bubbles do not
+            # need the panels to be *found* — the detector reads the whole
+            # page — but they need them to be *settled*: a balloon the artist
+            # traces belongs to a page whose panels are already the ones they
+            # meant, and re-running panel detection after tracing balloons is
+            # how an artist loses work they cannot get back.
+            if not self.panels:
+                raise StepError("Detect panels first — the steps run in order.")
             if self.bubble_detector is None:
                 self.bubble_detector = BubbleDetector()
             polygons = detect_bubbles(
@@ -214,6 +222,159 @@ class Session:
             self._invalidate_from_panels()
             self._bubbles_done = True
             return self.protected
+
+    # -- 2b/3b. the artist's corrections ---------------------------------
+    #
+    # Detection proposes geometry; these accept the artist's version of it.
+    # Every one of them replaces a whole polygon rather than describing an
+    # edit: dragging a corner, inserting one on an edge and deleting one are
+    # the same call, which keeps the interaction on the client where the
+    # pointer is and leaves the server holding only what is true of the
+    # result.
+
+    def _clean_polygon(self, polygon, noun: str) -> list[tuple[int, int]]:
+        """A polygon the rest of the pipeline can rasterise, or an error.
+
+        Clamped to the page because a corner dragged past the edge is a
+        corner the artist meant to put at the edge, not a mistake to refuse.
+        """
+        cleaned: list[tuple[int, int]] = []
+        for point in polygon:
+            x = max(0, min(self.width - 1, int(point[0])))
+            y = max(0, min(self.height - 1, int(point[1])))
+            if not cleaned or cleaned[-1] != (x, y):
+                cleaned.append((x, y))
+        if len(cleaned) > 1 and cleaned[0] == cleaned[-1]:
+            cleaned.pop()
+        if len(cleaned) < 3:
+            raise StepError(f"A {noun} needs at least three corners.")
+        return cleaned
+
+    def _require_panel_stage(self) -> None:
+        self._require_page()
+        if not self.panels:
+            raise StepError("Detect panels first — there is nothing to correct yet.")
+        if self._zones_done:
+            raise StepError(
+                "The zones are already cut from these panels. "
+                "Press Detect panels to reopen the geometry."
+            )
+
+    def _require_bubble_stage(self) -> None:
+        self._require_page()
+        if not self._bubbles_done:
+            raise StepError("Detect bubbles first — there is nothing to correct yet.")
+        if self._zones_done:
+            raise StepError(
+                "The zones are already cut around these bubbles. "
+                "Press Detect bubbles to reopen the geometry."
+            )
+
+    def _reorder_panels(self) -> None:
+        """Renumber panels into reading order after the artist changed them.
+
+        Through `panels._reading_order`, not a sort of its own: the number
+        drawn in a panel's corner is the order the export groups run in, and
+        a hand-drawn panel that reads second must not export fifth because it
+        happened to be added last.
+        """
+        from ..segmentation.panels import Panel, PanelBox, PanelParams, _reading_order
+
+        carriers = [
+            Panel(
+                polygon=panel.polygon,
+                box=PanelBox(panel.x, panel.y, panel.width, panel.height),
+            )
+            for panel in self.panels
+        ]
+        by_carrier = {id(carrier): panel for carrier, panel in zip(carriers, self.panels)}
+        ordered = _reading_order(carriers, PanelParams().reading)
+        self.panels = [by_carrier[id(carrier)] for carrier in ordered]
+        for order, panel in enumerate(self.panels):
+            panel.order = order
+
+    def _panel_for(self, order: int) -> PanelState:
+        for panel in self.panels:
+            if panel.order == order:
+                return panel
+        raise StepError(f"No panel {order + 1}.")
+
+    def set_panel_polygon(self, order: int, polygon) -> PanelState:
+        with self.lock:
+            self._require_panel_stage()
+            panel = self._panel_for(order)
+            panel.polygon = self._clean_polygon(polygon, "panel")
+            self._fit_box(panel)
+            self._reorder_panels()
+            self._invalidate_from_panels()
+            return panel
+
+    def add_panel(self, polygon) -> PanelState:
+        with self.lock:
+            self._require_panel_stage()
+            panel = PanelState(
+                order=len(self.panels),
+                x=0,
+                y=0,
+                width=0,
+                height=0,
+                polygon=self._clean_polygon(polygon, "panel"),
+            )
+            self._fit_box(panel)
+            self.panels.append(panel)
+            self._reorder_panels()
+            self._invalidate_from_panels()
+            return panel
+
+    def delete_panel(self, order: int) -> None:
+        with self.lock:
+            self._require_panel_stage()
+            panel = self._panel_for(order)
+            if len(self.panels) == 1:
+                raise StepError(
+                    "That is the last panel. A page with no panels has nothing "
+                    "to segment — draw its replacement first."
+                )
+            self.panels.remove(panel)
+            self._reorder_panels()
+            self._invalidate_from_panels()
+
+    @staticmethod
+    def _fit_box(panel: PanelState) -> None:
+        """The crop box follows the outline. `panels.Panel` keeps both for the
+        same reason: the polygon says which pixels are the panel's, the box
+        says where to cut the page."""
+        xs = [x for x, _ in panel.polygon]
+        ys = [y for _, y in panel.polygon]
+        panel.x, panel.y = min(xs), min(ys)
+        panel.width = max(xs) - panel.x + 1
+        panel.height = max(ys) - panel.y + 1
+
+    def set_bubble(self, index: int, polygon) -> list[tuple[int, int]]:
+        with self.lock:
+            self._require_bubble_stage()
+            self._require_bubble_index(index)
+            self.protected[index] = self._clean_polygon(polygon, "bubble")
+            self._invalidate_from_panels()
+            return self.protected[index]
+
+    def add_bubble(self, polygon) -> int:
+        with self.lock:
+            self._require_bubble_stage()
+            self.protected.append(self._clean_polygon(polygon, "bubble"))
+            self._invalidate_from_panels()
+            return len(self.protected) - 1
+
+    def delete_bubble(self, index: int) -> None:
+        with self.lock:
+            self._require_bubble_stage()
+            self._require_bubble_index(index)
+            del self.protected[index]
+            self._invalidate_from_panels()
+
+    def _require_bubble_index(self, index: int) -> None:
+        if not 0 <= index < len(self.protected):
+            raise StepError(f"No bubble {index}.")
 
     # -- 4. segment zones ------------------------------------------------
 
@@ -628,6 +789,29 @@ class Session:
                 (self.width, self.height), self._panel_flats(), self.palette_by_id
             )
 
+    def unsnapped_mask(self) -> np.ndarray:
+        """Every segment the artist has not resolved, as a page-space mask.
+
+        Step 6's remaining workload, made visible: everything the machine
+        declined to decide. The same array backs the browser overlay and
+        `comiccolor flatten --steps`, so what the artist sees on screen and
+        what the run writes to disk cannot drift apart.
+        """
+        with self.lock:
+            canvas = np.zeros((self.height, self.width), dtype=bool)
+            for segment in self.segments:
+                if segment.snapped:
+                    continue
+                panel = self.panels[segment.panel]
+                if panel.label_map is None:
+                    continue
+                mask = panel.label_map == segment.label
+                rows = min(mask.shape[0], self.height - panel.y)
+                cols = min(mask.shape[1], self.width - panel.x)
+                window = canvas[panel.y : panel.y + rows, panel.x : panel.x + cols]
+                np.logical_or(window, mask[:rows, :cols], out=window)
+            return canvas
+
     def zones_rgba(self) -> np.ndarray:
         """Zone map as a preview, one arbitrary colour per zone.
 
@@ -668,6 +852,7 @@ class Session:
 
     def state(self) -> dict:
         with self.lock:
+            reference_ids = {e.id for e in self._reference_palette}
             return {
                 "page": None
                 if self.line_mask is None
@@ -681,13 +866,42 @@ class Session:
                     for p in self.panels
                 ],
                 "protected": self.protected,
+                # `source` splits the palette the way the artist thinks about
+                # it: the colours a reference brought in are the ones worth
+                # showing as swatches and worth snapping *to*. The proposed
+                # half is one private entry per segment — after a real page
+                # that is hundreds of them, and offering a segment its own
+                # colour to snap to is offering it nothing.
                 "palette": [
-                    {"id": e.id, "rgb": list(e.rgb), "label": e.label} for e in self.palette
+                    {
+                        "id": e.id,
+                        "rgb": list(e.rgb),
+                        "label": e.label,
+                        "source": "reference" if e.id in reference_ids else "proposed",
+                    }
+                    for e in self.palette
                 ],
                 "references": [
                     {"id": r.id, "label": r.label, "kind": r.kind, "added": r.added}
                     for r in self.reference_store
                 ],
+                # Which geometry the artist may still correct. Detection
+                # proposes it, they settle it, and once the zones are cut from
+                # it the shape is no longer a proposal — it is what the flats
+                # were built on, and moving it silently would leave the zones
+                # describing a page that no longer exists.
+                "editable": {
+                    "panels": bool(self.panels) and not self._zones_done,
+                    "bubbles": self._bubbles_done and not self._zones_done,
+                },
+                # Step 6 is per-segment and never "done" — what the sidebar
+                # reports is how much of the page the artist has resolved.
+                "segments": {
+                    "count": len(self.segments),
+                    "snapped": sum(1 for s in self.segments if s.snapped),
+                    "snappable": bool(self._reference_palette),
+                    "threshold": SNAP_MAX_DELTA,
+                },
                 "proposer": self.proposer.name,
                 "extractor": self.extractor.name,
                 "done": {
