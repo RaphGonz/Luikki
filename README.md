@@ -13,7 +13,7 @@ Then open <http://127.0.0.1:8000>.
 | 1 Upload page | `load_line_art` | `segmentation/preprocess.py` |
 | 2 Detect panels | gutter network → traced polygons, box fallback; corners then dragged | `segmentation/panels.py` |
 | 3 Detect bubbles | RT-DETR box → radial trace → polygon; corners then dragged | `segmentation/bubbles.py` |
-| 4 Segment zones | MangaLineExtraction → LineFiller trapped-ball, per panel | `extract/`, `segmentation/segmenter.py` |
+| 4 Segment zones | MangaLineExtraction → LineFiller trapped-ball, per panel; then merged and cut by hand | `extract/`, `segmentation/segmenter.py` |
 | Add reference | image for the model; its colours offered as chips | `colour/references.py` |
 | Add palette | image of swatches; every colour taken | `colour/extract.py` |
 | 5 Generate flats | proposer → per-segment mode, **no snap** | `colour/` |
@@ -97,6 +97,49 @@ is work the artist cannot get back.
 Re-pressing a step still replaces what it produced (rule 4) — including the
 corrections. That is now worth a sentence before it happens, so every step
 that would destroy work asks first.
+
+## Zones the artist merges and cuts
+
+Trapped-ball cuts from the ink it can see, and the ink is not always closed.
+So it leaks a garment into the background through a gap, and it returns what
+the eye reads as one thing — a pair of trousers, a glass, a pair of shoes — as
+forty scraps that would each need colouring by hand.
+
+Both corrections live at step 4, between the cut and the colour. One rule runs
+the selection: **a zone is selected while the button is pressed over it.** A
+press picks one up; holding and moving picks up everything the pointer passes
+over; two zones on opposite sides of the page take two presses and drag
+nothing in between, because the button was up. Pressing a selected zone drops
+it. The press itself toggles, but a sweep only ever adds — otherwise wobbling
+back over a zone mid-sweep would drop it again.
+
+Right-click is the whole menu, and it reads what is selected: **Merge these N
+zones** with two or more, **Cut this zone** with exactly one (with several
+there is no saying which one a stroke belongs to), **Clear selection** with
+any.
+
+Merged zones need not touch — the panes of a glass, a shirt split by an arm.
+A zone is a set of pixels, not a blob. What they must share is a panel: labels
+are panel-local, and the same shirt in the next panel is the *palette's* job,
+which is the difference between merging (one unit of work for ever after) and
+snapping two zones to one colour (same colour, still two clicks). The largest
+zone keeps its label, so the anchor stays in the body of the trousers rather
+than in a 300px scrap.
+
+Cutting is one gesture: press, drag across the leak, release. The stroke is
+the line the ink was missing, and the zone parts along it — both ends run on
+past where the hand stopped, because stopping a few pixels short is the
+commonest way a cut fails and the overshoot can do no harm inside one zone's
+own mask. The stroke's own pixels go to whichever piece they are nearest, so a
+cut leaves no unassigned seam for the flats to fringe around. A stroke that
+separates nothing says so and changes nothing.
+
+**These corrections are permanent.** There is no unmerge and no history:
+keeping one would mean carrying the segmenter's map beside the artist's, and
+every later stage would have to say which of the two it meant. The stage
+boundary is the protection instead — this is step 4's work, it happens before
+a single colour is proposed, and it closes when the flats are generated.
+Pressing Segment zones again starts the page over, and says so first.
 
 ## Flats propose, the artist snaps
 
@@ -288,20 +331,20 @@ region in one test and only tinted it in another. When measuring one, sample
 *outside* the hinted rectangle — inside it the colour is whatever was painted
 there, so the measurement always succeeds and means nothing.
 
-**Panels, balloons and colour are correctable in-app; zones are not.** Panel
-and balloon corners are draggable at steps 2 and 3, a palette colour is
-editable wherever it is used, and clicking a zone at step 6 opens what the
-machine decided about it — the colour it holds, the
-nearest reference colour, and the distance between them — so snapping it, or
-putting the proposal back, is one click. What is still not correctable is the
-segmentation itself: no merging two zones, no cutting one in two. The answer
-to a bad zone is a better line layer or a corrected panel, and then Photoshop.
+**Every stage is correctable in-app now.** Panel and balloon corners are
+draggable at steps 2 and 3; zones are merged and cut at step 4; a palette
+colour is editable wherever it is used; and clicking a zone at step 6 opens
+what the machine decided about it — the colour it holds, the nearest palette
+colour, and the distance between them — so snapping it, or putting the
+proposal back, is one click. Photoshop is where the page is finished, not
+where the machine's mistakes are repaired.
 
 ## Tests
 
     pytest
 
 `tests/test_web.py` presses every button in order through the HTTP API, drags
-a panel corner and traces a balloon the way the canvas does, clicks a zone and
-snaps it the way the inspector does, and opens the PSD that comes out — rule 3's "every screen reaches the next one",
+a panel corner and traces a balloon the way the canvas does, sweeps up a dozen
+zones and merges them, cuts one in two and counts the pixels back, clicks a
+zone and snaps it the way the inspector does, and opens the PSD that comes out — rule 3's "every screen reaches the next one",
 as a test rather than a promise.

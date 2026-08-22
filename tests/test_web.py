@@ -180,7 +180,7 @@ def test_bubbles_wait_for_panels(client, page):
 def test_a_panel_keeps_the_corners_the_artist_left_it_with(client, page):
     upload(client, "/api/page", page)
     state = client.post("/api/panels").json()
-    assert state["editable"] == {"panels": True, "bubbles": False}
+    assert state["editable"] == {"panels": True, "bubbles": False, "zones": False}
 
     order = state["panels"][0]["order"]
     moved = client.put(f"/api/panel/{order}", json={"polygon": SQUARE})
@@ -245,6 +245,7 @@ def test_correcting_a_panel_invalidates_what_was_cut_from_it(client, page):
     assert client.get("/api/state").json()["editable"] == {
         "panels": False,
         "bubbles": False,
+        "zones": True,
     }
 
     # Detecting panels again reopens it, exactly as the message says.
@@ -276,6 +277,175 @@ def test_a_bubble_can_be_traced_corrected_and_removed(client, page):
     assert removed.status_code == 200
     assert len(removed.json()["protected"]) == len(protected) - 1
     assert client.delete(f"/api/bubble/{index}").status_code == 409
+
+# -- step 4b: zones the artist corrects -------------------------------------
+#
+# Trapped-ball cuts from the ink it can see. Where the ink is open it leaks a
+# shape into the background, and where the drawing is busy it returns forty
+# scraps of one garment. These press the two corrections that follow, and the
+# stage rule that makes them safe to be permanent.
+
+
+def _zoned(client, page):
+    upload(client, "/api/page", page)
+    client.post("/api/panels")
+    client.post("/api/bubbles")
+    return client.post("/api/zones").json()
+
+
+def _zones_of(client, panel=0):
+    """Every label in one panel, biggest first — what a press could land on."""
+    state = client.get("/api/state").json()
+    assert state["panels"][panel]["zones"] > 1
+    return state
+
+
+def test_zones_are_correctable_between_the_cut_and_the_colour(client, page):
+    """The whole stage rule, in one test.
+
+    Not before the zones exist, and not once the flats are coloured from them:
+    the corrections are permanent and there is no unmerge, so the boundary is
+    what protects the artist rather than a history they would have to manage.
+    """
+    upload(client, "/api/page", page)
+    client.post("/api/panels")
+    assert client.get("/api/state").json()["editable"]["zones"] is False
+
+    _zoned(client, page)
+    assert client.get("/api/state").json()["editable"]["zones"] is True
+
+    client.post("/api/flats")
+    assert client.get("/api/state").json()["editable"]["zones"] is False
+    refused = client.post("/api/zones/merge", json={"panel": 0, "labels": [1, 2]})
+    assert refused.status_code == 409
+    assert "Segment zones" in refused.json()["error"]
+
+
+def test_a_press_resolves_to_the_zone_under_it(client, page):
+    _zoned(client, page)
+    state = client.get("/api/state").json()
+    panel = state["panels"][0]
+    inside = client.get(
+        f"/api/zone?x={panel['polygon'][0][0] + 40}&y={panel['polygon'][0][1] + 40}"
+    )
+    assert inside.status_code == 200
+    assert inside.json()["panel"] == 0
+    assert len(inside.json()["bounds"]) == 4
+
+    # The mask that draws the highlight, cropped to the zone's own bounds.
+    label = inside.json()["label"]
+    mask = client.get(f"/api/zone/0/{label}.png")
+    assert mask.status_code == 200
+    assert mask.headers["x-bounds"] == ",".join(
+        str(edge) for edge in inside.json()["bounds"]
+    )
+
+    assert client.get("/api/zone?x=0&y=0").status_code == 404
+
+
+def test_a_sweep_picks_up_what_it_passes_over(client, page):
+    """One request for the whole gesture, not one per zone."""
+    _zoned(client, page)
+    panel = client.get("/api/state").json()["panels"][0]
+    x0, y0 = panel["polygon"][0]
+
+    swept = client.post(
+        "/api/zones/along",
+        json={"points": [[x0 + 80, y0 + 40], [x0 + 80, y0 + 320]]},
+    ).json()["zones"]
+
+    assert len(swept) >= 2, "a stroke across a panel met one zone or none"
+    assert len({(z["panel"], z["label"]) for z in swept}) == len(swept)
+    # The boxes travel with the zones, or the browser would ask for forty of
+    # them one at a time and undo the point of one request per gesture.
+    assert all(len(zone["bounds"]) == 4 for zone in swept)
+
+
+def test_merging_makes_several_zones_one(client, page):
+    _zoned(client, page)
+    before = client.get("/api/state").json()["panels"][0]["zones"]
+    swept = client.post(
+        "/api/zones/along",
+        json={"points": [[100, 60], [100, 340]]},
+    ).json()["zones"]
+    labels = [z["label"] for z in swept if z["panel"] == 0][:3]
+    assert len(labels) >= 2
+
+    merged = client.post("/api/zones/merge", json={"panel": 0, "labels": labels})
+    assert merged.status_code == 200
+    assert merged.json()["result"]["merged"] == len(labels)
+    assert merged.json()["panels"][0]["zones"] == before - (len(labels) - 1)
+
+    # One address from here on: every pixel of the merged zones answers with
+    # the surviving label.
+    survivor = merged.json()["result"]["label"]
+    for label in labels:
+        assert label == survivor or label not in [
+            z["label"] for z in client.post(
+                "/api/zones/along", json={"points": [[100, 60], [100, 340]]}
+            ).json()["zones"]
+        ]
+
+
+def test_one_zone_is_not_a_merge(client, page):
+    _zoned(client, page)
+    refused = client.post("/api/zones/merge", json={"panel": 0, "labels": [1]})
+    assert refused.status_code == 409
+    assert "at least two" in refused.json()["error"]
+
+
+def test_a_cut_splits_a_zone_and_keeps_every_pixel(client, page):
+    """The stroke is the line the ink was missing, and its own pixels go to
+    whichever piece they are nearest — a cut leaves no unassigned seam."""
+    _zoned(client, page)
+    state = client.get("/api/state").json()
+    before = state["panels"][0]["zones"]
+
+    # The test page's first panel is a framed rectangle holding a circle and a
+    # box; the zone under this point is the panel's background.
+    target = client.get("/api/zone?x=40&y=40").json()
+    assert target["panel"] == 0
+    left, top, right, bottom = target["bounds"]
+    middle = (top + bottom) // 2
+
+    painted = _painted_pixels(client)
+    cut = client.post(
+        "/api/zones/cut",
+        json={
+            "panel": 0,
+            "label": target["label"],
+            "stroke": [[left - 5, middle], [right + 5, middle]],
+        },
+    )
+    assert cut.status_code == 200
+    assert cut.json()["result"]["pieces"] >= 2
+    assert cut.json()["panels"][0]["zones"] > before
+    assert _painted_pixels(client) == painted, "a cut lost pixels to the seam"
+
+
+def test_a_stroke_that_separates_nothing_changes_nothing(client, page):
+    _zoned(client, page)
+    target = client.get("/api/zone?x=40&y=40").json()
+    before = client.get("/api/state").json()["panels"][0]["zones"]
+
+    refused = client.post(
+        "/api/zones/cut",
+        json={"panel": 0, "label": target["label"], "stroke": [[40, 40], [44, 44]]},
+    )
+    assert refused.status_code == 409
+    assert "does not separate" in refused.json()["error"]
+    assert client.get("/api/state").json()["panels"][0]["zones"] == before
+
+
+def _painted_pixels(client):
+    """How much of the page is inside some zone, from the zone map itself."""
+    import io
+
+    from PIL import Image
+
+    image = Image.open(io.BytesIO(client.get("/api/zones.png").content))
+    return int((np.array(image)[:, :, 3] > 0).sum())
+
 
 # -- the palette, as its own thing ------------------------------------------
 

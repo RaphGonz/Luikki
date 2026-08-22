@@ -72,6 +72,8 @@ async function step(label, path, options) {
     selected = null;
     draft = null;
     drag = null;
+    picked.clear();
+    cutting = null;
     await reloadLayers();
     apply();
     say(summary(next, label));
@@ -191,6 +193,7 @@ function render() {
 
   drawHandles(editing);
   drawDraft(editing);
+  if (editing === "zones") drawPicked();
   drawSelection();
 }
 
@@ -323,7 +326,10 @@ function apply() {
     ? `${state.protected.length} protected areas — never coloured` +
       (editable("bubbles") ? ", and correctable below." : ".")
     : "";
-  $("zones-note").textContent = done.zones ? `${zones} zones across the page.` : "";
+  $("zones-note").textContent = done.zones
+    ? `${zones} zones across the page` +
+      (editable("zones") ? " — merge and cut them below, while you still can." : ".")
+    : "";
 
   applyPalette();
   const proposed = state.palette.length - chosen().length;
@@ -335,6 +341,159 @@ function apply() {
   applySnapStep(proposed);
   showInspector();
   render();
+}
+
+// ---- step 4b: zones the artist corrects -----------------------------------
+//
+// Trapped-ball cuts from the ink it can see, so it leaks a garment into the
+// background wherever the ink is open, and returns forty scraps wherever the
+// drawing is busy. Merging and cutting are the corrections, and they happen
+// here — between the cut and the colour — because they are permanent and
+// there is no unmerge to fall back on.
+//
+// One rule runs the selection: a zone is selected while the button is pressed
+// over it. A press picks one; holding and moving picks up everything the
+// pointer passes over; two zones on opposite sides of the page take two
+// presses and drag nothing in between, because the button was up.
+
+// "panel:label" -> {panel, label, bounds, image}. Insertion order is the order
+// the artist met them, which is what the menu counts.
+const picked = new Map();
+let sweep = null; // {points: [[x, y], …], sent: number} while the button is down
+let cutting = null; // {panel, label, stroke: [[x, y], …]} after "Cut this zone"
+
+const key = (panel, label) => `${panel}:${label}`;
+
+async function rememberZone(zone) {
+  const at = key(zone.panel, zone.label);
+  if (picked.has(at)) return;
+  picked.set(at, {
+    ...zone,
+    image: await loadImage(`/api/zone/${zone.panel}/${zone.label}.png`),
+  });
+}
+
+function clearPicked() {
+  picked.clear();
+  render();
+  applyEditMode();
+}
+
+// A press toggles the zone under it; a sweep only ever adds. Otherwise
+// wobbling back over a zone mid-sweep would drop it again, and a long sweep
+// would be a coin toss.
+async function pressZone(x, y) {
+  try {
+    const zone = await call(`/api/zone?x=${Math.round(x)}&y=${Math.round(y)}`);
+    const at = key(zone.panel, zone.label);
+    if (picked.has(at)) {
+      picked.delete(at);
+      say(`Zone ${zone.label} dropped — ${picked.size} selected.`);
+    } else {
+      await rememberZone(zone);
+      say(`Zone ${zone.label} selected — ${picked.size} selected.`);
+    }
+  } catch {
+    say("No zone there — that pixel is line, gutter, or a protected balloon.");
+  }
+  render();
+  applyEditMode();
+}
+
+// The sweep goes to the server as a path, once, rather than as a hit test per
+// mouse move: one request knows every zone the stroke crossed, including the
+// ones that fell between two samples.
+async function sweptZones(points) {
+  const found = await call("/api/zones/along", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ points }),
+  });
+  for (const zone of found.zones) await rememberZone(zone);
+  if (found.zones.length) say(`${picked.size} zones selected.`);
+  render();
+  applyEditMode();
+}
+
+function drawPicked() {
+  for (const zone of picked.values()) {
+    if (!zone.image) continue;
+    const [left, top, right, bottom] = zone.bounds;
+    const [x, y] = view.toScreen(left, top);
+    const [ex, ey] = view.toScreen(right + 1, bottom + 1);
+    ctx.drawImage(zone.image, x, y, ex - x, ey - y);
+  }
+  if (cutting) drawCut();
+}
+
+// The cut, while it is being drawn: the line the ink was missing.
+function drawCut() {
+  if (!cutting.stroke.length) return;
+  ctx.save();
+  ctx.strokeStyle = "#ff5c5c";
+  ctx.lineWidth = 2.5;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  cutting.stroke.forEach(([px, py], index) => {
+    const [x, y] = view.toScreen(px, py);
+    index === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+  ctx.restore();
+}
+
+async function mergePicked() {
+  const zones = [...picked.values()];
+  const panel = zones[0].panel;
+  if (zones.some((zone) => zone.panel !== panel)) {
+    say("Zones merge inside one panel. The same shirt in the next panel is the palette's job.", true);
+    return;
+  }
+  try {
+    const next = await call("/api/zones/merge", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ panel, labels: zones.map((zone) => zone.label) }),
+    });
+    picked.clear();
+    await adopt(next);
+    say(`${next.result.merged} zones are now one.`);
+  } catch (error) {
+    say(error.message, true);
+  }
+}
+
+function startCut() {
+  const [zone] = [...picked.values()];
+  cutting = { panel: zone.panel, label: zone.label, stroke: [] };
+  applyEditMode();
+  say("Draw the line the ink was missing: press, drag across the zone, release.");
+}
+
+function stopCut() {
+  cutting = null;
+  applyEditMode();
+  render();
+}
+
+async function applyCut() {
+  const { panel, label, stroke } = cutting;
+  cutting = null;
+  try {
+    const next = await call("/api/zones/cut", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ panel, label, stroke }),
+    });
+    picked.clear();
+    await adopt(next);
+    say(`Zone cut into ${next.result.pieces}.`);
+  } catch (error) {
+    // The zone is untouched, so the selection still means something.
+    applyEditMode();
+    render();
+    say(error.message, true);
+  }
 }
 
 // ---- the palette, and the references that offer colours to it -------------
@@ -483,10 +642,19 @@ function applyEditMode() {
     stage.classList.remove("on-corner", "on-edge");
     return;
   }
-  $("layer-panels").disabled = !editable("panels");
-  $("layer-bubbles").disabled = !editable("bubbles");
-  $("layer-panels").checked = which === "panels";
-  $("layer-bubbles").checked = which === "bubbles";
+  for (const name of ["panels", "bubbles", "zones"]) {
+    $(`layer-${name}`).disabled = !editable(name);
+    $(`layer-${name}`).checked = which === name;
+  }
+
+  if (which === "zones") {
+    $("edit-note").textContent = cutting
+      ? "Draw the line the ink was missing: press, drag across the zone, release. Right-click to stop."
+      : `Press a zone to select it, hold and sweep to add more, press again to drop it.` +
+        ` Right-click to merge${picked.size === 1 ? ", cut" : ""} or clear.` +
+        (picked.size ? ` ${picked.size} selected.` : "");
+    return;
+  }
   $("edit-note").textContent =
     `Drag a corner to move it. Click an edge to add one. Click empty page to` +
     ` draw a new ${which === "panels" ? "panel" : "bubble"}, and click its first` +
@@ -544,6 +712,9 @@ function editable(which) {
 // every correction made so far.
 function activeLayer() {
   if (layer && editable(layer)) return layer;
+  // Zones last in the list and first in time: once they exist, the panels and
+  // balloons they were cut from are settled, so nothing else is editable.
+  if (editable("zones")) return "zones";
   if (editable("bubbles")) return "bubbles";
   if (editable("panels")) return "panels";
   return null;
@@ -714,6 +885,19 @@ stage.addEventListener("pointerdown", (event) => {
   const [sx, sy] = local(event);
   const point = onPage(view.toImage(sx, sy));
 
+  if (activeLayer() === "zones") {
+    stage.setPointerCapture(event.pointerId);
+    if (cutting) {
+      cutting.stroke = [point];
+      render();
+      return;
+    }
+    // The press itself selects; the sweep that may follow only adds.
+    sweep = { points: [point], sent: 0 };
+    pressZone(point[0], point[1]);
+    return;
+  }
+
   if (draft) {
     const [fx, fy] = view.toScreen(draft.points[0][0], draft.points[0][1]);
     if (draft.points.length >= 3 && Math.hypot(fx - sx, fy - sy) <= HANDLE + 3) {
@@ -750,6 +934,23 @@ stage.addEventListener("pointermove", (event) => {
   if (!activeLayer()) return;
   const [sx, sy] = local(event);
 
+  if (activeLayer() === "zones") {
+    if (cutting && cutting.stroke.length) {
+      cutting.stroke.push(onPage(view.toImage(sx, sy)));
+      render();
+    } else if (sweep) {
+      sweep.points.push(onPage(view.toImage(sx, sy)));
+      // Sent in flight rather than only on release, so the highlight keeps up
+      // with the hand. Each request carries the path since the last one.
+      if (sweep.points.length - sweep.sent > 12) {
+        const path = sweep.points.slice(Math.max(0, sweep.sent - 1));
+        sweep.sent = sweep.points.length;
+        sweptZones(path);
+      }
+    }
+    return;
+  }
+
   if (drag) {
     shapes()[drag.index][drag.corner] = onPage(view.toImage(sx, sy));
     drag.dirty = true;
@@ -767,6 +968,19 @@ stage.addEventListener("pointermove", (event) => {
 });
 
 stage.addEventListener("pointerup", (event) => {
+  if (activeLayer() === "zones") {
+    if (stage.hasPointerCapture(event.pointerId)) stage.releasePointerCapture(event.pointerId);
+    if (cutting && cutting.stroke.length) {
+      applyCut();
+      return;
+    }
+    if (sweep) {
+      const path = sweep.points.slice(Math.max(0, sweep.sent - 1));
+      sweep = null;
+      if (path.length > 1) sweptZones(path);
+    }
+    return;
+  }
   if (!drag) return;
   const dirty = drag.dirty;
   const index = drag.index;
@@ -804,6 +1018,23 @@ stage.addEventListener("contextmenu", (event) => {
   event.preventDefault();
   const [sx, sy] = local(event);
 
+  if (activeLayer() === "zones") {
+    if (cutting) {
+      openMenu(event, [{ label: "Stop cutting", action: stopCut }]);
+      return;
+    }
+    const items = [];
+    if (picked.size >= 2) {
+      items.push({ label: `Merge these ${picked.size} zones`, action: mergePicked });
+    }
+    // Cutting is one zone's business: with several selected there is no
+    // saying which one the stroke belongs to.
+    if (picked.size === 1) items.push({ label: "Cut this zone", action: startCut });
+    if (picked.size) items.push({ label: "Clear selection", action: clearPicked });
+    if (items.length) openMenu(event, items);
+    return;
+  }
+
   if (draft) {
     openMenu(event, [{ label: "Stop drawing this " + noun(), action: discardDraft }]);
     return;
@@ -826,7 +1057,7 @@ document.addEventListener("pointerdown", (event) => {
   if (!$("menu").hidden && !$("menu").contains(event.target)) closeMenu();
 });
 
-for (const which of ["panels", "bubbles"]) {
+for (const which of ["panels", "bubbles", "zones"]) {
   $("layer-" + which).addEventListener("change", () => {
     layer = which;
     draft = null;
@@ -967,6 +1198,8 @@ $("ins-palette").addEventListener("click", (event) => {
 document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
   if (!$("menu").hidden) return closeMenu();
+  if (cutting) return stopCut();
+  if (picked.size) return clearPicked();
   if (draft) return discardDraft();
   if (selected) {
     selected = null;
@@ -1043,8 +1276,8 @@ const warnings = {
       "replaced by what the detector finds.",
   "btn-zones": () =>
     state.done.zones &&
-    "Segment zones again?\n\nThe flats go with them, and so does everything " +
-      "you have snapped on this page.",
+    "Segment zones again?\n\nThe page is cut from scratch: every merge, every " +
+      "cut, the flats, and everything you have snapped on this page.",
   "btn-flats": () =>
     state.done.flats &&
     "Generate flats again?\n\nEvery colour you have snapped on this page goes " +

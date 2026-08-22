@@ -37,6 +37,27 @@ class Shape(BaseModel):
     polygon: list[tuple[int, int]]
 
 
+class Stroke(BaseModel):
+    """A path in page space — a sweep that selects, or a cut that separates."""
+
+    points: list[tuple[int, int]]
+
+
+class Merge(BaseModel):
+    """The zones of one panel that are one thing."""
+
+    panel: int
+    labels: list[int]
+
+
+class Cut(BaseModel):
+    """One zone, and the line the ink was missing."""
+
+    panel: int
+    label: int
+    stroke: list[tuple[int, int]]
+
+
 class Colour(BaseModel):
     """One colour, as the picker left it."""
 
@@ -215,6 +236,61 @@ def create_app(
         if not session.state()["done"]["zones"]:
             raise HTTPException(404, "zones not segmented")
         return _png(session.zones_rgba())
+
+    # -- 4b. correcting the zones ----------------------------------------
+    #
+    # Trapped-ball leaks a garment into the background through a gap in the
+    # ink, and splits a pair of trousers into forty scraps. These are the two
+    # corrections, and they are permanent: they happen at step 4, before a
+    # single colour is proposed.
+
+    @app.get("/api/zone")
+    def zone_at(x: int, y: int):
+        """The zone under a page-space point — what a press resolves to."""
+        found = session.zone_at(x, y)
+        if found is None:
+            raise HTTPException(404, "no zone at that point")
+        panel, label = found
+        _, bounds = session.zone_mask_rgba(panel, label)
+        return {"panel": panel, "label": label, "bounds": list(bounds)}
+
+    @app.post("/api/zones/along")
+    def zones_along(stroke: Stroke):
+        """Every zone a sweep passed over. One request for the whole gesture."""
+        found = session.zones_along(stroke.points)
+        # The bounds travel with the zones: the browser draws each highlight
+        # at its own box, and asking for them one at a time would undo the
+        # point of answering a whole sweep in one request.
+        boxes = {panel: session.zone_bounds(panel) for panel, _ in found}
+        return {
+            "zones": [
+                {"panel": panel, "label": label, "bounds": list(boxes[panel][label])}
+                for panel, label in found
+            ]
+        }
+
+    @app.get("/api/zone/{panel}/{label}.png")
+    def zone_png(panel: int, label: int):
+        """One zone as a tinted overlay, cropped to its bounds.
+
+        The bounds come back in the headers rather than in a second request:
+        the browser needs both to draw it, and a selection of forty zones is
+        forty of these.
+        """
+        rgba, bounds = session.zone_mask_rgba(panel, label)
+        response = _png(rgba)
+        response.headers["x-bounds"] = ",".join(str(edge) for edge in bounds)
+        return response
+
+    @app.post("/api/zones/merge")
+    def merge_zones(merge: Merge):
+        result = session.merge_zones(merge.panel, merge.labels)
+        return {**session.state(), "result": result}
+
+    @app.post("/api/zones/cut")
+    def cut_zone(cut: Cut):
+        result = session.cut_zone(cut.panel, cut.label, cut.stroke)
+        return {**session.state(), "result": result}
 
     # -- palette / references --------------------------------------------
 

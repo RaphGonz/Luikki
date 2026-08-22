@@ -23,8 +23,10 @@ import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import cv2
 import numpy as np
 from PIL import Image
+from scipy import ndimage
 
 from ..colour.extract import extract_palette
 from ..colour.proposer import (
@@ -40,7 +42,7 @@ from ..export.psd import PanelFlats, flats_preview, write_psd
 from ..extract.base import LineExtractor
 from ..extract.manga_line import MangaLineExtractor
 from ..model.entities import PaletteEntry
-from ..model.masks import UNASSIGNED
+from ..model.masks import UNASSIGNED, region_stats
 from ..segmentation.bubbles import BubbleDetector, detect_bubbles
 from ..segmentation.panels import segment_panels
 from ..segmentation.preprocess import binarise_lines, load_line_art
@@ -69,6 +71,21 @@ class PanelState:
             return 0
         present = np.unique(self.label_map)
         return int((present != UNASSIGNED).sum())
+
+
+def _overshoot(points: np.ndarray, margin: int) -> np.ndarray:
+    """Extend a stroke past both ends, along the direction it was going."""
+
+    def past(here, before):
+        step = here - before
+        length = float(np.hypot(*step))
+        if length < 1:
+            return here
+        return (here + step / length * margin).astype(np.int32)
+
+    return np.vstack(
+        [past(points[0], points[1]), points, past(points[-1], points[-2])]
+    )
 
 
 def _rgb(value) -> tuple[int, int, int]:
@@ -408,6 +425,238 @@ class Session:
             self._zones_done = True
             self._flats_done = False
             return self.panels
+
+    # -- 4b. the artist's corrections to the zones -----------------------
+    #
+    # Trapped-ball cuts a panel into zones from the ink it can see, and the
+    # ink is not always closed. So it leaks a garment into the background
+    # through a gap, and it splits what the eye reads as one thing — a pair of
+    # trousers, a glass, a pair of shoes — into forty scraps that would each
+    # need colouring by hand.
+    #
+    # Merge and cut are the two corrections that follow, and they are the last
+    # thing the artist does before the colours arrive. **They are permanent.**
+    # There is no unmerge and no history: keeping one would mean carrying the
+    # segmenter's original map beside the artist's, and every later stage
+    # would have to say which of the two it meant. The stage boundary is the
+    # protection instead — this is step 4's work, it happens before a single
+    # colour is proposed, and pressing Segment zones again starts the page
+    # over.
+
+    def _require_zone_stage(self) -> None:
+        self._require_page()
+        if not self._zones_done:
+            raise StepError("Segment zones first — there are no zones to correct yet.")
+        if self._flats_done:
+            raise StepError(
+                "The flats are coloured from these zones. Press Segment zones to "
+                "cut the page again — every merge and cut goes with it."
+            )
+
+    def zone_at(self, x: int, y: int) -> tuple[int, int] | None:
+        """The (panel, label) under a page-space point, or None.
+
+        Read off the label map, like `segment_at`, and for the same reason:
+        bounds overlap for interlocking zones and a press has to resolve to
+        the zone the artist actually pointed at. Unlike `segment_at` this one
+        works before `generate_flats` has invented a single segment.
+        """
+        with self.lock:
+            for panel in self.panels:
+                if panel.label_map is None:
+                    continue
+                local_x, local_y = x - panel.x, y - panel.y
+                if not (0 <= local_x < panel.width and 0 <= local_y < panel.height):
+                    continue
+                label = int(panel.label_map[local_y, local_x])
+                if label == UNASSIGNED:
+                    continue
+                return panel.order, label
+            return None
+
+    def zones_along(self, points) -> list[tuple[int, int]]:
+        """Every zone a stroke passes over, in the order it met them.
+
+        The sweep. A pair of trousers is forty scraps and forty presses is not
+        an interface, so holding the button and moving picks up everything
+        under the pointer — but only what is *under* it, which is why two
+        zones on opposite sides of the page still take two presses and drag
+        nothing in between.
+
+        Sampled every pixel between the points the browser sent: at a page
+        zoomed to fit, one screen pixel is three page pixels, and a small zone
+        between two samples would be skipped.
+        """
+        with self.lock:
+            found: list[tuple[int, int]] = []
+            seen: set[tuple[int, int]] = set()
+            for (x0, y0), (x1, y1) in zip(points, points[1:] or points):
+                steps = max(abs(int(x1) - int(x0)), abs(int(y1) - int(y0)), 1)
+                for step in range(steps + 1):
+                    x = int(x0 + (int(x1) - int(x0)) * step / steps)
+                    y = int(y0 + (int(y1) - int(y0)) * step / steps)
+                    zone = self.zone_at(x, y)
+                    if zone is not None and zone not in seen:
+                        seen.add(zone)
+                        found.append(zone)
+            return found
+
+    def zone_bounds(self, panel_order: int) -> dict[int, tuple[int, int, int, int]]:
+        """Page-space bounds of every zone in a panel, in one pass.
+
+        The browser needs a box per zone to place the highlight it draws, and
+        a sweep hands it forty zones at a time — one vectorised pass beats
+        forty mask scans.
+        """
+        with self.lock:
+            panel = self._panel_for(panel_order)
+            if panel.label_map is None:
+                return {}
+            return {
+                int(label): (
+                    int(x) + panel.x,
+                    int(y) + panel.y,
+                    int(x) + int(width) - 1 + panel.x,
+                    int(y) + int(height) - 1 + panel.y,
+                )
+                for label, (_, (x, y, width, height)) in region_stats(
+                    panel.label_map
+                ).items()
+            }
+
+    def merge_zones(self, panel_order: int, labels) -> dict:
+        """Make several zones one zone. One address, one colour, one click.
+
+        The largest keeps its label, so the zone's anchor stays in the body of
+        the trousers rather than in a 300px scrap.
+
+        Zones need not touch: the panes of a glass and a shirt split by an arm
+        are one thing to colour and one thing here. A zone is a set of pixels,
+        not a blob. What they must share is a panel — labels are panel-local,
+        and the same shirt in the next panel is the palette's job.
+        """
+        with self.lock:
+            self._require_zone_stage()
+            panel = self._panel_for(panel_order)
+            if panel.label_map is None:
+                raise StepError(f"Panel {panel_order + 1} has no zones.")
+
+            wanted = {int(label) for label in labels}
+            present = {
+                label: int(area)
+                for label, area in zip(*np.unique(panel.label_map, return_counts=True))
+                if int(label) in wanted and int(label) != UNASSIGNED
+            }
+            if len(present) < 2:
+                raise StepError("Select at least two zones of one panel to merge.")
+
+            survivor = max(present, key=lambda label: present[label])
+            others = [label for label in present if label != survivor]
+            panel.label_map[np.isin(panel.label_map, others)] = survivor
+            return {
+                "panel": panel_order,
+                "label": int(survivor),
+                "merged": len(present),
+                "area": int(sum(present.values())),
+            }
+
+    def cut_zone(self, panel_order: int, label: int, stroke, width: int = 3) -> dict:
+        """Split one zone along a stroke — the line the ink was missing.
+
+        The cause of a leaked zone is an open contour, so the correction is
+        the contour: the artist draws across the gap and the zone parts along
+        it. Nothing is thrown away — the stroke's own pixels go to whichever
+        piece they are nearest, so the page keeps every pixel it had.
+        """
+        with self.lock:
+            self._require_zone_stage()
+            panel = self._panel_for(panel_order)
+            if panel.label_map is None:
+                raise StepError(f"Panel {panel_order + 1} has no zones.")
+
+            mask = panel.label_map == int(label)
+            if not mask.any():
+                raise StepError(f"No zone {label} in panel {panel_order + 1}.")
+
+            points = np.array(
+                [[int(x) - panel.x, int(y) - panel.y] for x, y in stroke], np.int32
+            )
+            if len(points) < 2:
+                raise StepError("Draw the cut across the zone, from one side to the other.")
+
+            # Both ends run on past where the hand stopped. A stroke has to
+            # leave the zone on both sides to separate it, and stopping a few
+            # pixels short is the commonest way a cut fails — while the
+            # overshoot itself can do no harm, since the wall is only ever
+            # applied inside this zone's own mask.
+            points = _overshoot(points, max(mask.shape) // 20 + 10)
+
+            wall = np.zeros(mask.shape, np.uint8)
+            cv2.polylines(wall, [points.reshape(-1, 1, 2)], False, 1, max(1, width))
+            remaining = mask & (wall == 0)
+
+            count, pieces = cv2.connectedComponents(
+                remaining.astype(np.uint8), connectivity=8
+            )
+            if count - 1 < 2:
+                raise StepError(
+                    "That stroke does not separate the zone — draw it right across, "
+                    "from one edge of the zone to the other."
+                )
+
+            next_label = int(panel.label_map.max()) + 1
+            made = [int(label)]
+            for piece in range(2, count):
+                panel.label_map[pieces == piece] = next_label
+                made.append(next_label)
+                next_label += 1
+
+            # The stroke's own pixels: give each to the nearest piece, so a cut
+            # never leaves a seam of unassigned pixels for the flats to fringe
+            # around.
+            seam = mask & (wall != 0)
+            if seam.any():
+                _, (rows, cols) = ndimage.distance_transform_edt(
+                    ~remaining, return_indices=True
+                )
+                panel.label_map[seam] = panel.label_map[rows[seam], cols[seam]]
+
+            return {"panel": panel_order, "labels": made, "pieces": len(made)}
+
+    def zone_mask_rgba(self, panel_order: int, label: int) -> tuple[np.ndarray, tuple[int, int, int, int]]:
+        """One zone as a tinted overlay, cropped to its own bounds.
+
+        Cropped because selecting forty zones must not mean forty full-page
+        PNGs: each of these is a few kilobytes and the browser composites them
+        at the bounds this returns with it.
+        """
+        with self.lock:
+            panel = self._panel_for(panel_order)
+            if panel.label_map is None:
+                raise StepError(f"Panel {panel_order + 1} has no zones.")
+            mask = panel.label_map == int(label)
+            rows, cols = np.nonzero(mask)
+            if not len(rows):
+                raise StepError(f"No zone {label} in panel {panel_order + 1}.")
+
+            top, bottom = int(rows.min()), int(rows.max())
+            left, right = int(cols.min()), int(cols.max())
+            window = mask[top : bottom + 1, left : right + 1]
+            rgba = np.zeros((*window.shape, 4), dtype=np.uint8)
+            # A wash plus a hard edge. The wash alone disappears against a
+            # zone map that is already saturated colour, and "which zones are
+            # selected" is the one question this image exists to answer.
+            rgba[window] = (255, 255, 255, 90)
+            inside = cv2.erode(
+                window.astype(np.uint8), np.ones((3, 3), np.uint8), iterations=2
+            ).astype(bool)
+            rgba[window & ~inside] = (255, 255, 255, 255)
+            return rgba, (
+                left + panel.x,
+                top + panel.y,
+                right + panel.x,
+                bottom + panel.y,
+            )
 
     def structural_mask(self) -> np.ndarray:
         """The line mask zones are segmented from. §7's swappable extractor.
@@ -1087,6 +1336,9 @@ class Session:
                 "editable": {
                     "panels": bool(self.panels) and not self._zones_done,
                     "bubbles": self._bubbles_done and not self._zones_done,
+                    # Zones are corrected between the cut and the colour, and
+                    # the corrections are permanent — there is no unmerge.
+                    "zones": self._zones_done and not self._flats_done,
                 },
                 # Step 6 is per-segment and never "done" — what the sidebar
                 # reports is how much of the page the artist has resolved.
