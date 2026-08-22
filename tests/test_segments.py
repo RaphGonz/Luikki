@@ -45,12 +45,11 @@ def _ready(tmp_path, with_sheet=True):
         # A reference offers colours; the palette is what the artist took.
         # These tests want the whole sheet in, which is a choice they have to
         # make like anyone else.
-        colours = session.add_reference(
+        stored = session.add_reference(
             _sheet(tmp_path / "sheet.png"), original_name="sheet.png"
         )
-        reference_id = session.reference_store.list()[-1].id
-        for rgb in colours:
-            session.include_candidate(reference_id, rgb)
+        for rgb in session.candidates(stored[0].id):
+            session.include_candidate(stored[0].id, rgb)
     session.load_page(_page(tmp_path / "page.png"), original_name="page.png")
     session.detect_panels()
     session.segment_zones()

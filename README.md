@@ -14,7 +14,7 @@ Then open <http://127.0.0.1:8000>.
 | 2 Detect panels | gutter network → traced polygons, box fallback; corners then dragged | `segmentation/panels.py` |
 | 3 Detect bubbles | RT-DETR box → radial trace → polygon; corners then dragged | `segmentation/bubbles.py` |
 | 4 Segment zones | MangaLineExtraction → LineFiller trapped-ball, per panel; then merged and cut by hand | `extract/`, `segmentation/segmenter.py` |
-| Add reference | image for the model; its colours offered as chips | `colour/references.py` |
+| Add reference | image for the model; a finished page splits into its panels | `colour/references.py` |
 | Add palette | image of swatches; every colour taken | `colour/extract.py` |
 | 5 Generate flats | proposer → per-segment mode, **no snap** | `colour/` |
 | 6 Snap | per segment, artist-driven; `snap all` for the bulk | `colour/segments.py` |
@@ -36,6 +36,19 @@ This is what Cobra is shown. Its colours are *extracted and offered*: chips
 under the thumbnail, dimmed until taken. Clicking one puts it in the palette,
 clicking a lit one takes it out. A drawing's colours are a proposal, because
 the extraction cannot tell the character's jacket from the wall behind it.
+
+A **finished page is stored as its panels**, not as itself. Cobra retrieves
+patches — it tiles the reference, ranks the tiles against the panel being
+coloured, and reads colour out of whichever ones match — and most patches of a
+whole page are backgrounds and props, so the tile covering a face can retrieve
+something that is not a face. That is measured, not assumed: a tight crop of
+one coloured face reproduced a character's skin where a whole finished page of
+the same character in the same colour world produced a cold blue one. Panel
+detection runs on the upload and each panel is stored as its own `panel`
+reference, cropped to its box and *not* masked to its polygon — white padding
+would put white in the patches the retrieval ranks, and a reference exists to
+supply colour. A page whose panels cannot be found is stored whole: half a
+split is worse than none.
 
 **Add palette** — an image of your swatches. Same extraction, no chips: every
 colour in it goes straight into the palette. A palette *is* the decision about
@@ -323,8 +336,9 @@ colours cleanly.
 face reproduced that character's skin correctly where a whole finished page of
 the same character in the same colour world produced a cold blue face. Most
 patches on a full page are backgrounds and props, so the query patch covering a
-face can retrieve something that is not a face. This matters for promoting
-corrected pages to references: crop them to character scale first.
+face can retrieve something that is not a face. Uploading a finished page now
+splits it into its panels for this reason; cropping further, to character
+scale, is still the artist's call.
 
 **Colour hints propagate, but not reliably.** A hint filled a whole ink-bounded
 region in one test and only tinted it in another. When measuring one, sample

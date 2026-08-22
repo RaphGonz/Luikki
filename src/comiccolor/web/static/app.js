@@ -84,7 +84,14 @@ async function step(label, path, options) {
 
 function summary(next, label) {
   if (next.result) {
-    const { assigned, segments, colours, snapped, skipped } = next.result;
+    const { assigned, segments, colours, snapped, skipped, added, kind } = next.result;
+    // One file in, several references out: a finished page is stored as the
+    // panels it splits into, and the artist pressed one button.
+    if (added !== undefined) {
+      return added > 1
+        ? `${added} panels taken from that page — each one is a reference of its own.`
+        : `Reference added as one ${kind}.`;
+    }
     if (snapped !== undefined && skipped !== undefined) {
       return `${snapped} segments snapped, ${skipped} left as proposed.`;
     }

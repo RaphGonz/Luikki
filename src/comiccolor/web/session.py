@@ -28,7 +28,7 @@ import numpy as np
 from PIL import Image
 from scipy import ndimage
 
-from ..colour.extract import extract_palette
+from ..colour.extract import EmptyImageError, extract_palette
 from ..colour.proposer import (
     ColourProposer,
     DistinctColourProposer,
@@ -757,25 +757,82 @@ class Session:
 
     def add_reference(
         self, path: str | Path, original_name: str = "", kind: str = "sheet"
-    ) -> list[tuple[int, int, int]]:
+    ) -> list[Reference]:
         """Store a drawing and read its colours out. Neither joins the palette.
 
-        `kind` is `page`, `panel` or `sheet`. It changes nothing here; it is
-        recorded because the proposal-time fitting step needs it and only the
-        artist knows it.
+        `kind` is `page`, `panel` or `sheet`. It is recorded because the
+        proposal-time fitting step needs it and only the artist knows it.
 
         A character sheet is a drawing that happens to contain colours, so
         which of them the book actually uses is a judgement — the extraction
         offers, the artist chooses. That is the whole difference from
         `add_palette`, where choosing has already happened.
+
+        A finished *page* is stored as its panels rather than as itself: see
+        `_split_into_panels`.
         """
         if kind == PALETTE_KIND:
             raise StepError("A palette image goes in through Add palette.")
         with self.lock:
-            reference = self.reference_store.add(
-                path, label=original_name or Path(path).name, kind=kind
-            )
-            return self.candidates(reference.id)
+            label = original_name or Path(path).name
+            if kind == "page":
+                panels = self._split_into_panels(path, label)
+                if panels:
+                    return panels
+            return [self.reference_store.add(path, label=label, kind=kind)]
+
+    def _split_into_panels(self, path: str | Path, label: str) -> list[Reference]:
+        """A finished page, stored as the panels it is made of.
+
+        Cobra retrieves patches: it cuts the reference into tiles, ranks them
+        against the panel being coloured, and reads the colour out of whichever
+        ones match. Most patches of a whole page are backgrounds and props, so
+        the tile covering a face can retrieve something that is not a face —
+        measured, and the reason a tight crop of one coloured face reproduced a
+        character's skin where a whole finished page of the same character in
+        the same colour world produced a cold blue one.
+
+        Splitting on the way in is that finding made automatic: each panel is
+        one composition, and its tiles come from one scene.
+
+        Panels are cropped to their boxes and not masked to their polygons. A
+        diagonal panel's crop catches a sliver of its neighbour, which is drawn
+        colour; masking it out would put white in the patches the retrieval
+        ranks, and a reference exists to supply colour (`cobra._tiles`).
+
+        A page whose panels cannot be found — one that bleeds, one drawn
+        without frames — comes back empty, and the caller stores the page
+        whole. Half a split is worse than none.
+        """
+        try:
+            line_mask, _ = load_line_art(path)
+            found = segment_panels(line_mask)
+        except (OSError, ValueError):
+            return []
+        if len(found) < 2:
+            return []
+
+        stored: list[Reference] = []
+        with Image.open(path) as opened:
+            page = opened.convert("RGB")
+            for order, panel in enumerate(found):
+                crop = page.crop(
+                    (panel.x, panel.y, panel.x + panel.width, panel.y + panel.height)
+                )
+                staged = self.workdir / f"_panel{order + 1}_{Path(str(path)).name}"
+                staged = staged.with_suffix(".png")
+                crop.save(staged)
+                try:
+                    stored.append(
+                        self.reference_store.add(
+                            staged,
+                            label=f"{label} — panel {order + 1}",
+                            kind="panel",
+                        )
+                    )
+                finally:
+                    staged.unlink(missing_ok=True)
+        return stored
 
     def add_palette(self, path: str | Path, original_name: str = "") -> list[PaletteEntry]:
         """Store a palette image and take every colour in it.
@@ -836,9 +893,14 @@ class Session:
         with self.lock:
             if reference_id not in self._candidates:
                 image = Image.fromarray(self.reference_store.image(reference_id))
-                self._candidates[reference_id] = [
-                    colour.rgb for colour in extract_palette(image, sheet_mode=True)
-                ]
+                try:
+                    found = extract_palette(image, sheet_mode=True)
+                except EmptyImageError:
+                    # A panel of solid black, or one of bare paper. It offers
+                    # nothing, which is an answer — not a reason for the whole
+                    # sidebar to fail to load.
+                    found = []
+                self._candidates[reference_id] = [colour.rgb for colour in found]
             return self._candidates[reference_id]
 
     def include_candidate(self, reference_id: int, rgb) -> PaletteEntry:

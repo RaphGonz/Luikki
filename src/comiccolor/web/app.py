@@ -303,7 +303,7 @@ def create_app(
             shutil.copyfileobj(file.file, handle)
             staged = Path(handle.name)
         try:
-            session.add_reference(staged, original_name=name, kind=kind)
+            stored = session.add_reference(staged, original_name=name, kind=kind)
         except UnknownKind as exc:
             raise HTTPException(422, str(exc)) from exc
         except EmptyImageError as exc:
@@ -313,7 +313,13 @@ def create_app(
         finally:
             # The store keeps its own copy, so the upload never lingers.
             staged.unlink(missing_ok=True)
-        return session.state()
+        # A finished page arrives as one file and is stored as several
+        # references. The artist pressed one button, so the answer says what
+        # actually happened to it.
+        return {
+            **session.state(),
+            "result": {"added": len(stored), "kind": stored[0].kind},
+        }
 
     @app.delete("/api/reference/{reference_id}")
     def delete_reference(reference_id: int):

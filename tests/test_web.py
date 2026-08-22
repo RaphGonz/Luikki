@@ -697,11 +697,13 @@ def test_reference_round_trip_over_http(tmp_path, client):
     so every one of these has a button behind it in `app.js`."""
     sheet = _sheet(tmp_path / "sheet.png")
 
-    response = _add_reference(client, sheet, kind="page")
+    # `panel` rather than `page`: a page is stored as the panels it splits
+    # into, which is its own test below.
+    response = _add_reference(client, sheet, kind="panel")
     assert response.status_code == 200
     state = response.json()
     assert len(state["references"]) == 1
-    assert state["references"][0]["kind"] == "page"
+    assert state["references"][0]["kind"] == "panel"
     assert state["palette"] == [], "an upload put colours in the palette by itself"
 
     candidates = state["references"][0]["candidates"]
@@ -725,6 +727,30 @@ def test_reference_round_trip_over_http(tmp_path, client):
     assert deleted.json()["references"] == []
     # The image is gone; the colour taken from it is the artist's and stays.
     assert len(deleted.json()["palette"]) == 1
+
+
+def test_uploading_a_finished_page_adds_its_panels(client, tmp_path):
+    """One upload, several references — and the artist sees which."""
+    import numpy as np
+    from PIL import Image
+
+    image = np.full((400, 600, 3), 255, dtype=np.uint8)
+    for index, fill in enumerate([(200, 60, 50), (60, 90, 200)]):
+        left = 20 + index * 300
+        image[20:380, left : left + 260] = fill
+        image[20:26, left : left + 260] = 0
+        image[374:380, left : left + 260] = 0
+        image[20:380, left : left + 6] = 0
+        image[20:380, left + 254 : left + 260] = 0
+        image[120:220, left + 60 : left + 200] = (250, 230, 180)
+    finished = tmp_path / "finished.png"
+    Image.fromarray(image).save(finished)
+
+    state = _add_reference(client, finished, kind="page").json()
+
+    assert len(state["references"]) == 2
+    assert {r["kind"] for r in state["references"]} == {"panel"}
+    assert state["result"] == {"added": 2, "kind": "panel"}
 
 
 def test_deleting_an_absent_reference_is_404(client):

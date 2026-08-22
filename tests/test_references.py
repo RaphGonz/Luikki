@@ -94,7 +94,8 @@ def test_a_reference_offers_colours_and_takes_none(tmp_path):
     chosen, which is the whole difference between the two.
     """
     session = Session(tmp_path / "work")
-    offered = session.add_reference(_sheet(tmp_path / "a.png"), original_name="a.png")
+    stored = session.add_reference(_sheet(tmp_path / "a.png"), original_name="a.png")
+    offered = session.candidates(stored[0].id)
 
     assert len(offered) >= 3
     assert session.palette == [], "an upload put colours in the palette by itself"
@@ -114,7 +115,8 @@ def test_deleting_a_reference_keeps_the_colours_taken_from_it(tmp_path):
     click that said nothing about colour.
     """
     session = Session(tmp_path / "work")
-    offered = session.add_reference(_sheet(tmp_path / "a.png"), original_name="a.png")
+    stored = session.add_reference(_sheet(tmp_path / "a.png"), original_name="a.png")
+    offered = session.candidates(stored[0].id)
     for rgb in offered:
         session.include_candidate(1, rgb)
     kept = [entry.rgb for entry in session.palette]
@@ -164,17 +166,85 @@ def test_a_palette_id_is_never_handed_out_twice(tmp_path):
     it. Ids are therefore monotonic and survive deletion — the palette is held
     now, not re-derived, and nothing renumbers it."""
     session = Session(tmp_path / "work")
-    offered = session.add_reference(_sheet(tmp_path / "a.png"), original_name="a.png")
+    stored = session.add_reference(_sheet(tmp_path / "a.png"), original_name="a.png")
+    offered = session.candidates(stored[0].id)
     seen = [session.include_candidate(1, rgb).id for rgb in offered]
 
     session.delete_palette_entry(seen[0])
     more = session.add_reference(
         _sheet(tmp_path / "b.png", colours=((10, 200, 10),)), original_name="b.png"
     )
-    seen.append(session.include_candidate(2, more[0]).id)
+    seen.append(session.include_candidate(2, session.candidates(more[0].id)[0]).id)
 
     assert len(set(seen)) == len(seen)
     assert seen[-1] > max(seen[:-1]), "a deleted id came back"
+
+
+def _coloured_page(path, panels=2):
+    """A finished page: framed panels, each a different colour world."""
+    image = np.full((400, 600, 3), 255, dtype=np.uint8)
+    fills = [(200, 60, 50), (60, 90, 200), (70, 170, 90)]
+    for index in range(panels):
+        left = 20 + index * 300
+        image[20:380, left : left + 260] = fills[index % len(fills)]
+        # A frame, and something inside it that is not the fill.
+        image[20:26, left : left + 260] = 0
+        image[374:380, left : left + 260] = 0
+        image[20:380, left : left + 6] = 0
+        image[20:380, left + 254 : left + 260] = 0
+        image[120:220, left + 60 : left + 200] = (250, 230, 180)
+    Image.fromarray(image).save(path)
+    return path
+
+
+def test_a_finished_page_is_stored_as_its_panels(tmp_path):
+    """Cobra retrieves patches, and most patches of a whole page are
+    backgrounds and props — so the tile covering a face can retrieve something
+    that is not a face. Splitting on the way in is that finding made
+    automatic: each stored reference is one composition."""
+    session = Session(tmp_path / "work")
+    stored = session.add_reference(
+        _coloured_page(tmp_path / "finished.png"), original_name="finished.png", kind="page"
+    )
+
+    assert len(stored) == 2
+    assert [reference.kind for reference in stored] == ["panel", "panel"]
+    assert [reference.label for reference in stored] == [
+        "finished.png — panel 1",
+        "finished.png — panel 2",
+    ]
+    assert not [r for r in session.reference_store if r.kind == "page"]
+
+    # Each panel is croppped to its own box, so its colours are its own.
+    first, second = (session.candidates(reference.id) for reference in stored)
+    assert first and second
+    assert first != second
+
+
+def test_a_page_whose_panels_cannot_be_found_is_stored_whole(tmp_path):
+    """Half a split is worse than none. A page that bleeds, or one drawn
+    without frames, stays one reference and says so through its kind."""
+    session = Session(tmp_path / "work")
+    stored = session.add_reference(
+        _coloured_page(tmp_path / "one.png", panels=1),
+        original_name="one.png",
+        kind="page",
+    )
+
+    assert len(stored) == 1
+    assert stored[0].kind == "page"
+    assert stored[0].label == "one.png"
+
+
+def test_the_panels_of_a_page_are_what_the_proposer_is_shown(tmp_path):
+    session = Session(tmp_path / "work")
+    session.add_reference(
+        _coloured_page(tmp_path / "finished.png"), original_name="finished.png", kind="page"
+    )
+    shown = session.reference_images()
+    assert [image.kind for image in shown] == ["panel", "panel"]
+    # Cropped, so each one is smaller than the page it came from.
+    assert all(image.pixels.shape[1] < 600 for image in shown)
 
 
 def test_kinds_are_the_three_the_fitting_step_knows(tmp_path):
@@ -224,7 +294,8 @@ def test_removing_a_palette_takes_its_colours_and_leaves_the_sheets(tmp_path):
     repaint every zone snapped to them.
     """
     session = Session(tmp_path / "work")
-    offered = session.add_reference(_sheet(tmp_path / "sheet.png"), original_name="s.png")
+    stored = session.add_reference(_sheet(tmp_path / "sheet.png"), original_name="s.png")
+    offered = session.candidates(stored[0].id)
     from_sheet = session.include_candidate(1, offered[0]).id
     palette_colours = session.add_palette(
         _sheet(tmp_path / "swatches.png", colours=((10, 200, 10), (20, 20, 190))),
