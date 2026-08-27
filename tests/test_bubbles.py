@@ -28,6 +28,19 @@ from comiccolor.segmentation.bubbles import BubbleParams, trace_bubble
 PAGES = Path(__file__).resolve().parent.parent / "test_pages"
 
 
+def _page(name: str) -> Path:
+    """A test page by filename, wherever under `test_pages/` it now lives.
+
+    The artist groups the pages by book as the set grows, so the directory
+    layout moves; the filenames in `bubble_counts.txt` do not. Searching by
+    name keeps the counts file the thing this test is pinned to.
+    """
+    found = sorted(PAGES.rglob(name))
+    if not found:
+        raise FileNotFoundError(f"{name} is not anywhere under {PAGES}")
+    return found[0]
+
+
 def _page_with_balloon(gap: int = 0) -> tuple[np.ndarray, np.ndarray]:
     """A closed elliptical balloon with a line of lettering inside it.
 
@@ -190,7 +203,7 @@ def test_detector_matches_the_artists_counts():
 
     found = {}
     for name in expected:
-        line_mask, grey = load_line_art(PAGES / name)
+        line_mask, grey = load_line_art(_page(name))
         found[name] = len(detect_bubbles(grey, line_mask, detector=detector))
 
     assert found == expected
