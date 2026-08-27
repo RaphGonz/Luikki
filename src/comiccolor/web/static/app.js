@@ -836,8 +836,11 @@ async function saveShape(index) {
 }
 
 async function deleteCorner({ index, corner }) {
+  // A triangle has no smaller shape to become. Taking a corner off it is the
+  // artist saying this detection is wrong, not that it needs one fewer side,
+  // so delete the whole thing rather than refuse the click.
   if (shapes()[index].length <= 3) {
-    say("A " + noun() + " needs at least three corners.", true);
+    await deleteShape(index);
     return;
   }
   shapes()[index].splice(corner, 1);
@@ -1048,7 +1051,11 @@ stage.addEventListener("contextmenu", (event) => {
   }
   const corner = hitCorner(sx, sy);
   if (corner) {
-    openMenu(event, [{ label: "Delete this corner", action: () => deleteCorner(corner) }]);
+    // On a triangle the corner *is* the shape — say so, so the click that
+    // removes the whole detection never comes as a surprise.
+    const last = shapes()[corner.index].length <= 3;
+    const label = last ? "Delete this " + noun() : "Delete this corner";
+    openMenu(event, [{ label, action: () => deleteCorner(corner) }]);
     return;
   }
   const index = shapeAt(sx, sy);
