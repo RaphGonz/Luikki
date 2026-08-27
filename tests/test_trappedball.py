@@ -1,10 +1,16 @@
 import cv2
 import numpy as np
 
-from comiccolor.model.masks import check_coverage, region_count, region_stats
+from comiccolor.model.masks import (
+    UNASSIGNED,
+    check_coverage,
+    region_count,
+    region_stats,
+)
 from comiccolor.segmentation.protected import rasterize_protected_for_panel
 from comiccolor.segmentation.trappedball import (
     SegmentationParams,
+    inked_zones,
     expand_under_lines,
     trapped_ball_segment,
 )
@@ -140,3 +146,64 @@ def test_protected_pixels_stay_unassigned_across_a_panel_boundary():
 
         expanded = expand_under_lines(labels, panel_line, protected=panel_protected)
         assert not expanded[panel_protected].any()
+
+
+def test_inked_zones_names_the_solid_black_and_not_the_art():
+    """A region that is all ink is a region whose colour can never be seen.
+
+    The artist's ink composites over the flat, so selecting their spot black
+    and recolouring it does nothing at all. Measured on `laurine`: 21 zones
+    sat at exactly 1.0 ink, and none at all between 0.99 and 1.0.
+    """
+    labels = np.zeros((40, 60), dtype=np.int32)
+    labels[5:35, 5:25] = 1   # art: no ink inside
+    labels[5:35, 35:55] = 2  # the inside of a spot black
+
+    ink = np.zeros((40, 60), dtype=bool)
+    ink[5:35, 35:55] = True
+
+    doomed = inked_zones(labels, ink)
+
+    assert not doomed[1], "the drawing must survive"
+    assert doomed[2], "the spot black must not"
+    assert not doomed[UNASSIGNED], "paper is not a zone"
+
+
+def test_inked_zones_keeps_a_zone_the_ink_only_crosses():
+    """A line through a region is not the region being ink."""
+    labels = np.zeros((40, 60), dtype=np.int32)
+    labels[5:35, 5:55] = 1
+
+    ink = np.zeros((40, 60), dtype=bool)
+    ink[19:21, 5:55] = True  # a stroke across it
+
+    assert not inked_zones(labels, ink).any()
+
+
+def test_inked_zones_threshold_is_the_caller_s():
+    labels = np.ones((10, 10), dtype=np.int32)
+    ink = np.zeros((10, 10), dtype=bool)
+    ink[:9] = True  # 90%
+
+    assert not inked_zones(labels, ink, fraction=0.99)[1]
+    assert inked_zones(labels, ink, fraction=0.90)[1]
+
+
+def test_a_zone_is_judged_before_expansion_not_after():
+    """Expansion pushes a sliver under a stroke; that must not condemn it.
+
+    A thin zone beside a thick line comes out of `expand_under_lines` mostly
+    ink, and measuring there would take it for the artist's spot black.
+    """
+    labels = np.zeros((30, 30), dtype=np.int32)
+    labels[15, 1] = 1        # a sliver of art beside a broad stroke
+    labels[0:5, 25:30] = 2   # far enough away to claim none of it
+
+    ink = np.zeros((30, 30), dtype=bool)
+    ink[10:21, 2:13] = True
+
+    assert not inked_zones(labels, ink)[1], "judged before expansion"
+
+    # 1 pixel of art plus the 121 it grew under: 99.2% ink, and condemned.
+    expanded = expand_under_lines(labels, ink)
+    assert inked_zones(expanded, ink)[1], "measuring after would have taken it"

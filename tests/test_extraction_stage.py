@@ -167,3 +167,36 @@ def test_the_real_extractor_thins_ink(tmp_path):
     structural = ink_fraction(session.structural_mask())
 
     assert structural < raw, f"extractor did not thin the ink ({structural} vs {raw})"
+
+
+def test_a_spot_black_is_not_a_zone_of_its_own(tmp_path):
+    """The extractor's one bad case, removed without giving the extractor up.
+
+    A solid black comes back from the extractor as its outline, so the fill is
+    open and trapped-ball returns the inside as a region. The artist could
+    select their own black hair, recolour it, and watch nothing happen: their
+    ink layer composites over the flat. `drop_inked_zones` takes it, and the
+    pixels it took are held back from expansion too — otherwise every
+    neighbour floods in and they meet in the middle of the black, which reads
+    on screen as zones running straight across the stroke.
+    """
+    page = brush_page(tmp_path)
+
+    # What MangaLineExtraction does to a fill: keep the outline, drop the ink.
+    lines = np.full((300, 400), 255, dtype=np.uint8)
+    cv2.rectangle(lines, (10, 10), (390, 290), 0, 3)
+    cv2.rectangle(lines, (200, 60), (330, 200), 0, 3)
+
+    session = Session(tmp_path / "work", extractor=FakeExtractor(lines))
+    session.load_page(page)
+    session.detect_panels()
+    session.segment_zones()
+
+    panel = session.panels[0]
+    black = panel.label_map[70:190, 210:320]   # well inside the solid black
+
+    assert (black == UNASSIGNED).all(), "the spot black still carries zones"
+    assert len(set(np.unique(black)) - {UNASSIGNED}) == 0
+
+    # The drawing either side of it is untouched.
+    assert panel.label_map[130, 350] != UNASSIGNED

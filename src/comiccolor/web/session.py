@@ -48,7 +48,7 @@ from ..segmentation.panels import segment_panels
 from ..segmentation.preprocess import binarise_lines, load_line_art
 from ..segmentation.protected import rasterize_protected_for_panel
 from ..segmentation.segmenter import LineFillerSegmenter
-from ..segmentation.trappedball import expand_under_lines
+from ..segmentation.trappedball import expand_under_lines, inked_zones
 
 
 @dataclass
@@ -414,15 +414,24 @@ class Session:
                 )
                 blocked = self._blocked_for(panel)
                 labels = segmenter.segment(structural[window], protected=blocked)
+                raw = self.line_mask[window]
+                # Which zones are the artist's own spot black, measured here
+                # and punched below. Measured on the labels the segmenter
+                # returned, because after expansion every sliver that grew
+                # under a stroke looks black too.
+                doomed = inked_zones(labels, raw)
                 # Flats must meet underneath the ink, or every line leaves a
-                # white seam in the export (§10, anti-aliased line art).
-                # This one takes the *raw* ink, not the structural lines: the
-                # layer the artist drops on top is their real ink, so that is
-                # what the flats have to reach under — including the solid
-                # blacks the extractor turned into contours.
-                panel.label_map = expand_under_lines(
-                    labels, self.line_mask[window], protected=blocked
-                )
+                # white seam in the export (§10, anti-aliased line art). This
+                # one takes the *raw* ink, not the structural lines: the layer
+                # the artist drops on top is their real ink, so that is what
+                # the flats have to reach under.
+                expanded = expand_under_lines(labels, raw, protected=blocked)
+                # Now the hole. Left in place through expansion the spot black
+                # was a wall the neighbours stopped against; taken out before
+                # it, they would have flooded it and met in its middle, which
+                # draws zones straight across the stroke separating them.
+                expanded[doomed[expanded]] = UNASSIGNED
+                panel.label_map = expanded
                 panel.assignments = {}
                 panel.flagged = set()
 

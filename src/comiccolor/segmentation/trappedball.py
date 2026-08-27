@@ -293,3 +293,62 @@ def expand_under_lines(
         target &= ~protected
     out[target] = expanded[target]
     return out
+
+
+# A region this much of which is the artist's own ink is not a region the
+# artist can use. Left generous rather than exact: the zones this catches on a
+# real page sit at 1.0, so anything short of certainty separates them.
+INKED_ZONE_FRACTION = 0.99
+
+
+def inked_zones(
+    labels: np.ndarray,
+    line_mask: np.ndarray,
+    fraction: float = INKED_ZONE_FRACTION,
+) -> np.ndarray:
+    """Which regions are almost entirely the artist's ink.
+
+    Returns a boolean array indexed by label, so `doomed[label_map]` is the
+    per-pixel mask and a label that survived expansion is caught with it.
+
+    A line extractor returns a solid black as its *contour*, which leaves the
+    fill open, so trapped-ball hands the inside back as a region. The artist
+    can then select their own spot black — a character's hair, a shadow — and
+    recolour it, and nothing happens, because their ink layer composites over
+    the flat and the flat was never visible. A zone you cannot see the colour
+    of is worse than no zone: it takes a click to discover it does nothing.
+
+    Segmenting the raw ink instead would avoid this, and costs more than it
+    saves: the extractor is what keeps hatching and screentone from shattering
+    a panel into hundreds of slivers, which is §2.2's measured reason for
+    having it. So the extractor stays and its one bad case is removed here.
+
+    **Measure before `expand_under_lines`, punch after it.** Measuring after
+    would condemn any sliver expansion had pushed under a stroke. Punching
+    before would hand expansion a hole that is line and unassigned, which is
+    its cue to flood: every neighbour grows in at once and they meet somewhere
+    in the middle of the black, drawing zones straight across the stroke that
+    is supposed to separate them. Left in place through expansion the region
+    is a wall, the neighbours stop against it, and then it goes.
+    """
+    if labels.shape != line_mask.shape:
+        raise ValueError(
+            f"labels {labels.shape} does not match line mask {line_mask.shape}"
+        )
+
+    max_label = int(labels.max()) if labels.size else 0
+    if max_label < 1:
+        return np.zeros(1, dtype=bool)
+
+    flat = labels.ravel()
+    sizes = np.bincount(flat, minlength=max_label + 1)
+    inked = np.bincount(
+        flat, weights=line_mask.ravel().astype(np.float64), minlength=max_label + 1
+    )
+
+    with np.errstate(invalid="ignore", divide="ignore"):
+        share = np.where(sizes > 0, inked / np.maximum(sizes, 1), 0.0)
+
+    doomed = share >= fraction
+    doomed[UNASSIGNED] = False
+    return doomed
