@@ -167,6 +167,7 @@ def test_panel_line_art_is_masked_to_its_polygon(tmp_path):
     partly not this panel. What gets *painted* out there never mattered —
     those zones come back UNASSIGNED — but what the model reads does.
     """
+    from comiccolor.extract.passthrough import PassthroughExtractor
     from comiccolor.web.session import PanelState, Session
 
     page = tmp_path / "page.png"
@@ -174,7 +175,9 @@ def test_panel_line_art_is_masked_to_its_polygon(tmp_path):
     art[10:90, 10:90] = 0  # ink everywhere inside, so masking is visible
     Image.fromarray(art).save(page)
 
-    session = Session(tmp_path / "work")
+    # Masking is the subject here, not extraction: passthrough keeps the ink
+    # where this test put it.
+    session = Session(tmp_path / "work", extractor=PassthroughExtractor())
     session.load_page(page)
 
     # An L: the top-right quarter is not part of the panel.
@@ -195,6 +198,7 @@ def test_panel_line_art_is_masked_to_its_polygon(tmp_path):
 
 def test_a_rectangular_panel_is_unchanged_by_masking(tmp_path):
     """The common case must cost nothing."""
+    from comiccolor.extract.passthrough import PassthroughExtractor
     from comiccolor.segmentation.panels import box_to_polygon, PanelBox
     from comiccolor.web.session import PanelState, Session
 
@@ -202,14 +206,46 @@ def test_a_rectangular_panel_is_unchanged_by_masking(tmp_path):
     rng = np.random.default_rng(0)
     Image.fromarray(rng.integers(0, 255, (60, 80), dtype=np.uint8)).save(page)
 
-    session = Session(tmp_path / "work")
+    session = Session(tmp_path / "work", extractor=PassthroughExtractor())
     session.load_page(page)
 
     box = PanelBox(x=0, y=0, width=80, height=60)
     panel = PanelState(order=0, x=0, y=0, width=80, height=60, polygon=box_to_polygon(box))
 
     line_art = session._line_art_for(panel)
-    assert (line_art[:, :, 0] == session.grey).all()
+    assert (line_art[:, :, 0] == session.structural_lines()).all()
+
+
+def test_the_proposer_reads_the_extractor_not_the_raw_ink(tmp_path):
+    """The mirror of `test_segmentation_reads_the_extractor_not_the_raw_ink`.
+
+    Cobra conditions its DiT on the soft output of a line model and never on
+    the artist's file. Feeding it `self.grey` put heavy brush, spot black and
+    hatching into a network trained on none of them, and left the proposer
+    reading a different drawing from the one trapped-ball cut into zones.
+    """
+    from comiccolor.segmentation.panels import box_to_polygon, PanelBox
+    from comiccolor.web.session import PanelState, Session
+
+    from test_extraction_stage import FakeExtractor
+
+    page = tmp_path / "page.png"
+    art = np.full((60, 80), 255, dtype=np.uint8)
+    art[20:40, 20:60] = 0  # a spot black the extractor would return as contour
+    Image.fromarray(art).save(page)
+
+    lines = np.full((60, 80), 255, dtype=np.uint8)
+    lines[20:22, 20:60] = 0  # the extractor's answer: an outline, not a fill
+
+    session = Session(tmp_path / "work", extractor=FakeExtractor(lines))
+    session.load_page(page)
+
+    box = PanelBox(x=0, y=0, width=80, height=60)
+    panel = PanelState(order=0, x=0, y=0, width=80, height=60, polygon=box_to_polygon(box))
+
+    line_art = session._line_art_for(panel)
+    assert (line_art[:, :, 0] == lines).all()
+    assert (line_art[30:38, 25:55] == 255).all(), "the spot black must not reach the model"
 
 
 # -- sheets: tiles placed on the drawings -----------------------------------

@@ -400,7 +400,7 @@ class CobraProposer:
     # come back as noise at 512.
     resolution: int = 1024
     num_inference_steps: int = 10
-    top_k: int = 3
+    top_k: int = 4
     seed: int = 0
     device: str = "cuda"
 

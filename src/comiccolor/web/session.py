@@ -156,7 +156,11 @@ class Session:
         self.height = 0
         self.grey: np.ndarray | None = None
         self.line_mask: np.ndarray | None = None
-        # Extractor output, computed lazily by `structural_mask`.
+        # Extractor output, computed lazily by `structural_lines`. The
+        # greyscale is kept as well as the mask because the two consumers want
+        # different things from it: trapped-ball wants a boolean ink map, the
+        # proposer wants the soft line image the model was trained on.
+        self._structural_lines: np.ndarray | None = None
         self._structural: np.ndarray | None = None
         self.panels: list[PanelState] = []
         self.protected: list[list[tuple[int, int]]] = []
@@ -680,11 +684,27 @@ class Session:
         Computed once per page and cached: it is seconds on a GPU, minutes on
         a CPU, and it does not change until a new page is loaded.
         """
-        self._require_page()
         if self._structural is None:
-            lines = self.extractor.extract(self.grey).lines
-            self._structural = binarise_lines(lines)
+            self._structural = binarise_lines(self.structural_lines())
         return self._structural
+
+    def structural_lines(self) -> np.ndarray:
+        """The extractor's own output, greyscale, before any threshold.
+
+        `structural_mask` binarises this for trapped-ball; the proposer wants
+        it as it comes. Cobra's `app.py` conditions its DiT on the soft output
+        of its own line model, never on the artist's file, so handing it the
+        raw scan puts heavy brush, spot black and hatching into a network that
+        saw none of them in training. §7 already calls the soft-to-binary
+        threshold a parameter of the pipeline rather than a detail — this is
+        the consumer for which the threshold is simply wrong.
+
+        Shares the cache with `structural_mask`: one extractor pass per page.
+        """
+        self._require_page()
+        if self._structural_lines is None:
+            self._structural_lines = self.extractor.extract(self.grey).lines
+        return self._structural_lines
 
     def reference_images(self) -> list[ReferenceImage]:
         """The book's references, with the kind the artist gave each one.
@@ -716,8 +736,13 @@ class Session:
         What is *painted* outside the polygon has never mattered: zones there
         come back UNASSIGNED from `_blocked_for` and are never coloured. What
         the model sees is the part that did.
+
+        The crop comes from `structural_lines`, not from `self.grey`. The
+        proposer and trapped-ball then read the same drawing, which is what
+        makes a zone boundary and the colour proposed inside it agree.
         """
-        crop = self.grey[
+        lines = self.structural_lines()
+        crop = lines[
             panel.y : panel.y + panel.height, panel.x : panel.x + panel.width
         ]
         inside = rasterize_protected_for_panel(
