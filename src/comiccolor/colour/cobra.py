@@ -49,6 +49,7 @@ an edit.
 
 from __future__ import annotations
 
+import random
 import sys
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -154,11 +155,29 @@ def _max_overlap() -> float:
     return float(os.environ.get("COMICCOLOR_TILE_OVERLAP", _SUBJECT_MAX_OVERLAP))
 
 
+# The control that asks whether the *ranking* matters at all. `random` takes
+# `top_k` tiles at random from the pool, `bottom` takes the worst-ranked ones.
+# Both exist to answer one question -- whether reference retrieval is the lever
+# on a bad proposal, or whether the DiT would have painted the same panel
+# whatever it was handed -- and the answer belongs in `reports/`, not in a
+# default. Read at call time, like the tile knobs above.
+def _pick() -> str:
+    return os.environ.get("COMICCOLOR_RANK_PICK", "top")
+
+
 def _budget_for(kind: str) -> int:
     override = os.environ.get("COMICCOLOR_TILE_BUDGET")
     if override:
         return int(override)
     return _TILE_BUDGET.get(kind, _TILE_BUDGET["sheet"])
+
+
+# Enlarge the query no further than this before dropping to native size. A
+# panel within a fifth of the frame keeps filling it; below that the drawing is
+# placed at its own size on white. Calibrated, not derived: the harmful
+# enlargements measured in `reports/11-manga` were 2.05x and up, and the one
+# panel hurt by capping was at 1.01x.
+_MAX_QUERY_UPSCALE = 1.2
 
 
 def _letterbox(image, target_w: int, target_h: int):
@@ -186,12 +205,41 @@ def _letterbox(image, target_w: int, target_h: int):
 
     width, height = image.size
     scale = min(target_w / width, target_h / height)
+    # A panel is never *enlarged* into the frame, only ever shrunk to fit it.
+    # Blowing up ink is what ruined the small panels: bicubic turns a crisp
+    # black edge into a grey ramp, and Cobra's quality tracks line-art
+    # cleanliness hard. Measured on `manga_page.jpg`, whose panels need 2x to
+    # 6x -- Sakura went from grey to her own pink, Sasuke from flooded blue to
+    # black hair, and the one panel that already worked did not move
+    # (`reports/11-manga`). A small drawing sitting small on white beats the
+    # same drawing invented at six times its size.
+    #
+    # The cap has a tolerance, and `laurine_page` p3 is why. At 1.01 it moved
+    # the drawing twelve pixels inside a 1024 frame and the output moved 25
+    # points of saturation -- the DiT is chaotic at that boundary, so a panel
+    # that already nearly fills the frame is left to fill it. Every enlargement
+    # measured as harmful was 2x or more.
+    #
+    # `COMICCOLOR_QUERY_FIT=scale` restores the old behaviour for comparison.
+    if os.environ.get("COMICCOLOR_QUERY_FIT") != "scale" and scale > _MAX_QUERY_UPSCALE:
+        scale = 1.0
     inner = (max(1, round(width * scale)), max(1, round(height * scale)))
     left = (target_w - inner[0]) // 2
     top = (target_h - inner[1]) // 2
 
+    fitted = image.resize(inner, Image.BICUBIC)
+    # Re-inking an enlarged panel with Otsu was the other candidate fix and it
+    # is worse than doing nothing: it also erases the greys, and the model
+    # hands back what is nearly the line art (`reports/11-manga/01`). Kept as a
+    # knob because refuting it cost two runs and the next person should not
+    # have to repeat them.
+    if os.environ.get("COMICCOLOR_QUERY_SHARPEN") == "1" and scale > 1:
+        grey = cv2.cvtColor(np.asarray(fitted), cv2.COLOR_RGB2GRAY)
+        _, ink = cv2.threshold(grey, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        fitted = Image.fromarray(np.repeat(ink[:, :, None], 3, axis=2))
+
     canvas = Image.new("RGB", (target_w, target_h), "white")
-    canvas.paste(image.resize(inner, Image.BICUBIC), (left, top))
+    canvas.paste(fitted, (left, top))
     return canvas, (left, top, left + inner[0], top + inner[1])
 
 
@@ -268,7 +316,7 @@ def _overlap(a, b) -> float:
     return intersection / (area_a + area_b - intersection)
 
 
-def _subject_tiles(image, target_w: int, target_h: int, budget: int) -> list:
+def _subject_windows(image, target_w: int, target_h: int, budget: int) -> list:
     """Tiles placed on the drawings rather than on a grid.
 
     A grid stride over a character sheet gives bands: against a tall panel the
@@ -284,8 +332,6 @@ def _subject_tiles(image, target_w: int, target_h: int, budget: int) -> list:
     if len(found) < _MIN_SUBJECTS:
         return []
 
-    from PIL import Image
-
     target_ratio = target_w / target_h
     kept: list = []
     for subject in found:
@@ -296,14 +342,17 @@ def _subject_tiles(image, target_w: int, target_h: int, budget: int) -> list:
         if len(kept) >= budget:
             break
 
-    return [image.crop(w).resize((target_w, target_h), Image.BICUBIC) for w in kept]
+    return kept
 
 
-def _tiles(image, target_w: int, target_h: int, budget: int, kind: str = "sheet") -> list:
-    """Cut a reference into patches the model can read.
+def _tile_windows(image, target_w: int, target_h: int, budget: int, kind: str = "sheet") -> list:
+    """Where to cut a reference, as boxes in its own pixel coordinates.
+
+    Split out from `_tiles` so an experiment can ask *where* a tile came from
+    without re-deriving the geometry and drifting from it.
 
     A `sheet` is a montage, so its tiles are placed on the drawings
-    (`_subject_tiles`). A `page` or a `panel` is one composition with no paper
+    (`_subject_windows`). A `page` or a `panel` is one composition with no paper
     between its subjects, so there is nothing to place tiles on and the grid
     below is used instead.
 
@@ -325,10 +374,8 @@ def _tiles(image, target_w: int, target_h: int, budget: int, kind: str = "sheet"
     the neighbouring tile. Retrieval then picks whichever tiles match; that is
     what retrieval is for.
     """
-    from PIL import Image
-
     if kind == "sheet":
-        placed = _subject_tiles(image, target_w, target_h, budget)
+        placed = _subject_windows(image, target_w, target_h, budget)
         if placed:
             return placed
 
@@ -337,7 +384,7 @@ def _tiles(image, target_w: int, target_h: int, budget: int, kind: str = "sheet"
     ratio = width / height
 
     if abs(ratio - target_ratio) / target_ratio < _ASPECT_TOLERANCE:
-        return [image.resize((target_w, target_h), Image.BICUBIC)]
+        return [(0, 0, width, height)]
 
     if ratio > target_ratio:  # source is wider: cut vertical slices
         extent = max(1, round(height * target_ratio))
@@ -357,12 +404,21 @@ def _tiles(image, target_w: int, target_h: int, budget: int, kind: str = "sheet"
         middle = (span - extent) / 2
         starts = sorted(sorted(starts, key=lambda s: abs(s - middle))[:budget])
 
-    boxes = (
+    return (
         [(s, 0, s + extent, height) for s in starts]
         if ratio > target_ratio
         else [(0, s, width, s + extent) for s in starts]
     )
-    return [image.crop(box).resize((target_w, target_h), Image.BICUBIC) for box in boxes]
+
+
+def _tiles(image, target_w: int, target_h: int, budget: int, kind: str = "sheet") -> list:
+    """The windows of `_tile_windows`, cropped and fitted to the target frame."""
+    from PIL import Image
+
+    return [
+        image.crop(box).resize((target_w, target_h), Image.BICUBIC)
+        for box in _tile_windows(image, target_w, target_h, budget, kind)
+    ]
 
 
 class CobraUnavailable(RuntimeError):
@@ -568,6 +624,14 @@ class CobraProposer:
                 dim=-1,
             )
             ranked = torch.argsort(similarity, descending=True, dim=1).tolist()
+
+            pick = _pick()
+            if pick == "bottom":
+                ranked = [row[::-1] for row in ranked]
+            elif pick == "random":
+                shuffler = random.Random(self.seed)
+                ranked = [shuffler.sample(row, len(row)) for row in ranked]
+
             selected = [
                 [
                     reference_patches[index].resize((target_w // 2, target_h // 2)).convert("RGB")

@@ -312,7 +312,7 @@ def test_one_big_drawing_falls_back_to_the_grid():
 def test_subject_windows_keep_the_target_aspect_exactly():
     """The patch must reach half the query's size without distortion, so the
     window it is cropped from has to be the target's shape already."""
-    from comiccolor.colour.cobra import _subject_tiles, _subjects, _window_for
+    from comiccolor.colour.cobra import _subjects, _window_for
 
     sheet = _montage()
     for subject in _subjects(sheet):
