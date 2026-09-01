@@ -37,7 +37,7 @@ under the thumbnail, dimmed until taken. Clicking one puts it in the palette,
 clicking a lit one takes it out. A drawing's colours are a proposal, because
 the extraction cannot tell the character's jacket from the wall behind it.
 
-A **finished page is stored as its panels**, not as itself. Cobra retrieves
+A **finished page is stored whole *and* as its panels**. Cobra retrieves
 patches — it tiles the reference, ranks the tiles against the panel being
 coloured, and reads colour out of whichever ones match — and most patches of a
 whole page are backgrounds and props, so the tile covering a face can retrieve
@@ -47,8 +47,15 @@ the same character in the same colour world produced a cold blue one. Panel
 detection runs on the upload and each panel is stored as its own `panel`
 reference, cropped to its box and *not* masked to its polygon — white padding
 would put white in the patches the retrieval ranks, and a reference exists to
-supply colour. A page whose panels cannot be found is stored whole: half a
-split is worse than none.
+supply colour.
+
+Only panels big enough to reach the model's frame without being blown up are
+cut out (`_MAX_UPSCALE`), because an enlarged panel outranks the sharp tile
+that actually holds the character. The page is kept whichever way that goes:
+the colours of a panel too small to cut are still *in* the page, and scored
+against the artist's own labels, page-plus-panels ranks exactly as well as the
+best arm measured. A page whose panels cannot be found is simply stored on its
+own — half a split is worse than none.
 
 **Add palette** — an image of your swatches. Same extraction, no chips: every
 colour in it goes straight into the palette. A palette *is* the decision about
@@ -337,8 +344,8 @@ face reproduced that character's skin correctly where a whole finished page of
 the same character in the same colour world produced a cold blue face. Most
 patches on a full page are backgrounds and props, so the query patch covering a
 face can retrieve something that is not a face. Uploading a finished page now
-splits it into its panels for this reason; cropping further, to character
-scale, is still the artist's call.
+stores it whole and cuts out the panels large enough to be worth cutting;
+cropping further, to character scale, is still the artist's call.
 
 **Dropping duplicate tiles is not what makes a page bland.** Tested because it
 looked like the obvious suspect: `_subject_tiles` skips a window overlapping a

@@ -84,12 +84,16 @@ async function step(label, path, options) {
 
 function summary(next, label) {
   if (next.result) {
-    const { assigned, segments, colours, snapped, skipped, added, kind } = next.result;
+    const { assigned, segments, colours, snapped, skipped, added, kind, panels } = next.result;
     // One file in, several references out: a finished page is stored as the
     // panels it splits into, and the artist pressed one button.
     if (added !== undefined) {
-      return added > 1
-        ? `${added} panels taken from that page — each one is a reference of its own.`
+      // A page is kept whole and cut up: the artist pressed one button and
+      // got several references, and the count of each is the honest answer.
+      // Panels too small for the model to read are not cut out, which is why
+      // this number is often lower than the panels they can see.
+      return panels
+        ? `Page kept whole, plus ${panels} panel${panels > 1 ? "s" : ""} cut from it — ${added} references.`
         : `Reference added as one ${kind}.`;
     }
     if (snapped !== undefined && skipped !== undefined) {

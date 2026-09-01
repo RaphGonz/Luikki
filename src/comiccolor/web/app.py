@@ -314,11 +314,16 @@ def create_app(
             # The store keeps its own copy, so the upload never lingers.
             staged.unlink(missing_ok=True)
         # A finished page arrives as one file and is stored as several
-        # references. The artist pressed one button, so the answer says what
-        # actually happened to it.
+        # references — itself, plus the panels big enough to be worth cutting
+        # out. The artist pressed one button, so the answer says what actually
+        # happened to it.
         return {
             **session.state(),
-            "result": {"added": len(stored), "kind": stored[0].kind},
+            "result": {
+                "added": len(stored),
+                "kind": stored[0].kind,
+                "panels": sum(1 for r in stored if r.kind == "panel"),
+            },
         }
 
     @app.delete("/api/reference/{reference_id}")

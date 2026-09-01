@@ -751,9 +751,9 @@ def test_uploading_a_finished_page_adds_its_panels(client, tmp_path):
 
     state = _add_reference(client, finished, kind="page").json()
 
-    assert len(state["references"]) == 2
-    assert {r["kind"] for r in state["references"]} == {"panel"}
-    assert state["result"] == {"added": 2, "kind": "panel"}
+    assert len(state["references"]) == 3
+    assert [r["kind"] for r in state["references"]] == ["page", "panel", "panel"]
+    assert state["result"] == {"added": 3, "kind": "page", "panels": 2}
 
 
 def test_deleting_an_absent_reference_is_404(client):

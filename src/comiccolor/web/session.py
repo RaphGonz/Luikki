@@ -812,21 +812,26 @@ class Session:
         offers, the artist chooses. That is the whole difference from
         `add_palette`, where choosing has already happened.
 
-        A finished *page* is stored as its panels rather than as itself: see
-        `_split_into_panels`.
+        A finished *page* is stored whole **and** as the panels it is made of:
+        see `_split_into_panels`.
         """
         if kind == PALETTE_KIND:
             raise StepError("A palette image goes in through Add palette.")
         with self.lock:
             label = original_name or Path(path).name
+            stored = [self.reference_store.add(path, label=label, kind=kind)]
             if kind == "page":
-                panels = self._split_into_panels(path, label)
-                if panels:
-                    return panels
-            return [self.reference_store.add(path, label=label, kind=kind)]
+                stored += self._split_into_panels(path, label)
+            return stored
 
     def _split_into_panels(self, path: str | Path, label: str) -> list[Reference]:
-        """A finished page, stored as the panels it is made of.
+        """The panels of a finished page, stored *alongside* the page itself.
+
+        The page is kept whether or not this returns anything. A panel dropped
+        below the guard is not just unused, its colours leave the pool
+        entirely — four of `laurine_colo`'s six go — and those colours are
+        still in the page. Scored in `reports/10-retrieval`, page-plus-panels
+        matches the best arm exactly, so keeping both costs nothing.
 
         Cobra retrieves patches: it cuts the reference into tiles, ranks them
         against the panel being coloured, and reads the colour out of whichever

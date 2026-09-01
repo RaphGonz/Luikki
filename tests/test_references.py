@@ -204,26 +204,30 @@ def _coloured_page(path, panels=2, scale=3):
     return path
 
 
-def test_a_finished_page_is_stored_as_its_panels(tmp_path):
+def test_a_finished_page_is_stored_whole_and_as_its_panels(tmp_path):
     """Cobra retrieves patches, and most patches of a whole page are
     backgrounds and props — so the tile covering a face can retrieve something
-    that is not a face. Splitting on the way in is that finding made
-    automatic: each stored reference is one composition."""
+    that is not a face. Cutting the page up on the way in is that finding made
+    automatic: each panel reference is one composition.
+
+    The page itself is kept too. A panel below the size guard is not merely
+    unused — its colours leave the pool with it, and they are still in the
+    page."""
     session = Session(tmp_path / "work")
     stored = session.add_reference(
         _coloured_page(tmp_path / "finished.png"), original_name="finished.png", kind="page"
     )
 
-    assert len(stored) == 2
-    assert [reference.kind for reference in stored] == ["panel", "panel"]
+    assert len(stored) == 3
+    assert [reference.kind for reference in stored] == ["page", "panel", "panel"]
     assert [reference.label for reference in stored] == [
+        "finished.png",
         "finished.png — panel 1",
         "finished.png — panel 2",
     ]
-    assert not [r for r in session.reference_store if r.kind == "page"]
 
     # Each panel is croppped to its own box, so its colours are its own.
-    first, second = (session.candidates(reference.id) for reference in stored)
+    first, second = (session.candidates(reference.id) for reference in stored[1:])
     assert first and second
     assert first != second
 
@@ -249,9 +253,9 @@ def test_the_panels_of_a_page_are_what_the_proposer_is_shown(tmp_path):
         _coloured_page(tmp_path / "finished.png"), original_name="finished.png", kind="page"
     )
     shown = session.reference_images()
-    assert [image.kind for image in shown] == ["panel", "panel"]
-    # Cropped, so each one is smaller than the page it came from.
-    assert all(image.pixels.shape[1] < 600 * 3 for image in shown)
+    assert [image.kind for image in shown] == ["page", "panel", "panel"]
+    # Cropped, so each panel is smaller than the page it came from.
+    assert all(image.pixels.shape[1] < 600 * 3 for image in shown[1:])
 
 
 def test_a_page_whose_panels_are_too_small_is_kept_whole(tmp_path):
