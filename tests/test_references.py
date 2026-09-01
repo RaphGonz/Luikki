@@ -180,8 +180,14 @@ def test_a_palette_id_is_never_handed_out_twice(tmp_path):
     assert seen[-1] > max(seen[:-1]), "a deleted id came back"
 
 
-def _coloured_page(path, panels=2):
-    """A finished page: framed panels, each a different colour world."""
+def _coloured_page(path, panels=2, scale=3):
+    """A finished page: framed panels, each a different colour world.
+
+    Saved at `scale` times the sketch below, because a page is measured
+    against the proposer's own frame: `_split_into_panels` drops a panel that
+    would have to be blown up past `_MAX_UPSCALE` to reach it, and a 600 px
+    "page" has no panel that survives. Real pages are thousands of pixels.
+    """
     image = np.full((400, 600, 3), 255, dtype=np.uint8)
     fills = [(200, 60, 50), (60, 90, 200), (70, 170, 90)]
     for index in range(panels):
@@ -193,7 +199,8 @@ def _coloured_page(path, panels=2):
         image[20:380, left : left + 6] = 0
         image[20:380, left + 254 : left + 260] = 0
         image[120:220, left + 60 : left + 200] = (250, 230, 180)
-    Image.fromarray(image).save(path)
+    page = Image.fromarray(image)
+    page.resize((page.width * scale, page.height * scale), Image.NEAREST).save(path)
     return path
 
 
@@ -244,7 +251,26 @@ def test_the_panels_of_a_page_are_what_the_proposer_is_shown(tmp_path):
     shown = session.reference_images()
     assert [image.kind for image in shown] == ["panel", "panel"]
     # Cropped, so each one is smaller than the page it came from.
-    assert all(image.pixels.shape[1] < 600 for image in shown)
+    assert all(image.pixels.shape[1] < 600 * 3 for image in shown)
+
+
+def test_a_page_whose_panels_are_too_small_is_kept_whole(tmp_path):
+    """Nothing reaches the model at its own size.
+
+    `cobra._tiles` resizes every reference to the target bucket, so a panel
+    well under that frame arrives blown up, and an upscaled smear outranks the
+    sharp tile that holds the character — measured in `reports/10-retrieval`,
+    the face falls from rank 1 to rank 22 of 80. Below the guard the page is
+    worth more whole than in pieces.
+    """
+    session = Session(tmp_path / "work")
+    stored = session.add_reference(
+        _coloured_page(tmp_path / "small.png", scale=1),
+        original_name="small.png",
+        kind="page",
+    )
+
+    assert [reference.kind for reference in stored] == ["page"]
 
 
 def test_kinds_are_the_three_the_fitting_step_knows(tmp_path):

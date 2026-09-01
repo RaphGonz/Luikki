@@ -744,7 +744,10 @@ def test_uploading_a_finished_page_adds_its_panels(client, tmp_path):
         image[20:380, left + 254 : left + 260] = 0
         image[120:220, left + 60 : left + 200] = (250, 230, 180)
     finished = tmp_path / "finished.png"
-    Image.fromarray(image).save(finished)
+    # At a real page's scale: `_split_into_panels` drops panels too small for
+    # the proposer's frame, and none of a 600 px page's would survive.
+    page = Image.fromarray(image)
+    page.resize((page.width * 3, page.height * 3), Image.NEAREST).save(finished)
 
     state = _add_reference(client, finished, kind="page").json()
 

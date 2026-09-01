@@ -73,6 +73,16 @@ class PanelState:
         return int((present != UNASSIGNED).sum())
 
 
+# What `CobraProposer.resolution` defaults to, on the long side. A reference
+# panel is measured against this because the real target is per-query and
+# unknown at upload time (`_split_into_panels`).
+_NOMINAL_TARGET = 1024
+# How far a reference may be blown up to reach that frame before it is more
+# smear than drawing. 2.0 is where `reports/10-retrieval` measured the fall,
+# on one page — treat it as calibrated, not derived.
+_MAX_UPSCALE = 2.0
+
+
 def _overshoot(points: np.ndarray, margin: int) -> np.ndarray:
     """Extend a stroke past both ends, along the direction it was going."""
 
@@ -837,12 +847,32 @@ class Session:
         A page whose panels cannot be found — one that bleeds, one drawn
         without frames — comes back empty, and the caller stores the page
         whole. Half a split is worse than none.
+
+        A panel too small for the proposer's frame is dropped, and if fewer
+        than two survive the page is kept whole. Nothing reaches the model at
+        its own size: `cobra._tiles` resizes every reference to the target
+        bucket, so a 490 px panel against a 1024 px frame arrives blown up
+        twice over. Measured in `reports/10-retrieval`, that smear outranks the
+        sharp tile that actually holds the character — the face falls from rank
+        1 to rank 22 of 80 — because line-art-against-colour similarity is
+        decided on low frequencies, which is exactly what upscaling invents.
+        Restoring the guard puts it back at rank 1.
+
+        The target is not known here: it follows the aspect of whichever panel
+        is being coloured, and that panel does not exist at upload time. The
+        nominal long side below is `CobraProposer.resolution`'s default, and
+        the buckets sit close enough together for the approximation to hold.
         """
         try:
             line_mask, _ = load_line_art(path)
             found = segment_panels(line_mask)
         except (OSError, ValueError):
             return []
+        found = [
+            panel
+            for panel in found
+            if max(panel.width, panel.height) >= _NOMINAL_TARGET / _MAX_UPSCALE
+        ]
         if len(found) < 2:
             return []
 
