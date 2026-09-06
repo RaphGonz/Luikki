@@ -93,16 +93,16 @@ class BubbleParams:
 def model_path() -> Path:
     """Where the detector weights live, downloading them on first use.
 
-    `COMICCOLOR_BUBBLE_MODEL` overrides the location. Otherwise the file is
+    `LUIKKI_BUBBLE_MODEL` overrides the location. Otherwise the file is
     fetched once into `models/` -- the same shape as Cobra's runtime weight
     pull, and for the same reason: 161 MB does not belong in git history.
     """
-    override = os.environ.get("COMICCOLOR_BUBBLE_MODEL")
+    override = os.environ.get("LUIKKI_BUBBLE_MODEL")
     path = Path(override) if override else DEFAULT_MODEL_PATH
     if path.exists():
         return path
     if override:
-        raise FileNotFoundError(f"COMICCOLOR_BUBBLE_MODEL points at nothing: {path}")
+        raise FileNotFoundError(f"LUIKKI_BUBBLE_MODEL points at nothing: {path}")
 
     path.parent.mkdir(parents=True, exist_ok=True)
     partial = path.with_suffix(".part")

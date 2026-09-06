@@ -1,10 +1,10 @@
-# ComicColor
+# Luikki
 
 Upload a page, press the buttons in order, click the zones the machine got
 wrong, get a layered PSD.
 
     pip install -e ".[web,dev]"
-    comiccolor serve
+    luikki serve
 
 Then open <http://127.0.0.1:8000>.
 
@@ -194,7 +194,7 @@ stays individually reversible.
 
 ## Running a page without the browser
 
-    comiccolor flatten test_pages/diagonal_page.jpg -r sheet.jpg --proposer cobra
+    luikki flatten test_pages/diagonal_page.jpg -r sheet.jpg --proposer cobra
 
 Every step headlessly, then `snap all`, then the PSD. `--no-snap` stops after
 flats; `--threshold` moves the guard, and `--threshold inf` snaps everything
@@ -241,7 +241,7 @@ read hatching as `iiii` and cup holders as `OOO` on the three pages that have
 no balloons at all. Deciding "is this text?" from the geometry of ink blobs
 does not survive real artwork.
 
-    comiccolor serve      # pulls the weights on first use, 161 MB into models/
+    luikki serve      # pulls the weights on first use, 161 MB into models/
 
 RT-DETR-v2 (`ogkalu/comic-text-and-bubble-detector`, **Apache-2.0**), run
 through `onnxruntime`. No GPU, ~0.85 s per page whatever its size. The licence
@@ -269,7 +269,7 @@ colours *mean* something, and needs an NVIDIA GPU with real VRAM.
     git clone https://github.com/zhuang2002/Cobra.git third_party/Cobra
     pip install -e third_party/Cobra/diffusers      # the patched fork, required
     pip install transformers peft accelerate einops sentencepiece matplotlib
-    comiccolor serve --proposer cobra              # pulls the weights on first use
+    luikki serve --proposer cobra              # pulls the weights on first use
 
 **Do not `pip install -r third_party/Cobra/requirements.txt`.** It pins
 `torch==2.5.1`, `numpy==1.26.4` and `opencv-python==4.11`, which downgrades
@@ -364,7 +364,7 @@ chroma and its five diamond panels 2.46: the panels that come back grey are the
 non-rectangular ones, which reach the model masked to their polygon and then
 letterboxed, so most of what the DiT sees is white. Two knobs are left behind
 for the next attempt, both defaulting to today's behaviour and read at call
-time: `COMICCOLOR_TILE_OVERLAP=1.1` keeps every window, `COMICCOLOR_TILE_BUDGET`
+time: `LUIKKI_TILE_OVERLAP=1.1` keeps every window, `LUIKKI_TILE_BUDGET`
 raises the ceiling.
 
 **References accumulate, and that is the plan.** The first page of a book is

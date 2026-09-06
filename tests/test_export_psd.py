@@ -9,8 +9,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from comiccolor.export.psd import PanelFlats, flats_preview, write_psd
-from comiccolor.model.entities import PaletteEntry
+from luikki.export.psd import PanelFlats, flats_preview, write_psd
+from luikki.model.entities import PaletteEntry
 
 psd_tools = pytest.importorskip("psd_tools")
 

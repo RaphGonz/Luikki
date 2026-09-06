@@ -1,14 +1,14 @@
 import cv2
 import numpy as np
 
-from comiccolor.model.masks import (
+from luikki.model.masks import (
     UNASSIGNED,
     check_coverage,
     region_count,
     region_stats,
 )
-from comiccolor.segmentation.protected import rasterize_protected_for_panel
-from comiccolor.segmentation.trappedball import (
+from luikki.segmentation.protected import rasterize_protected_for_panel
+from luikki.segmentation.trappedball import (
     SegmentationParams,
     inked_zones,
     expand_under_lines,

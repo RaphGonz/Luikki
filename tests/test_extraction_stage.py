@@ -14,10 +14,10 @@ import cv2
 import numpy as np
 import pytest
 
-from comiccolor.extract.base import ExtractionResult
-from comiccolor.model.masks import UNASSIGNED
-from comiccolor.segmentation.preprocess import binarise_lines
-from comiccolor.web.session import Session
+from luikki.extract.base import ExtractionResult
+from luikki.model.masks import UNASSIGNED
+from luikki.segmentation.preprocess import binarise_lines
+from luikki.web.session import Session
 
 WEIGHTS = Path(__file__).resolve().parents[1] / "third_party" / "MangaLineExtraction" / "erika.pth"
 
@@ -153,9 +153,9 @@ def test_the_real_extractor_thins_ink(tmp_path):
     property the app depends on, so it is measured rather than assumed.
     """
     pytest.importorskip("torch")
-    from comiccolor.extract.manga_line import MangaLineExtractor
-    from comiccolor.segmentation.preprocess import ink_fraction
-    from comiccolor.web.session import _best_device
+    from luikki.extract.manga_line import MangaLineExtractor
+    from luikki.segmentation.preprocess import ink_fraction
+    from luikki.web.session import _best_device
 
     page = brush_page(tmp_path)
     session = Session(

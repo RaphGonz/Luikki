@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-from comiccolor.segmentation.protected import (
+from luikki.segmentation.protected import (
     protected_bbox_and_area,
     rasterize_protected_for_panel,
 )

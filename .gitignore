@@ -36,7 +36,7 @@ models/
 
 # The running app's workdir: uploaded pages, exported PSDs, server logs.
 # Same rule as test_pages/ — the uploads are the artist's material.
-.comiccolor-work/
+.luikki-work/
 
 # Claude Code agent worktrees (transient)
 .claude/worktrees/
@@ -50,3 +50,6 @@ models/
 # Agent tooling, local to whoever is working the repo, not project material.
 AGENTS.md
 .claude/
+
+# tokenade keeps a pre-injection backup of CLAUDE.md next to it. Local tooling.
+CLAUDE.md.tokenade-original

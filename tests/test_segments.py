@@ -11,10 +11,10 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from comiccolor.colour.segments import build_segments
-from comiccolor.colour.snap import SNAP_MAX_DELTA
-from comiccolor.model.masks import UNASSIGNED
-from comiccolor.web.session import Session, StepError
+from luikki.colour.segments import build_segments
+from luikki.colour.snap import SNAP_MAX_DELTA
+from luikki.model.masks import UNASSIGNED
+from luikki.web.session import Session, StepError
 
 
 def _page(path, size=(64, 96)):

@@ -9,8 +9,8 @@ behaviour with synthetic art whose region count is known exactly.
 import numpy as np
 import pytest
 
-from comiccolor.model.masks import region_count
-from comiccolor.segmentation.trappedball import (
+from luikki.model.masks import region_count
+from luikki.segmentation.trappedball import (
     SegmentationParams,
     adaptive_radii,
     measure_passage_width,

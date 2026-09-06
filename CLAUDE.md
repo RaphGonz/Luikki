@@ -1,7 +1,7 @@
 
 ## Project
 
-**ComicColor**
+**Luikki**
 
 A layered colour-flatting application for comic and manga production. An artist
 uploads their line art pages, character sheets and palette; the app segments
@@ -59,10 +59,10 @@ wrong is one click to fix.
 
 ## Frameworks
 
-- FastAPI + uvicorn (`[web]` extra) - The local app in `src/comiccolor/web/`. One route per button, plus one per correction and one per preview PNG. Handlers are plain `def`, not `async def`: segmentation and generation are seconds of CPU or GPU work, and FastAPI runs sync handlers in a threadpool instead of stalling the event loop.
+- FastAPI + uvicorn (`[web]` extra) - The local app in `src/luikki/web/`. One route per button, plus one per correction and one per preview PNG. Handlers are plain `def`, not `async def`: segmentation and generation are seconds of CPU or GPU work, and FastAPI runs sync handlers in a threadpool instead of stalling the event loop.
 - pydantic - Request bodies for the corrections (`Shape`, `Stroke`, `Merge`, `Cut`, `Colour`, `Pick` in `web/app.py`)
 - Frontend: no framework and no build step - `web/static/` is one HTML, one CSS and one JS file, served as they are. Hand-rolled 2D canvas, one screen↔image transform (`view` in `app.js`), zero runtime dependencies.
-- argparse (Python standard library) - Command-line interface in `src/comiccolor/cli.py`
+- argparse (Python standard library) - Command-line interface in `src/luikki/cli.py`
 - pytest 8.0+ - Configured in `pyproject.toml`, run via `pytest tests/`
 - setuptools 68+ - Project build and package management
 
@@ -70,35 +70,35 @@ wrong is one click to fix.
 
 - numpy >=2.0 - Array processing, image operations (used throughout segmentation and masking)
 - opencv-python-headless >=4.10 - Image loading, manipulation, morphological operations (in `segmentation/`, `extract/`, `spike/`)
-- scipy >=1.14 - Scientific computing, specifically `scipy.ndimage` for morphological operations (in `src/comiccolor/segmentation/closure.py`)
+- scipy >=1.14 - Scientific computing, specifically `scipy.ndimage` for morphological operations (in `src/luikki/segmentation/closure.py`)
 - pillow >=11.0 - Image format support and I/O fallback
 - scikit-image >=0.26 - `skeletonize()` in `segmentation/closure.py`
 - psd-tools >=1.18 - The layered export in `export/psd.py`
 - onnxruntime >=1.20 - The RT-DETR balloon detector. Deliberately not `ultralytics`, which is AGPL-3.0 whatever licence its weights carry.
 - fastapi / uvicorn / python-multipart (`[web]`) - The local app and its uploads
 - httpx (`[dev]`) - Required by `fastapi.testclient`, which `tests/test_web.py` presses every button through
-- torch (PyTorch) - Required by `MangaLineExtraction` line extraction (in `src/comiccolor/extract/manga_line.py`, line 74), but NOT listed in project dependencies. Must be installed separately. Vendored model weights: `third_party/MangaLineExtraction/erika.pth`
+- torch (PyTorch) - Required by `MangaLineExtraction` line extraction (in `src/luikki/extract/manga_line.py`, line 74), but NOT listed in project dependencies. Must be installed separately. Vendored model weights: `third_party/MangaLineExtraction/erika.pth`
 - pytest >=8.0 - Unit testing framework
 
 ## Vendored Third-Party
 
 - Source: `third_party/LineFiller/` (github.com/hepesu/LineFiller)
 - Purpose: Reference implementation of trapped-ball region segmentation (§1.4)
-- Integration: Dynamically loaded in `src/comiccolor/segmentation/segmenter.py` via `LineFillerSegmenter` class
+- Integration: Dynamically loaded in `src/luikki/segmentation/segmenter.py` via `LineFillerSegmenter` class
 - Contains: `linefiller.trappedball_fill` functions for multi-radius flood fill and merge operations
 - Source: `third_party/MangaLineExtraction/`
 - Purpose: Structural line extraction model (§7 Tier 3 adaptation)
 - Model weights: `erika.pth` (PyTorch state dict, ~50MB, vendored)
 - Architecture: `res_skip` network (imported from `model_torch.py` in vendor directory)
-- Integration: Wrapped in `src/comiccolor/extract/manga_line.py` as `MangaLineExtractor` class
+- Integration: Wrapped in `src/luikki/extract/manga_line.py` as `MangaLineExtractor` class
 - Note: Trained on manga line art; tolerance for Franco-Belgian hatching is experimental
 
 ## Configuration
 
-- No `.env` file. Two environment variables, both read at call time so a flag can set them: `COMICCOLOR_PROPOSER` (`distinct` | `cobra`) and `COMICCOLOR_EXTRACTOR` (`manga` | `raw`). `comiccolor serve --proposer/--extractor` set them.
-- Otherwise configuration is CLI arguments only (see `src/comiccolor/cli.py`)
+- No `.env` file. Two environment variables, both read at call time so a flag can set them: `LUIKKI_PROPOSER` (`distinct` | `cobra`) and `LUIKKI_EXTRACTOR` (`manga` | `raw`). `luikki serve --proposer/--extractor` set them.
+- Otherwise configuration is CLI arguments only (see `src/luikki/cli.py`)
 - `pyproject.toml` - Standard Python project configuration, defines dependencies, entry point, test paths
-- CLI: `comiccolor = "comiccolor.cli:main"` - Command-line entry point in `src/comiccolor/cli.py`
+- CLI: `luikki = "luikki.cli:main"` - Command-line entry point in `src/luikki/cli.py`
 - Subcommands:
   - `serve` - the local app. `--port`, `--workdir`, `--proposer`, `--extractor`
   - `flatten` - one page headlessly, then snap-all, then the PSD. `--reference`, `--threshold` (`inf` snaps everything), `--no-snap`, `--steps` (one image per stage boundary)
@@ -113,8 +113,8 @@ wrong is one click to fix.
 ## Database
 
 - SQLite (local file-based, no server required)
-- Schema defined in `src/comiccolor/model/store.py` (PRAGMA foreign_keys enabled)
-- Instantiated via `Store(path)` constructor in `src/comiccolor/model/store.py`
+- Schema defined in `src/luikki/model/store.py` (PRAGMA foreign_keys enabled)
+- Instantiated via `Store(path)` constructor in `src/luikki/model/store.py`
 - No connection pooling or multi-thread safety (per docstring: "Not thread-safe; one Store per thread")
 
 ## Model & Weights
@@ -150,9 +150,9 @@ wrong is one click to fix.
 - Snake_case for local variables and parameters: `line_mask`, `fillable`, `label_map`, `grey`
 - Clear, specific names over abbreviations: `height, width` not `h, w`
 - Type-indicating for optional values: `radii: tuple[int, ...] | None`
-- Enum classes for domain concepts: `RegionStatus`, `ProtectedKind` in `src/comiccolor/model/entities.py`
-- Dataclasses for data structures: `Series`, `Volume`, `Page`, `Panel`, `Entity`, `PaletteEntry`, `Region`, `ProtectedMask` in `src/comiccolor/model/entities.py`
-- Protocol classes for interface contracts: `Segmenter` protocol in `src/comiccolor/segmentation/segmenter.py`
+- Enum classes for domain concepts: `RegionStatus`, `ProtectedKind` in `src/luikki/model/entities.py`
+- Dataclasses for data structures: `Series`, `Volume`, `Page`, `Panel`, `Entity`, `PaletteEntry`, `Region`, `ProtectedMask` in `src/luikki/model/entities.py`
+- Protocol classes for interface contracts: `Segmenter` protocol in `src/luikki/segmentation/segmenter.py`
 - UPPER_CASE for module-level constants: `DEFAULT_RADII`, `UNASSIGNED`, `IMAGE_SUFFIXES`, `_STRIDE`
 
 ## Code Style
@@ -177,13 +177,13 @@ wrong is one click to fix.
 ## Error Handling
 
 - Raise specific exceptions: `FileNotFoundError`, `ValueError`, `SystemExit`
-- Use `SystemExit` with message strings for CLI errors (`src/comiccolor/cli.py` line 22, 24, 67)
+- Use `SystemExit` with message strings for CLI errors (`src/luikki/cli.py` line 22, 24, 67)
 - Conditional checks before operations with descriptive error messages
 
 ## Logging
 
 - `logging` module used minimally
-- Only found in `src/comiccolor/segmentation/segmenter.py` lines 34-40 to suppress vendored library output
+- Only found in `src/luikki/segmentation/segmenter.py` lines 34-40 to suppress vendored library output
 - Used for integration concerns (controlling third-party library verbosity)
 - No application-level logging observed (design expects explicit returns/exceptions)
 
@@ -204,7 +204,7 @@ wrong is one click to fix.
 - Functions are compact, typically under 50 lines
 - Segmented into clear steps with inline comments
 - Longer functions appear only in specialized modules (e.g., `load_line_art()` at 56 lines for image format handling)
-- Use dataclasses for multiple related parameters: `SegmentationParams` in `src/comiccolor/segmentation/trappedball.py`
+- Use dataclasses for multiple related parameters: `SegmentationParams` in `src/luikki/segmentation/trappedball.py`
 - Default to None for optional/advanced parameters, then normalize: `params = params or SegmentationParams()`
 - Accept Path objects or strings (`str | Path`), normalize to `Path()` immediately
 - Explicit, single return value (no tuple unpacking patterns)
@@ -216,7 +216,7 @@ wrong is one click to fix.
 
 - No `__all__` lists found; all public functions/classes are module-level and not prefixed with `_`
 - Imports expected to be explicit: `from .module import SpecificClass`
-- `src/comiccolor/model/__init__.py` re-exports public classes (lines 1-41)
+- `src/luikki/model/__init__.py` re-exports public classes (lines 1-41)
 - Pattern: import classes from submodules, add to `__all__`, then export
 
 ## Class Design
@@ -257,7 +257,7 @@ data moves. See `SPEC.md` for what is being built and why.
 <!-- tokenade-scaffold -->
 ## Explore code with the `tokenade` CLI (cheaper than reading whole files)
 Use these only when you don't yet know where code lives — if you know the path, open it directly:
-`tokenade map` (repo structure) · `skeleton <file…>` (signatures) · `query <symbol…>` (locate a symbol) · `impact <file…>` (dependents) · `semantic "<query>"` (search by meaning). They take MANY targets per call (`tokenade skeleton a.rs b.rs c.rs`) — batch in ONE turn.
+`tokenade map` (repo structure; `map <path>` for one subtree) · `skeleton <file…>` (signatures) · `query <symbol…>` (locate a symbol) · `impact <file…>` (dependents) · `semantic "<query>"` (search by meaning). They take MANY targets per call (`tokenade skeleton a.rs b.rs c.rs`) — batch in ONE turn.
 
 ## Reading documents & media
 tokenade extends your `Read` tool: reading .pdf .docx .xlsx .xls .xlsb .pptx .odt .ods .odp .odg .epub .rtf .fb2 (and their flat-XML, macro-enabled and template variants) returns extracted text instead of failing on the binary; .mp4 .mkv .mov .webm .avi .mp3 .wav .m4a .flac .ogg .opus (and other common containers) returns what the file is plus a transcript when one is available; and .png .jpg .jpeg .gif .webp .bmp .tif .tiff .ico .tga .pnm .pbm .pgm .ppm .qoi .hdr are decoded for you — any image format you cannot display yourself is converted to PNG automatically. Just Read the path as usual.
@@ -267,11 +267,12 @@ For a big document, asking beats reading it whole — `tokenade read <file> --pr
 Do them in ONE call — `tokenade web <url1> <url2> …` / `tokenade search "<q1>" "<q2>" …` — they run concurrently, so you pay ONE round-trip instead of N and never re-send the context each extra turn would have re-sent.
 
 ## Compute over data with `tokenade exec`
-`tokenade exec --lang python --script '<code>'` (also sh/node/ruby/awk/jq/perl) runs a capped subprocess with a scrubbed env — your permissions, not a jail — and returns ONLY its stdout. Use it to COMPUTE over data — filter/aggregate a large or structured output, pull facts across SEVERAL files, or apply one mechanical edit across many files (migration, find-replace) — in ONE script, not one command per item. It is NOT a file reader: to read content, use the parallel reads above, not `exec`. Keep scripts SHORT (aim ≤ ~20 lines): exec is for throwaway one-shot computation, not for code you will edit and iterate on — every script char is billed as output, and a long script usually means a simpler command (or a real file you Write once and run) does it cheaper. Long or quote-heavy script? `--script-file <path>` (or `--script -` on stdin) avoids shell quoting entirely.
+`tokenade exec --lang python --script '<code>'` (also bash/sh/node/ruby/awk/jq/perl) runs a capped subprocess with a scrubbed env — your permissions, not a jail — and returns ONLY its stdout. Data you PIPE in reaches the script's stdin (`cmd | tokenade exec …`), so a big output is filtered where it is produced instead of entering your context. Use it to COMPUTE over data — filter/aggregate a large or structured output, pull facts across SEVERAL files, or apply one mechanical edit across many files (migration, find-replace) — in ONE script, not one command per item. It is NOT a file reader: to read content, use the parallel reads above, not `exec`. Keep scripts SHORT (aim ≤ ~20 lines): exec is for throwaway one-shot computation, not for code you will edit and iterate on — every script char is billed as output, and a long script usually means a simpler command (or a real file you Write once and run) does it cheaper. Long or quote-heavy script? `--script-file <path>` (or `--script -` on stdin) avoids shell quoting entirely.
 
 ## Commands
-If you do not have hooks (i.e. you are not Claude Code or Gemini CLI), use `tokenade wrap '<cmd>'` to wrap all your commands. If there is an opportunity for compacting noisy output, tokenade will find it — and you will waste fewer tokens. On Windows, if your commands are PowerShell or cmd (not bash), add `--shell powershell` or `--shell cmd` so they run under the right interpreter: `tokenade wrap --shell powershell '<cmd>'`.
+If you do not have tokenade hooks, use `tokenade wrap '<cmd>'` to wrap all your commands — `tokenade health` says whether they are INSTALLED, and names the fix when they are not, so you never have to guess. If there is an opportunity for compacting noisy output, tokenade will find it — and you will waste fewer tokens. On Windows, if your commands are PowerShell or cmd (not bash), add `--shell powershell` or `--shell cmd` so they run under the right interpreter: `tokenade wrap --shell powershell '<cmd>'`.
 An absolute path (`/usr/bin/git`) is intercepted exactly like `git` when hooks are installed; where interception goes through your PATH instead, only the bare name is seen — so prefer the bare name if you are not sure which you have.
+`wrap` keeps the exit code exactly, and MERGES stderr into stdout — the two streams are compacted as one. `tokenade wrap '''cmd''' 2>err.log` therefore writes an empty err.log; redirect from the wrapped command instead (`tokenade wrap '''cmd 2>err.log'''`).
 
 ## Keep output lean
 Keep prose terse and code minimal — every token you write is billed as output.

@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from comiccolor.model.masks import (
+from luikki.model.masks import (
     UNASSIGNED,
     LabelMapInvariantError,
     assert_invariant,

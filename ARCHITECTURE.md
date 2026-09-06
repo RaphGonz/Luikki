@@ -1,4 +1,4 @@
-# ComicColor — how the app works
+# Luikki — how the app works
 
 This document is the fast way into the code. `SPEC.md` tells you what the app
 must be. `flatting-pipeline-spec.md` tells you why the algorithms are what they
@@ -31,7 +31,7 @@ stage uses its result. Section 4 gives the rule for each one.
 ## 2. How to run the app
 
     pip install -e ".[web,dev]"
-    comiccolor serve
+    luikki serve
 
 The command starts a local web server. Open the address that the command
 prints. Options: `--proposer cobra`, `--extractor raw`, `--port`.
@@ -156,7 +156,7 @@ class `bubble` with a score of 0.7 or more. The model has two more classes,
 the SFX lettering outside balloons.
 
 The weights are 161 MB. The app downloads them one time into `models/`. Set
-`COMICCOLOR_BUBBLE_MODEL` to use a different file. The model needs no GPU and
+`LUIKKI_BUBBLE_MODEL` to use a different file. The model needs no GPU and
 takes approximately 0.85 s for each page. A large page costs the same as a
 small page, because the model resizes each page to 640 x 640.
 
@@ -441,14 +441,14 @@ you change that file. Without that function the export takes eight minutes.
 
 ## 5. Where the state is
 
-`src/comiccolor/web/session.py` holds all the state of the app in one
+`src/luikki/web/session.py` holds all the state of the app in one
 `Session` object. One page is in the app at a time. A new page replaces the
 old one. The palette and the reference images stay, because they belong to the
 book and not to the page.
 
 A lock makes the buttons sequential. The artist will click two times.
 
-`src/comiccolor/model/store.py` is a full SQLite store with the same shape.
+`src/luikki/model/store.py` is a full SQLite store with the same shape.
 This version of the app **does not use it**. Persistence is not the purpose of
 this version.
 
@@ -456,20 +456,20 @@ The palette does not stay in memory only. `Session` writes it to
 `<workdir>/palette.json` at each change and reads it at start. The reference
 images and their `index.json` are in `<workdir>/references/`.
 
-`src/comiccolor/web/app.py` is the FastAPI layer. Each button is one POST
+`src/luikki/web/app.py` is the FastAPI layer. Each button is one POST
 route. Each preview image is one GET route that sends a PNG. A correction is
 also one route: the browser sends the complete shape, the complete stroke, or
 the complete colour. It never sends an edit.
 
-`src/comiccolor/web/static/` is the browser. `app.js` holds one screen-to-page
+`src/luikki/web/static/` is the browser. `app.js` holds one screen-to-page
 transform, `view`. Nothing else in that file converts coordinates. Each hit
 test goes through `view.toImage` and then asks the server what is there. The
 browser never holds a second copy of the segmentation.
 
 ## 6. Map of the source files
 
-    src/comiccolor/
-      cli.py                  the `comiccolor` command
+    src/luikki/
+      cli.py                  the `luikki` command
       web/session.py          all state, the seven buttons      <- start here
       web/app.py              the HTTP routes
       web/static/app.js       the canvas, the corrections, one transform

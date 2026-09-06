@@ -9,7 +9,7 @@ import sqlite3
 
 import pytest
 
-from comiccolor.model import (
+from luikki.model import (
     Entity,
     Page,
     PaletteEntry,

@@ -14,8 +14,8 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from comiccolor.colour.references import KINDS, PALETTE_KIND, STORED_KINDS, ReferenceStore, UnknownKind
-from comiccolor.web.session import Session
+from luikki.colour.references import KINDS, PALETTE_KIND, STORED_KINDS, ReferenceStore, UnknownKind
+from luikki.web.session import Session
 
 
 def _sheet(path, colours=((200, 30, 40), (30, 90, 200), (240, 220, 60))):
@@ -133,7 +133,7 @@ def test_removing_an_absent_reference_is_false_not_an_error(tmp_path):
 
 def test_references_survive_loading_another_page(tmp_path, monkeypatch):
     """Rule: the reference pool belongs to the book, not the page in flight."""
-    from comiccolor.segmentation import preprocess
+    from luikki.segmentation import preprocess
 
     page = tmp_path / "page.png"
     Image.fromarray(np.full((40, 40), 255, dtype=np.uint8)).save(page)

@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 from PIL import Image, ImageDraw
 
-from comiccolor.colour.cobra import _ASPECT_TOLERANCE, _letterbox, _tiles
+from luikki.colour.cobra import _ASPECT_TOLERANCE, _letterbox, _tiles
 
 
 def _image(width: int, height: int, colour=(120, 60, 200)) -> Image.Image:
@@ -167,8 +167,8 @@ def test_panel_line_art_is_masked_to_its_polygon(tmp_path):
     partly not this panel. What gets *painted* out there never mattered —
     those zones come back UNASSIGNED — but what the model reads does.
     """
-    from comiccolor.extract.passthrough import PassthroughExtractor
-    from comiccolor.web.session import PanelState, Session
+    from luikki.extract.passthrough import PassthroughExtractor
+    from luikki.web.session import PanelState, Session
 
     page = tmp_path / "page.png"
     art = np.full((100, 100), 255, dtype=np.uint8)
@@ -198,9 +198,9 @@ def test_panel_line_art_is_masked_to_its_polygon(tmp_path):
 
 def test_a_rectangular_panel_is_unchanged_by_masking(tmp_path):
     """The common case must cost nothing."""
-    from comiccolor.extract.passthrough import PassthroughExtractor
-    from comiccolor.segmentation.panels import box_to_polygon, PanelBox
-    from comiccolor.web.session import PanelState, Session
+    from luikki.extract.passthrough import PassthroughExtractor
+    from luikki.segmentation.panels import box_to_polygon, PanelBox
+    from luikki.web.session import PanelState, Session
 
     page = tmp_path / "page.png"
     rng = np.random.default_rng(0)
@@ -224,8 +224,8 @@ def test_the_proposer_reads_the_extractor_not_the_raw_ink(tmp_path):
     hatching into a network trained on none of them, and left the proposer
     reading a different drawing from the one trapped-ball cut into zones.
     """
-    from comiccolor.segmentation.panels import box_to_polygon, PanelBox
-    from comiccolor.web.session import PanelState, Session
+    from luikki.segmentation.panels import box_to_polygon, PanelBox
+    from luikki.web.session import PanelState, Session
 
     from test_extraction_stage import FakeExtractor
 
@@ -271,7 +271,7 @@ def _montage(width=1200, height=1200, rows=3, cols=3, gap=60):
 def test_a_sheet_is_cut_on_its_drawings():
     """One drawing per patch is the unit CLIP compares against a panel; a
     grid band through a montage is not."""
-    from comiccolor.colour.cobra import _subjects
+    from luikki.colour.cobra import _subjects
 
     sheet = _montage()
     assert len(_subjects(sheet)) == 9
@@ -299,7 +299,7 @@ def test_a_page_is_never_cut_on_subjects():
 def test_one_big_drawing_falls_back_to_the_grid():
     """Not every reference is a montage. Below `_MIN_SUBJECTS` the sheet path
     must hand back to the grid rather than return one useless window."""
-    from comiccolor.colour.cobra import _MIN_SUBJECTS, _subjects
+    from luikki.colour.cobra import _MIN_SUBJECTS, _subjects
 
     single = Image.new("RGB", (800, 2000), "white")
     ImageDraw.Draw(single).ellipse((100, 100, 700, 1900), fill=(200, 40, 40))
@@ -312,7 +312,7 @@ def test_one_big_drawing_falls_back_to_the_grid():
 def test_subject_windows_keep_the_target_aspect_exactly():
     """The patch must reach half the query's size without distortion, so the
     window it is cropped from has to be the target's shape already."""
-    from comiccolor.colour.cobra import _subjects, _window_for
+    from luikki.colour.cobra import _subjects, _window_for
 
     sheet = _montage()
     for subject in _subjects(sheet):
@@ -325,7 +325,7 @@ def test_subject_windows_keep_the_target_aspect_exactly():
 def test_subject_tiles_are_not_all_the_same_view():
     """Windows overlapping past `_SUBJECT_MAX_OVERLAP` are one view twice, and
     the whole point of a wide pool is that the k retrieved patches differ."""
-    from comiccolor.colour.cobra import _SUBJECT_MAX_OVERLAP, _overlap, _subjects, _window_for
+    from luikki.colour.cobra import _SUBJECT_MAX_OVERLAP, _overlap, _subjects, _window_for
 
     sheet = _montage()
     kept = []

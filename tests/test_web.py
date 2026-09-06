@@ -17,7 +17,7 @@ pytest.importorskip("psd_tools")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from comiccolor.web.app import create_app  # noqa: E402
+from luikki.web.app import create_app  # noqa: E402
 
 
 @pytest.fixture
@@ -65,7 +65,7 @@ def client(tmp_path):
     does to segmentation is `test_extraction_feeds_segmentation` below, not
     every route test.
     """
-    from comiccolor.extract.passthrough import PassthroughExtractor
+    from luikki.extract.passthrough import PassthroughExtractor
 
     app = create_app(tmp_path / "work", extractor=PassthroughExtractor())
     with TestClient(app) as client:

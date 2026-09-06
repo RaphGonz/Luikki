@@ -39,11 +39,11 @@ repo `PixArt-alpha/PixArt-XL-2-1024-MS`, which is `openrail++`. The
     pip install -e third_party/Cobra/diffusers   # the patched fork, required
     pip install -r third_party/Cobra/requirements.txt
 
-    from comiccolor.colour.cobra import CobraProposer
+    from luikki.colour.cobra import CobraProposer
     proposer = CobraProposer()          # downloads JunhaoZhuang/Cobra on first use
     session.proposer = proposer
 
-The web layer takes `COMICCOLOR_PROPOSER=cobra` to do the same thing without
+The web layer takes `LUIKKI_PROPOSER=cobra` to do the same thing without
 an edit.
 """
 
@@ -146,13 +146,13 @@ _MIN_SUBJECTS = 2
 
 
 # Both knobs above are read through these, not used directly, so a run can
-# change them without a code edit. `COMICCOLOR_TILE_OVERLAP=1.1` keeps every
-# window a sheet offers, since IoU never exceeds 1; `COMICCOLOR_TILE_BUDGET=12`
+# change them without a code edit. `LUIKKI_TILE_OVERLAP=1.1` keeps every
+# window a sheet offers, since IoU never exceeds 1; `LUIKKI_TILE_BUDGET=12`
 # raises the ceiling on how many tiles one reference contributes. They exist to
 # answer one question — whether the retrieval pool is what makes a page come
 # back bland — and the answer belongs in `reports/`, not in a default.
 def _max_overlap() -> float:
-    return float(os.environ.get("COMICCOLOR_TILE_OVERLAP", _SUBJECT_MAX_OVERLAP))
+    return float(os.environ.get("LUIKKI_TILE_OVERLAP", _SUBJECT_MAX_OVERLAP))
 
 
 # The control that asks whether the *ranking* matters at all. `random` takes
@@ -162,11 +162,11 @@ def _max_overlap() -> float:
 # whatever it was handed -- and the answer belongs in `reports/`, not in a
 # default. Read at call time, like the tile knobs above.
 def _pick() -> str:
-    return os.environ.get("COMICCOLOR_RANK_PICK", "top")
+    return os.environ.get("LUIKKI_RANK_PICK", "top")
 
 
 def _budget_for(kind: str) -> int:
-    override = os.environ.get("COMICCOLOR_TILE_BUDGET")
+    override = os.environ.get("LUIKKI_TILE_BUDGET")
     if override:
         return int(override)
     return _TILE_BUDGET.get(kind, _TILE_BUDGET["sheet"])
@@ -220,8 +220,8 @@ def _letterbox(image, target_w: int, target_h: int):
     # that already nearly fills the frame is left to fill it. Every enlargement
     # measured as harmful was 2x or more.
     #
-    # `COMICCOLOR_QUERY_FIT=scale` restores the old behaviour for comparison.
-    if os.environ.get("COMICCOLOR_QUERY_FIT") != "scale" and scale > _MAX_QUERY_UPSCALE:
+    # `LUIKKI_QUERY_FIT=scale` restores the old behaviour for comparison.
+    if os.environ.get("LUIKKI_QUERY_FIT") != "scale" and scale > _MAX_QUERY_UPSCALE:
         scale = 1.0
     inner = (max(1, round(width * scale)), max(1, round(height * scale)))
     left = (target_w - inner[0]) // 2
@@ -233,7 +233,7 @@ def _letterbox(image, target_w: int, target_h: int):
     # hands back what is nearly the line art (`reports/11-manga/01`). Kept as a
     # knob because refuting it cost two runs and the next person should not
     # have to repeat them.
-    if os.environ.get("COMICCOLOR_QUERY_SHARPEN") == "1" and scale > 1:
+    if os.environ.get("LUIKKI_QUERY_SHARPEN") == "1" and scale > 1:
         grey = cv2.cvtColor(np.asarray(fitted), cv2.COLOR_RGB2GRAY)
         _, ink = cv2.threshold(grey, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         fitted = Image.fromarray(np.repeat(ink[:, :, None], 3, axis=2))

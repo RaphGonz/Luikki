@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from comiccolor.colour import (
+from luikki.colour import (
     INK_MAX,
     K_MAX,
     MERGE_DELTA_E,

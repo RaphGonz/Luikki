@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import numpy as np
 
-from comiccolor.colour.snap import (
+from luikki.colour.snap import (
     SNAP_MAX_DELTA,
     assign_zones,
     nearest_entry,
     zone_modes,
 )
-from comiccolor.model.entities import PaletteEntry
+from luikki.model.entities import PaletteEntry
 
 
 def entry(id_: int, rgb: tuple[int, int, int]) -> PaletteEntry:

@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-from comiccolor.segmentation.panels import PanelBox, PanelParams, box_to_polygon, segment_panels
+from luikki.segmentation.panels import PanelBox, PanelParams, box_to_polygon, segment_panels
 
 
 def _grid_page(rows: int, cols: int, size: int = 300, gutter: int = 30) -> np.ndarray:

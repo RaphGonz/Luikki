@@ -1,4 +1,4 @@
-# ComicColor — barebone spec
+# Luikki — barebone spec
 
 The smallest version of the app that is actually usable end to end. Build this
 first, develop from it later.
@@ -9,7 +9,7 @@ first, develop from it later.
 
 ## The user story
 
-> A colourist opens ComicColor, picks a folder, and drops in a page of line art
+> A colourist opens Luikki, picks a folder, and drops in a page of line art
 > and the character sheets for the book.
 >
 > They press **Detect panels** and see the panels outlined. Two are wrong, so
@@ -157,7 +157,7 @@ that folded every neutral zone into a character sheet's ink black.
 ## Algorithms
 
 ### Panel detection
-Already built, in `src/comiccolor/segmentation/panels.py`.
+Already built, in `src/luikki/segmentation/panels.py`.
 
 - Reinforce frames first: keep only pixels on long straight runs, bridge gaps
   along them, add back to the line mask. Adding ink can only seal, never split.
@@ -212,7 +212,7 @@ dropped. Over-propose; the artist deletes false positives. Never raise it back
 toward 0.55 — that silently drops every borderless panel.
 
 ### Bubble detection
-Built, in `src/comiccolor/segmentation/bubbles.py`. Rewritten once, and the
+Built, in `src/luikki/segmentation/bubbles.py`. Rewritten once, and the
 rewrite is the point of this section.
 
 **The model says where. The artwork says what shape.**
@@ -323,7 +323,7 @@ research-purpose-only. OpenRAIL's use restrictions propagate to derivatives.
 **Hardware:** local NVIDIA GPU. There is no CPU path.
 
 ### Palette extraction
-Existing, in `src/comiccolor/colour/extract.py`: Pillow quantize then merge
+Existing, in `src/luikki/colour/extract.py`: Pillow quantize then merge
 colours closer than `MERGE_DELTA_E = 12.0` in CIELAB. `K_MAX = 24`,
 `MIN_PIXEL_SHARE = 0.005`. Ink below 30 and paper above 235 are dropped first.
 The same extractor serves both the swatch upload (18) and the character-sheet

@@ -3,7 +3,7 @@
 This is the barebone version of the app (`SPEC.md`): no projects, no volumes,
 no page list, no reopening. One page is in flight at a time, its state lives
 in this object, and uploading another one replaces it. The SQLite store in
-`comiccolor.model` is the persistent version of the same shape and is
+`luikki.model` is the persistent version of the same shape and is
 deliberately not used here — persistence is not what the barebone app is for,
 and half-wiring it would cost more than adding it later.
 
@@ -1342,7 +1342,7 @@ class Session:
 
         Step 6's remaining workload, made visible: everything the machine
         declined to decide. The same array backs the browser overlay and
-        `comiccolor flatten --steps`, so what the artist sees on screen and
+        `luikki flatten --steps`, so what the artist sees on screen and
         what the run writes to disk cannot drift apart.
         """
         with self.lock:

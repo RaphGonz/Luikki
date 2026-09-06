@@ -106,7 +106,7 @@ def _dump_psd(psd_path, out: Path, name: str) -> Path | None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="comiccolor")
+    parser = argparse.ArgumentParser(prog="luikki")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p3 = sub.add_parser("p3", help="run the P3 region-count spike")
@@ -204,7 +204,7 @@ def main(argv: list[str] | None = None) -> int:
 
             proposer = CobraProposer()
 
-        workdir = Path(args.out or ".comiccolor-work/flatten")
+        workdir = Path(args.out or ".luikki-work/flatten")
         session = Session(workdir=workdir, proposer=proposer)
         for reference in args.reference:
             session.add_reference(reference, original_name=Path(reference).name)
@@ -259,13 +259,13 @@ def main(argv: list[str] | None = None) -> int:
         import uvicorn
 
         if args.proposer:
-            os.environ["COMICCOLOR_PROPOSER"] = args.proposer
+            os.environ["LUIKKI_PROPOSER"] = args.proposer
         if args.extractor:
-            os.environ["COMICCOLOR_EXTRACTOR"] = args.extractor
+            os.environ["LUIKKI_EXTRACTOR"] = args.extractor
 
         from .web.app import create_app
 
-        print(f"ComicColor on http://{args.host}:{args.port}")
+        print(f"Luikki on http://{args.host}:{args.port}")
         uvicorn.run(create_app(args.workdir), host=args.host, port=args.port)
         return 0
 

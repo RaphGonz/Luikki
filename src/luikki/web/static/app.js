@@ -1232,7 +1232,7 @@ $("snap-any").addEventListener("change", () => {
 
 $("btn-snap-all").addEventListener("click", () => {
   // `inf` is the artist overriding the guard deliberately — the same
-  // override `comiccolor flatten --threshold inf` takes.
+  // override `luikki flatten --threshold inf` takes.
   const threshold = $("snap-any").checked ? "inf" : $("snap-threshold").value;
   step("Snapping every segment", `/api/snap-all?threshold=${threshold}`, {
     method: "POST",

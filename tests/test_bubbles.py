@@ -23,7 +23,7 @@ import cv2
 import numpy as np
 import pytest
 
-from comiccolor.segmentation.bubbles import BubbleParams, trace_bubble
+from luikki.segmentation.bubbles import BubbleParams, trace_bubble
 
 PAGES = Path(__file__).resolve().parent.parent / "test_pages"
 
@@ -175,7 +175,7 @@ def test_vertex_count_stays_editable():
 
 @pytest.mark.skipif(
     not (
-        Path(os.environ.get("COMICCOLOR_BUBBLE_MODEL", "models/comic_bubble_detector.onnx")).exists()
+        Path(os.environ.get("LUIKKI_BUBBLE_MODEL", "models/comic_bubble_detector.onnx")).exists()
         and PAGES.exists()
     ),
     reason="detector weights or test pages not on this machine",
@@ -188,8 +188,8 @@ def test_detector_matches_the_artists_counts():
     and antoine, cup holders read as `OOO` on teddy. A page of SFX lettering
     (laurine's Blop/Pop/Hiii) must still yield exactly its four balloons.
     """
-    from comiccolor.segmentation.bubbles import BubbleDetector, detect_bubbles
-    from comiccolor.segmentation.preprocess import load_line_art
+    from luikki.segmentation.bubbles import BubbleDetector, detect_bubbles
+    from luikki.segmentation.preprocess import load_line_art
 
     expected = {
         "antoine_page.png": 0,

@@ -73,14 +73,14 @@ class Pick(BaseModel):
 _STATIC = Path(__file__).parent / "static"
 
 def _build_proposer():
-    """`COMICCOLOR_PROPOSER=cobra` swaps the model in without a code edit.
+    """`LUIKKI_PROPOSER=cobra` swaps the model in without a code edit.
 
     Anything else — including unset — is the deterministic distinct-colour
     proposer, which needs no GPU and no weights. Read at call time, not import
-    time, so `comiccolor serve --proposer cobra` works whatever the import
+    time, so `luikki serve --proposer cobra` works whatever the import
     order turns out to be.
     """
-    if os.environ.get("COMICCOLOR_PROPOSER", "distinct") != "cobra":
+    if os.environ.get("LUIKKI_PROPOSER", "distinct") != "cobra":
         from ..colour.proposer import DistinctColourProposer
 
         return DistinctColourProposer()
@@ -91,14 +91,14 @@ def _build_proposer():
 
 
 def _build_extractor():
-    """`COMICCOLOR_EXTRACTOR=raw` turns the line extractor off.
+    """`LUIKKI_EXTRACTOR=raw` turns the line extractor off.
 
     The default is MangaLineExtraction, which is what §2.2's A/B chose: raw ink
     hands trapped-ball every stroke edge and every spot black as a zone. `raw`
     exists for the case where the artist's ink layer really is already a clean
     line image, and for tests that must not load 172 MB of weights.
     """
-    if os.environ.get("COMICCOLOR_EXTRACTOR", "manga") == "raw":
+    if os.environ.get("LUIKKI_EXTRACTOR", "manga") == "raw":
         from ..extract.passthrough import PassthroughExtractor
 
         return PassthroughExtractor()
@@ -110,8 +110,8 @@ def create_app(
     proposer=None,
     extractor=None,
 ) -> FastAPI:
-    app = FastAPI(title="ComicColor")
-    workdir = Path(workdir) if workdir else Path(tempfile.gettempdir()) / "comiccolor"
+    app = FastAPI(title="Luikki")
+    workdir = Path(workdir) if workdir else Path(tempfile.gettempdir()) / "luikki"
     session = Session(
         workdir,
         proposer=proposer or _build_proposer(),
