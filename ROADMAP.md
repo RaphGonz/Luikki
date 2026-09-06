@@ -63,6 +63,43 @@ Cloud = endpoint GPU authentifié, pas une SaaS. Projet, pages, refs, palette, m
 - [ ] **[€]** Email transactionnel (Resend/Postmark).
 - [ ] 3 emails liste d'attente : démo vidéo → licences fondateur → ouverture cloud.
 
+## E — Lignes ouvertes (recherche, transverse)
+
+Le trait ouvert reste LE défaut du produit : une zone qui fuit = une correction
+manuelle par fuite. Deux mécanismes en place (`segmentation/closure.py`) :
+échelle de rayons trapped-ball, puis pontage d'extrémités. Insuffisants sur
+encre réelle. Objectif : trancher une bonne fois, sur mesures, pas sur
+impressions.
+
+- [ ] Jeu d'évaluation : calques d'encre **réels** uniquement, jamais de trait extrait (SPEC §7 — le trait extrait est fermé, il ferait croire l'étape résolue). 10–20 pages, styles contrastés : pinceau, plume, hachures, crayon.
+- [ ] Vérité terrain = les flats de l'artiste, pas une annotation maison. La zone correcte est celle qu'il a peinte.
+- [ ] Deux métriques, toujours ensemble : fuites (zones fusionnées à tort) et sur-coupes (zone unique fendue). Tout seuil qui améliore l'une dégrade l'autre.
+- [ ] Mesurer la distribution des largeurs de trou par style **avant** de choisir un `max_gap`. Aujourd'hui 12.0 px, constante globale, jamais justifiée.
+- [ ] `max_gap` fonction de la largeur de trait locale, pas en px absolus — même faute que les micro-zones (§A).
+- [ ] Pontage géodésique (elastica / spirale d'Euler) plutôt que segment droit : un trait d'encre se prolonge courbe. `max_angle_deg` filtre les hachures, il ne reconstruit rien.
+- [ ] État de l'art à dépouiller : fermeture apprise (gap-filling), simplification de croquis (Simo-Serra), colorisation trait→région vidéo (AniDoc, LVCD), propositions de région type SAM. Pour chacun : licence, poids, coût GPU, inspectabilité.
+- [ ] Ne retenir qu'une méthode dont la sortie reste corrigeable : le pont n'entre jamais dans l'export, seulement dans le raster consommé par la segmentation. Invariant actuel, à ne pas perdre.
+- [ ] Rapport dans `reports/`, même forme que p3/ab : rendus côte à côte, verdict sur images, pas sur compteurs.
+- [ ] Décision finale en une ligne : garder l'heuristique, la remplacer, ou empiler apprise → trapped-ball.
+
+## F — Luikki animation (variante, tweaks)
+
+Même problème, même pipeline, autre unité de travail : le plan, pas la planche.
+Rien à réinventer côté segmentation — c'est de l'UI et de la persistance.
+
+- [ ] Retirer les étapes 2 et 3 (cases, bulles) : upload → zones → flats → snap → export. Cinq boutons au lieu de sept, même ordre, même règle « re-lancer une étape détruit ce qui en dépend ».
+- [ ] Une « page » devient un plan ; l'unité affichée est l'image. Import : séquence numérotée (PNG/TGA) ou dossier.
+- [ ] UI image par image : navigation clavier (←/→), timeline, numéro d'image toujours visible.
+- [ ] Pelure d'oignon : image précédente/suivante en surimpression, opacité réglable. Pour juger la cohérence, pas pour dessiner.
+- [ ] Cohérence couleur entre images = le vrai travail. Une zone garde son `palette_entry_id` d'une image à l'autre ; la correspondance de régions entre images consécutives est à construire (recouvrement, flot, appariement de contours).
+- [ ] Corriger une couleur sur une image la corrige sur tout le plan — règle 1 étendue à la séquence.
+- [ ] Palette portée-plan (aujourd'hui portée-album, `<workdir>/palette.json`). Même contrainte : ids jamais réutilisés.
+- [ ] Traitement par lot : `luikki flatten` est déjà headless ; un plan = des centaines d'images → file, reprise, progression affichée.
+- [ ] Une image en vol à la fois ne tient plus (SPEC : la page n'est pas persistée). Le plan doit vivre sur disque, pas en mémoire.
+- [ ] Export : séquence PSD, ou PNG/TGA numérotée par couleur. Vérifier ce qu'avalent TVPaint, Harmony, CSP, After Effects avant de trancher.
+- [ ] Observer un animateur comme on observe un coloriste : appel vidéo, son plan à lui, avant d'écrire l'UI.
+- [ ] Proposer : Cobra est pensé planche. Mesurer sa stabilité temporelle sur 24 images avant de supposer qu'elle tient.
+
 ---
 
 ## Verdicts
@@ -73,3 +110,5 @@ Cloud = endpoint GPU authentifié, pas une SaaS. Projet, pages, refs, palette, m
 - **Gris de soutien** : vérifier, pas réécrire. + sous-couche grise. Trancher la convention avec l'artiste.
 - **Calques par objet** : faisable = problème de **nommage**, pas de vision. Zone fusionnée = objet. Nomme l'entrée palette, groupe l'export par nom.
 - **Calques par objet inter-cases** : non faisable. Cobra échoue dès que les refs montrent des persos différents. Ne pas construire.
+- **Lignes ouvertes** : premier poste, avant tout le reste de A. C'est la seule étape dont l'échec se paie en corrections manuelles à chaque page. Recherche d'abord, code ensuite.
+- **Animation** : même moteur, deux retraits (cases, bulles) et un ajout (l'image comme unité). Le risque n'est pas la segmentation, c'est la cohérence d'une zone d'une image à la suivante — à prototyper avant de promettre la variante.
