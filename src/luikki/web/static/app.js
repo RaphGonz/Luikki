@@ -40,6 +40,51 @@ const view = {
   toImage(x, y) { return [(x - this.ox) / this.scale, (y - this.oy) / this.scale]; },
 };
 
+// Zoom and pan sit *on top of* that fit rather than beside it: `zoom` is a
+// multiplier on the scale that fits the page in the canvas, `pan` a
+// screen-space offset from centred. At zoom 1 with no pan the page lands
+// exactly where it always did, so nothing moves until the artist asks.
+//
+// This is not a second transform. `applyView` folds both into `view` at the
+// top of every render, and `view` remains the only thing in this file that
+// converts a coordinate — rule 5 still holds.
+const FIT_MARGIN = 24;
+const MAX_ZOOM = 32;
+let zoom = 1;
+let pan = { x: 0, y: 0 };
+let panning = null; // [x, y] — last pointer position while panning, screen space
+let spaceHeld = false;
+
+function fitScale() {
+  return Math.min(
+    (stage.clientWidth - FIT_MARGIN * 2) / state.page.width,
+    (stage.clientHeight - FIT_MARGIN * 2) / state.page.height,
+  );
+}
+
+// The clamp is the whole safety of the feature: the page cannot be flung off
+// screen and lost. An edge stops at the canvas edge, and a page smaller than
+// the canvas cannot be panned at all, which is why zoom 1 is untouched.
+function applyView() {
+  const page = state.page;
+  zoom = Math.min(MAX_ZOOM, Math.max(1, zoom));
+  view.scale = fitScale() * zoom;
+  const drawnWidth = page.width * view.scale;
+  const drawnHeight = page.height * view.scale;
+  const slackX = Math.max(0, (drawnWidth - stage.clientWidth) / 2);
+  const slackY = Math.max(0, (drawnHeight - stage.clientHeight) / 2);
+  pan.x = Math.max(-slackX, Math.min(slackX, pan.x));
+  pan.y = Math.max(-slackY, Math.min(slackY, pan.y));
+  view.ox = (stage.clientWidth - drawnWidth) / 2 + pan.x;
+  view.oy = (stage.clientHeight - drawnHeight) / 2 + pan.y;
+}
+
+function fitPage() {
+  zoom = 1;
+  pan = { x: 0, y: 0 };
+  render();
+}
+
 // ---- server ---------------------------------------------------------------
 
 function say(message, bad = false) {
@@ -142,15 +187,14 @@ function render() {
   if (!state || !state.page) return;
 
   const page = state.page;
-  const margin = 24;
-  view.scale = Math.min(
-    (width - margin * 2) / page.width,
-    (height - margin * 2) / page.height,
-  );
-  view.ox = (width - page.width * view.scale) / 2;
-  view.oy = (height - page.height * view.scale) / 2;
+  applyView();
 
   const box = [view.ox, view.oy, page.width * view.scale, page.height * view.scale];
+
+  // Past 1:1 the artist is inspecting ink, and interpolation turns a hard edge
+  // into a smear. Magnified, draw the pixels rather than a guess at what lies
+  // between them — a gap you cannot see is a gap you cannot close.
+  ctx.imageSmoothingEnabled = view.scale <= 1;
 
   ctx.fillStyle = "#fff";
   ctx.fillRect(...box);
@@ -1342,6 +1386,85 @@ $("btn-reset").addEventListener("click", () => step("Starting over", "/api/reset
 for (const box of document.querySelectorAll(".view input")) {
   box.addEventListener("change", render);
 }
+
+// ---- zoom and pan ---------------------------------------------------------
+//
+// Two gestures and nothing else: the wheel zooms about the cursor, and the
+// middle button — or space with the left, for a pen that has no middle button
+// — drags the page. Both are registered in the capture phase so they can take
+// the pointer before the editing handlers below see it; without that, space
+// and drag would draw a panel instead of moving the page.
+
+stage.addEventListener("wheel", (event) => {
+  if (!state || !state.page) return;
+  event.preventDefault();
+  const [sx, sy] = local(event);
+  // Where the cursor is on the page *before* the zoom. Keeping this point
+  // still is what makes the gesture feel like moving a loupe over paper
+  // rather than reading a scrollbar.
+  const [ix, iy] = view.toImage(sx, sy);
+  // Some wheels report lines, not pixels; a line is about 16 px.
+  const delta = event.deltaY * (event.deltaMode === 1 ? 16 : 1);
+  zoom = Math.min(MAX_ZOOM, Math.max(1, zoom * Math.exp(-delta * 0.0015)));
+  const scale = fitScale() * zoom;
+  pan.x = sx - ix * scale - (stage.clientWidth - state.page.width * scale) / 2;
+  pan.y = sy - iy * scale - (stage.clientHeight - state.page.height * scale) / 2;
+  render();
+}, { passive: false });
+
+stage.addEventListener("pointerdown", (event) => {
+  if (!state || !state.page) return;
+  if (event.button !== 1 && !(spaceHeld && event.button === 0)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  panning = local(event);
+  stage.setPointerCapture(event.pointerId);
+  stage.classList.add("panning");
+}, true);
+
+stage.addEventListener("pointermove", (event) => {
+  if (!panning) return;
+  event.stopPropagation();
+  const [sx, sy] = local(event);
+  pan.x += sx - panning[0];
+  pan.y += sy - panning[1];
+  panning = [sx, sy];
+  render();
+}, true);
+
+const endPan = (event) => {
+  if (!panning) return;
+  event.stopPropagation();
+  panning = null;
+  stage.classList.remove("panning");
+};
+stage.addEventListener("pointerup", endPan, true);
+stage.addEventListener("pointercancel", endPan, true);
+// Windows opens its autoscroll ring on a middle click otherwise.
+stage.addEventListener("auxclick", (event) => {
+  if (event.button === 1) event.preventDefault();
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.target.matches("input, textarea, select")) return;
+  if (event.code === "Space" && !event.repeat) {
+    event.preventDefault();
+    spaceHeld = true;
+    stage.classList.add("grab");
+  }
+  // Back to the whole page. The one key you need when you are lost.
+  if (event.key === "0") fitPage();
+});
+
+const releaseSpace = () => {
+  spaceHeld = false;
+  stage.classList.remove("grab");
+};
+document.addEventListener("keyup", (event) => {
+  if (event.code === "Space") releaseSpace();
+});
+// Alt-tabbing away with space down otherwise leaves the canvas stuck in pan.
+window.addEventListener("blur", releaseSpace);
 
 window.addEventListener("resize", resize);
 

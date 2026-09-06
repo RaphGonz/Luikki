@@ -221,6 +221,9 @@ canvas.pickable { cursor: crosshair; }
 canvas.editing { cursor: crosshair; }
 canvas.on-corner { cursor: move; }
 canvas.on-edge { cursor: copy; }
+/* Pan wins over every editing cursor: the hand is what you are doing. */
+canvas.grab { cursor: grab; }
+canvas.panning { cursor: grabbing; }
 
 .view label input[type="radio"] { margin-right: 4px; }
 .view label input:disabled + * { opacity: .4; }
