@@ -7,7 +7,7 @@ Cloud = endpoint GPU authentifié, pas une SaaS. Projet, pages, refs, palette, m
 
 ## A — App locale (maintenant, sans cloud)
 
-- [ ] Route crop natif `GET /api/page.png?box=…` (sinon page suréchantillonnée au zoom).
+- [ ] Route crop `GET /api/page.png?box=…` **si** une vraie page d'album la réclame. Pas pour la netteté : `page.png` sert déjà `grey` en pleine résolution. Pour la mémoire — 5 calques pleine page dans le navigateur, redessinés à chaque `pointermove` d'un balayage. teddy (5,6 Mpx) ≈ 110 Mo, ça passe ; une A4 600 dpi ≈ 700 Mo, non. Mesurer sur la page de l'artiste avant d'écrire une ligne.
 - [ ] Absorption micro-zones, étape 4, **géométrique** : aire < seuil ET >80% frontière partagée avec 1 seul voisin.
 - [ ] Seuil en fraction de l'aire de case, jamais en px absolus.
 - [ ] Ne PAS absorber sur critère couleur après génération (grave un échec du modèle).
@@ -103,7 +103,7 @@ Rien à réinventer côté segmentation — c'est de l'UI et de la persistance.
 
 ## Verdicts
 
-- **Zoom** : petit. Un seul transform, tout le hit-testing y passe. Vrai travail = route de crop.
+- **Zoom** : fait. Un seul transform, tout le hit-testing y passe — c'était bien petit. En revanche « vrai travail = route de crop » était faux : la page est servie en pleine résolution, le zoom montre du vrai détail sans elle. Ce qui reste est une question de mémoire, pas de netteté, et elle attend une mesure sur une vraie planche.
 - **Export couleur par couleur** : à moitié fait. Zone stocke un id, pas un RGB.
 - **Micro-zones** : géométrique étape 4 + regroupement de calques à l'export. L'explosion vient de l'absence de palette (581 zones → 62 calques avec palette).
 - **Gris de soutien** : vérifier, pas réécrire. + sous-couche grise. Trancher la convention avec l'artiste.
