@@ -85,6 +85,19 @@ function fitPage() {
   render();
 }
 
+// Nobody guesses "space and drag" from an empty canvas. Fitted, the hint
+// teaches the two gestures; zoomed, it stops teaching the wheel — you have
+// just used it — and becomes the readout that says where you are and how to
+// get back.
+function showViewHint() {
+  const hint = $("viewhint");
+  hint.hidden = !state || !state.page;
+  if (hint.hidden) return;
+  hint.textContent = zoom > 1.01
+    ? `${Math.round(zoom * 100)}%  ·  space + drag to move  ·  0 to fit`
+    : "scroll to zoom  ·  space + drag to move";
+}
+
 // ---- server ---------------------------------------------------------------
 
 function say(message, bad = false) {
@@ -184,10 +197,11 @@ function render() {
   const width = stage.clientWidth;
   const height = stage.clientHeight;
   ctx.clearRect(0, 0, width, height);
-  if (!state || !state.page) return;
+  if (!state || !state.page) return showViewHint();
 
   const page = state.page;
   applyView();
+  showViewHint();
 
   const box = [view.ox, view.oy, page.width * view.scale, page.height * view.scale];
 
