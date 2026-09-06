@@ -7,7 +7,6 @@ Cloud = endpoint GPU authentifié, pas une SaaS. Projet, pages, refs, palette, m
 
 ## A — App locale (maintenant, sans cloud)
 
-- [ ] Zoom + pan : échelle/offset dans `view` (app.js). Ancrer sur curseur, redraw en devicePixelRatio.
 - [ ] Route crop natif `GET /api/page.png?box=…` (sinon page suréchantillonnée au zoom).
 - [ ] Absorption micro-zones, étape 4, **géométrique** : aire < seuil ET >80% frontière partagée avec 1 seul voisin.
 - [ ] Seuil en fraction de l'aire de case, jamais en px absolus.
