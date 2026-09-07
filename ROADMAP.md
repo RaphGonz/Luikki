@@ -73,10 +73,39 @@ impressions.
 - [ ] Jeu d'évaluation : calques d'encre **réels** uniquement, jamais de trait extrait (SPEC §7 — le trait extrait est fermé, il ferait croire l'étape résolue). 10–20 pages, styles contrastés : pinceau, plume, hachures, crayon.
 - [ ] Vérité terrain = les flats de l'artiste, pas une annotation maison. La zone correcte est celle qu'il a peinte.
 - [ ] Deux métriques, toujours ensemble : fuites (zones fusionnées à tort) et sur-coupes (zone unique fendue). Tout seuil qui améliore l'une dégrade l'autre.
-- [ ] Mesurer la distribution des largeurs de trou par style **avant** de choisir un `max_gap`. Aujourd'hui 12.0 px, constante globale, jamais justifiée.
-- [ ] `max_gap` fonction de la largeur de trait locale, pas en px absolus — même faute que les micro-zones (§A).
+- [x] Mesurer les trous **avant** de choisir un `max_gap`. Fait sur diagonal_page
+      (`reports/new_algo/`) : sur 46 fuites, 22 seulement se ferment à un rayon
+      quelconque ≤ 12, les 24 autres à aucun. Le plafond du trapped-ball est là,
+      et aucune constante ne le franchit. `max_gap` est une fausse question.
+- [x] Pontage d'extrémités en segment droit : mesuré nul (48 → 44 fuites au
+      mieux, fragmentation en hausse à chaque réglage). `closure.py` reste
+      débranché de `session.py` jusqu'à ce que le pont soit géodésique.
 - [ ] Pontage géodésique (elastica / spirale d'Euler) plutôt que segment droit : un trait d'encre se prolonge courbe. `max_angle_deg` filtre les hachures, il ne reconstruit rien.
 - [ ] État de l'art à dépouiller : fermeture apprise (gap-filling), simplification de croquis (Simo-Serra), colorisation trait→région vidéo (AniDoc, LVCD), propositions de région type SAM. Pour chacun : licence, poids, coût GPU, inspectabilité.
+- [ ] Vérité terrain : **exporter la carte d'étiquettes**, pas une capture
+      d'écran. À 604x862 pour une planche 1174x1668, les zones sous ~100 px ne
+      survivent pas : la moitié « fragmentation » des mesures est bruitée, la
+      moitié « fuite » ne l'est pas.
+- [x] **Audit des fuites après coup** (`segmentation/leaks.py`, branché étape 4).
+      LineFiller inchangé ; une bille plus petite propose les coupes qu'il n'a
+      pas vues, et chaque proposition est jugée sur ce qu'il y a *sous* la
+      frontière qu'elle tracerait : un trait troué (bordure encrée, trou court)
+      se coupe, un tunnel (bordure ouverte sur toute sa longueur) se recolle.
+      Fuite 10,7 % → 6,4 % de la planche pour 13,8 % → 15,5 % de fragmentation,
+      +52 zones, +2 % de temps. Ne fait que **diviser** ce que le segmenteur a
+      rendu : il ne peut pas inventer une fuite. `max_open_share` = 0,14, mesuré
+      (les coupes voulues : bordure 87 % encre ; les refusées : 63 %).
+- [x] 0,14 ne casse rien ailleurs : +4 % à +15 % de zones sur 7 planches
+      (pinceau, crayon, trame, ligne claire, `reports/new_algo/result/crosspage/`).
+      Moebius, la plus à risque, plafonne à +15 % en gardant sa structure. Le
+      seuil n'est pas sur le fil.
+- [ ] Mais un compte de zones stable ne dit pas que les coupes sont les bonnes :
+      il faut une **deuxième planche corrigée** pour ça. Demander la carte
+      d'étiquettes, pas une capture.
+- [ ] Filet de sécurité mesuré, non retenu : fusionner deux régions dont la
+      frontière est ink < 40 %. Zéro fusion fautive sur 907/531/281 paires, mais
+      quasi redondant derrière `merge_fill`. À ressortir pour un autre
+      segmenteur.
 - [ ] Ne retenir qu'une méthode dont la sortie reste corrigeable : le pont n'entre jamais dans l'export, seulement dans le raster consommé par la segmentation. Invariant actuel, à ne pas perdre.
 - [ ] Rapport dans `reports/`, même forme que p3/ab : rendus côte à côte, verdict sur images, pas sur compteurs.
 - [ ] Décision finale en une ligne : garder l'heuristique, la remplacer, ou empiler apprise → trapped-ball.

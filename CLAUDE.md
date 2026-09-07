@@ -101,7 +101,7 @@ wrong is one click to fix.
 - CLI: `luikki = "luikki.cli:main"` - Command-line entry point in `src/luikki/cli.py`
 - Subcommands:
   - `serve` - the local app. `--port`, `--workdir`, `--proposer`, `--extractor`
-  - `flatten` - one page headlessly, then snap-all, then the PSD. `--reference`, `--threshold` (`inf` snaps everything), `--no-snap`, `--steps` (one image per stage boundary)
+  - `flatten` - one page headlessly, then snap-all, then the PSD. `--reference`, `--threshold` (`inf` snaps everything), `--no-snap`, `--leak-gap` (§1.3's gap allowance, 0-1), `--steps` (one image per stage boundary)
   - `p3` / `ab` - the segmentation experiments; reports land in `reports/`
 
 ## State on disk
@@ -245,6 +245,11 @@ to its own stage:
 - zones (step 4) - press over a zone to select it, sweep to take several,
   right-click to merge; or cut one with a stroke across it. Permanent, by
   decision: there is no unmerge, and the stage boundary is the protection.
+  One dial sits beside the button: how open a border may be before the leak
+  audit (§1.3, `segmentation/leaks.py`) reads it as a passage rather than a
+  hole in a line. It is a property of the ink, not of the app, so the artist
+  turns it and presses again — it changes nothing until they do. Book-scoped,
+  like the palette.
 - palette - a reference *offers* colours as chips the artist clicks; a palette
   image gives all of its own. Changing a palette colour repaints every zone
   holding it, in one row, which is rule 1 made visible.
@@ -261,7 +266,7 @@ Use these only when you don't yet know where code lives — if you know the path
 
 ## Reading documents & media
 tokenade extends your `Read` tool: reading .pdf .docx .xlsx .xls .xlsb .pptx .odt .ods .odp .odg .epub .rtf .fb2 (and their flat-XML, macro-enabled and template variants) returns extracted text instead of failing on the binary; .mp4 .mkv .mov .webm .avi .mp3 .wav .m4a .flac .ogg .opus (and other common containers) returns what the file is plus a transcript when one is available; and .png .jpg .jpeg .gif .webp .bmp .tif .tiff .ico .tga .pnm .pbm .pgm .ppm .qoi .hdr are decoded for you — any image format you cannot display yourself is converted to PNG automatically. Just Read the path as usual.
-For a big document, asking beats reading it whole — `tokenade read <file> --prompt "q1, q2"` returns only the passages that answer, and putting several questions in ONE comma-separated call is the CHEAPEST option in tokens spent.
+For a big document, asking beats reading it whole — `tokenade read <file> --prompt "q1, q2"` returns only the passages that answer, and putting several questions in ONE comma-separated call is the CHEAPEST option in tokens spent: each is answered under its own heading in ONE round-trip, instead of re-sending the context once per question.
 
 ## Fetching or searching several things
 Do them in ONE call — `tokenade web <url1> <url2> …` / `tokenade search "<q1>" "<q2>" …` — they run concurrently, so you pay ONE round-trip instead of N and never re-send the context each extra turn would have re-sent.
