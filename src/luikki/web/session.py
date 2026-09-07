@@ -44,6 +44,7 @@ from ..extract.manga_line import MangaLineExtractor
 from ..model.entities import PaletteEntry
 from ..model.masks import UNASSIGNED, region_stats
 from ..segmentation.bubbles import BubbleDetector, detect_bubbles
+from ..segmentation.leaks import LeakParams, split_open_borders
 from ..segmentation.panels import segment_panels
 from ..segmentation.preprocess import binarise_lines, load_line_art
 from ..segmentation.protected import rasterize_protected_for_panel
@@ -191,6 +192,12 @@ class Session:
         self._bubbles_done = False
         self._zones_done = False
         self._flats_done = False
+        # How open a border may be before the leak audit calls it a passage
+        # rather than a hole in a line (§1.3). Held on the session, not passed
+        # and forgotten, because it is the one segmentation knob the artist
+        # turns: they change it, press Segment zones again, and look. Book-
+        # scoped like the palette — an artist's ink does not change per page.
+        self.leak_gap = LeakParams().max_open_share
 
     def _require_page(self) -> None:
         if self.line_mask is None:
@@ -409,11 +416,25 @@ class Session:
 
     # -- 4. segment zones ------------------------------------------------
 
-    def segment_zones(self) -> list[PanelState]:
+    def segment_zones(self, leak_gap: float | None = None) -> list[PanelState]:
+        """Cut every panel into zones. ``leak_gap`` tunes the audit below.
+
+        The default was measured on one artist's ink, and the whole point of
+        §1.3 is that this threshold is style-sensitive — so it is a knob the
+        artist turns rather than a constant they inherit. Setting it here keeps
+        it for the rest of the book, the way the palette is kept.
+        """
+        # Checked before anything else: a bad number is wrong whatever state
+        # the page is in, and saying so beats reporting the step it blocked.
+        if leak_gap is not None and not 0.0 <= leak_gap <= 1.0:
+            raise StepError("The gap allowance is a share, between 0 and 1.")
+
         with self.lock:
             self._require_page()
             if not self.panels:
                 raise StepError("Detect panels first — zones are segmented per panel.")
+            if leak_gap is not None:
+                self.leak_gap = leak_gap
 
             structural = self.structural_mask()
             segmenter = LineFillerSegmenter()
@@ -424,6 +445,17 @@ class Session:
                 )
                 blocked = self._blocked_for(panel)
                 labels = segmenter.segment(structural[window], protected=blocked)
+                # The audit pass, §1.3. LineFiller merges hard enough to take a
+                # zone straight through a hole in a line; this puts back the
+                # splits whose border turns out to be a line rather than a
+                # tunnel. It only ever divides what came back, never re-draws
+                # it, so nothing downstream sees a zone move.
+                labels = split_open_borders(
+                    labels,
+                    structural[window],
+                    protected=blocked,
+                    params=LeakParams(max_open_share=self.leak_gap),
+                )
                 raw = self.line_mask[window]
                 # Which zones are the artist's own spot black, measured here
                 # and punched below. Measured on the labels the segmenter
@@ -1481,6 +1513,7 @@ class Session:
                 },
                 "proposer": self.proposer.name,
                 "extractor": self.extractor.name,
+                "leak_gap": self.leak_gap,
                 "done": {
                     "page": self.line_mask is not None,
                     "panels": bool(self.panels),
