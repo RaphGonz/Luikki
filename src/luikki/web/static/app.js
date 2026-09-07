@@ -238,17 +238,15 @@ function render() {
   // of the drawing, and it is no use if the linework hides it.
   if (layers.left && $("v-left").checked) ctx.drawImage(layers.left, ...box);
 
-  // The layer being corrected is always drawn, checkbox or not: hiding the
-  // shape you are dragging a corner of is not a view option, it is a bug.
   const editing = activeLayer();
 
-  if ($("v-bubbles").checked || editing === "bubbles") {
+  if (visible("bubbles")) {
     ctx.strokeStyle = BUBBLE;
     ctx.lineWidth = 1.5;
     for (const polygon of state.protected) trace(polygon);
   }
 
-  if ($("v-panels").checked || editing === "panels") {
+  if (visible("panels")) {
     ctx.strokeStyle = PANEL;
     ctx.lineWidth = 2;
     ctx.font = "600 15px ui-sans-serif, system-ui, sans-serif";
@@ -270,7 +268,7 @@ function render() {
 // rather than dots: a corner is a thing you grab, and it has to read as one
 // from across the page.
 function drawHandles(editing) {
-  if (!editing || draft) return;
+  if (!editing || draft || !visible(editing)) return;
   ctx.save();
   ctx.lineWidth = 1.5;
   ctx.strokeStyle = editing === "panels" ? PANEL : BUBBLE;
@@ -724,6 +722,11 @@ function applyEditMode() {
         (picked.size ? ` ${picked.size} selected.` : "");
     return;
   }
+  if (!visible(which)) {
+    $("edit-note").textContent =
+      `The ${which} are hidden — tick ${which} under Show to correct them.`;
+    return;
+  }
   $("edit-note").textContent =
     `Drag a corner to move it. Click an edge to add one. Click empty page to` +
     ` draw a new ${which === "panels" ? "panel" : "bubble"}, and click its first` +
@@ -772,6 +775,15 @@ function editable(which) {
   return Boolean(state && state.editable && state.editable[which]);
 }
 
+// A layer switched off under Show is off everywhere: outline, corner handles,
+// and the corners a click can grab. Half of it — the edges gone and the
+// handles left floating — is what made the toggle look broken. Zones are not
+// drawn as polygons, so they have nothing to hide here.
+function visible(which) {
+  if (which !== "panels" && which !== "bubbles") return true;
+  return $("v-" + which).checked;
+}
+
 // Which layer the pointer is aimed at, or null when nothing is correctable.
 //
 // Follows the step the artist is on — panels until balloons exist, balloons
@@ -791,12 +803,14 @@ function activeLayer() {
 
 const noun = () => (activeLayer() === "panels" ? "panel" : "bubble");
 
-// The polygons of the active layer, live — mutating one mutates `state`, which
-// is what lets a drag repaint at pointer speed without asking the server.
+// The polygons of the layer being corrected, live — mutating one mutates
+// `state`, which is what lets a drag repaint at pointer speed without asking
+// the server. The zone stage corrects pixels, not corners, and owns none.
 function shapes() {
   const which = activeLayer();
-  if (!which) return [];
-  return which === "panels" ? state.panels.map((p) => p.polygon) : state.protected;
+  if (which === "panels") return state.panels.map((p) => p.polygon);
+  if (which === "bubbles") return state.protected;
+  return [];
 }
 
 function shapePath(index) {
@@ -970,6 +984,9 @@ stage.addEventListener("pointerdown", (event) => {
     return;
   }
 
+  // Nothing to grab on a layer that is switched off.
+  if (!visible(activeLayer())) return;
+
   if (draft) {
     const [fx, fy] = view.toScreen(draft.points[0][0], draft.points[0][1]);
     if (draft.points.length >= 3 && Math.hypot(fx - sx, fy - sy) <= HANDLE + 3) {
@@ -1020,6 +1037,11 @@ stage.addEventListener("pointermove", (event) => {
         sweptZones(path);
       }
     }
+    return;
+  }
+
+  if (!visible(activeLayer())) {
+    stage.classList.remove("on-corner", "on-edge");
     return;
   }
 
@@ -1106,6 +1128,8 @@ stage.addEventListener("contextmenu", (event) => {
     if (items.length) openMenu(event, items);
     return;
   }
+
+  if (!visible(activeLayer())) return;
 
   if (draft) {
     openMenu(event, [{ label: "Stop drawing this " + noun(), action: discardDraft }]);
@@ -1398,7 +1422,17 @@ $("btn-export").addEventListener("click", async () => {
 $("btn-reset").addEventListener("click", () => step("Starting over", "/api/reset", { method: "POST" }));
 
 for (const box of document.querySelectorAll(".view input")) {
-  box.addEventListener("change", render);
+  box.addEventListener("change", () => {
+    // A half-drawn polygon on a layer you just hid is a trap: the next click
+    // would land on a shape nobody can see.
+    if (!visible(activeLayer())) {
+      draft = null;
+      drag = null;
+      cursor = null;
+    }
+    if (state && state.page) applyEditMode();
+    render();
+  });
 }
 
 // ---- zoom and pan ---------------------------------------------------------

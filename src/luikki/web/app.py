@@ -72,6 +72,15 @@ class Pick(BaseModel):
 
 _STATIC = Path(__file__).parent / "static"
 
+
+class _Fresh(StaticFiles):
+    """`StaticFiles` that never lets the browser reuse a file without asking."""
+
+    def file_response(self, *args, **kwargs) -> Response:
+        response = super().file_response(*args, **kwargs)
+        response.headers["cache-control"] = "no-store"
+        return response
+
 def _build_proposer():
     """`LUIKKI_PROPOSER=cobra` swaps the model in without a code edit.
 
@@ -497,7 +506,11 @@ def create_app(
             path, media_type="image/vnd.adobe.photoshop", filename=path.name
         )
 
-    app.mount("/", StaticFiles(directory=_STATIC, html=True), name="static")
+    # No-store, deliberately: the front end is three files edited in place on
+    # the same machine that serves them, and a browser holding yesterday's
+    # `app.js` after a restart looks exactly like a bug in the app. Revalidation
+    # costs nothing over localhost.
+    app.mount("/", _Fresh(directory=_STATIC, html=True), name="static")
     return app
 
 
