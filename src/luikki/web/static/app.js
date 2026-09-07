@@ -1392,7 +1392,12 @@ for (const [id, [path, label]] of Object.entries(buttons)) {
     // aims the pointer at that step's geometry. The radio exists to go back.
     if (id === "btn-panels") layer = "panels";
     if (id === "btn-bubbles") layer = "bubbles";
-    step(label, path, { method: "POST" });
+    // The gap allowance rides along with the press that uses it: turning the
+    // dial changes nothing on its own, because the zones on screen were cut
+    // with the old one and pretending otherwise would be a lie about the page.
+    const query =
+      id === "btn-zones" ? `?gap=${Number($("leak-gap").value) / 100}` : "";
+    step(label, path + query, { method: "POST" });
   });
 }
 
@@ -1519,6 +1524,7 @@ window.addEventListener("resize", resize);
 (async () => {
   state = await call("/api/state");
   $("snap-threshold").value = state.segments.threshold;
+  $("leak-gap").value = Math.round(state.leak_gap * 100);
   await reloadLayers();
   apply();
   resize();

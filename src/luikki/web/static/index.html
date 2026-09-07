@@ -36,6 +36,11 @@
     </li>
     <li>
       <button class="btn" id="btn-zones" data-needs="panels">4 &middot; Segment zones</button>
+      <label class="thresh" title="Where a hole in a line stops looking like a hole and starts looking like a passage. Raise it to cut more, lower it to cut less.">
+        cut across gaps up to
+        <input id="leak-gap" type="number" min="0" max="100" step="1" value="14">%
+        of a border
+      </label>
       <p class="note" id="zones-note"></p>
     </li>
     <li>

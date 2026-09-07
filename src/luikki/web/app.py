@@ -221,8 +221,9 @@ def create_app(
     # -- 4. zones --------------------------------------------------------
 
     @app.post("/api/zones")
-    def segment_zones():
-        session.segment_zones()
+    def segment_zones(gap: float | None = None):
+        """`gap` is §1.3's gap allowance, kept for the rest of the book."""
+        session.segment_zones(leak_gap=gap)
         return session.state()
 
     @app.get("/api/lines.png")

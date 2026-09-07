@@ -184,6 +184,18 @@ def main(argv: list[str] | None = None) -> int:
         help="stop after flats, leaving every segment its own colour",
     )
     flatten.add_argument(
+        "--leak-gap",
+        type=float,
+        default=None,
+        metavar="SHARE",
+        help=(
+            "how open a zone border may be before §1.3 reads it as a passage "
+            "rather than a hole in a line (0-1, default 0.14). Raise it to cut "
+            "more, lower it to cut less; it is a property of the ink, so sweep "
+            "it on a page of the style before settling on one"
+        ),
+    )
+    flatten.add_argument(
         "--steps",
         nargs="?",
         const=True,
@@ -216,7 +228,7 @@ def main(argv: list[str] | None = None) -> int:
 
         session.detect_panels()
         session.detect_bubbles()
-        session.segment_zones()
+        session.segment_zones(leak_gap=args.leak_gap)
         if steps_dir is not None:
             _dump_steps(session, steps_dir)
 
