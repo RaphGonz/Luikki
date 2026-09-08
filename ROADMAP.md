@@ -8,11 +8,27 @@ Cloud = endpoint GPU authentifié, pas une SaaS. Projet, pages, refs, palette, m
 ## A — App locale (maintenant, sans cloud)
 
 - [ ] Route crop `GET /api/page.png?box=…` si la mémoire navigateur lâche sur une vraie planche (5 calques pleine page).
-- [ ] Absorption micro-zones, étape 4, **géométrique** : aire < seuil ET >80% frontière partagée avec 1 seul voisin.
-- [ ] Seuil en fraction de l'aire de case, jamais en px absolus.
-- [ ] Ne PAS absorber sur critère couleur après génération (grave un échec du modèle).
+- [x] Absorption micro-zones, étape 4, **géométrique** (`segmentation/absorb.py`) :
+      aire < seuil ET >80% de frontière tenue par un seul voisin, adjacence
+      mesurée sous le trait (`border_stats`), jamais dans un noir condamné.
+- [x] Seuil en fraction de l'aire de case, jamais en px absolus.
+      `max_area_share = 5e-4`, choisi sur les rendus (`reports/microzones/`).
+- [x] Ne PAS absorber sur critère couleur après génération (grave un échec du
+      modèle). Écrit dans la docstring d'`absorb.py`, pas seulement ici.
+- [x] **Rebouchage du résidu** : les zones sont coupées sur le trait extrait et
+      poussées sous l'encre réelle, donc tout pixel que l'extracteur appelait
+      trait et que l'encre ne couvre pas restait sans zone — invisible partout
+      sauf dans le PSD, en blanc. Deuxième passe d'`expand_under_lines` sur le
+      reste : 9 509 → 0 (teddy), 10 751 → 0 (laurine). Deux trous restent des
+      trous : le protégé, et les noirs de l'artiste. `panel.orphans` le compte
+      désormais dans `state()` — c'est ce silence qui a coûté la découverte.
 - [ ] Clustering CIELAB à l'export : regroupe les **calques**, pas les zones (même MERGE_DELTA_E que extract.py).
-- [ ] Test régression absorption sur teddy_page + laurine_page : compter pupilles / reflets / boutons perdus.
+- [x] Test régression absorption sur teddy_page + laurine_page. Se lit sur les
+      rendus `result/*_lost.png`, pas sur un compteur : deux discriminateurs
+      automatiques (encre sur la frontière partagée, encre sur le pourtour
+      propre) rendent 100 % « dessiné » à tous les seuils. Une miette et une
+      pupille ont la même forme et la même bordure.
+- [ ] Contre-épreuve du seuil sur les 7 planches de `crosspage`, comme pour 0,14.
 - [ ] Nommer/créer/renommer entrées de palette (SPEC 17).
 - [ ] Granularités export : `colour` / `segment` / `object` + export PNG par couleur.
 - [ ] Vérifier `expand_under_lines` : halo 1px ? jonction 3 zones sous trait épais ? intérieur des aplats noirs ?
@@ -133,7 +149,17 @@ Rien à réinventer côté segmentation — c'est de l'UI et de la persistance.
 ## Verdicts
 
 - **Export couleur par couleur** : à moitié fait. Zone stocke un id, pas un RGB.
-- **Micro-zones** : géométrique étape 4 + regroupement de calques à l'export. L'explosion vient de l'absence de palette (581 zones → 62 calques avec palette).
+- **Micro-zones** : fait, seuil 5e-4 jugé sur les rendus — 32 zones sur 470,
+  56 sur 756, soit 7 % de chaque planche. Ce qu'il emporte est du détail qu'un
+  coloriste veut voir partir ; au-delà (1e-3) il prend des marques dessinées
+  pour être vues. Le gain en compte reste modeste parce que les vraies miettes
+  sont déjà absorbées en amont (`_absorb_residue`, `merge_fill`). Le verdict ne
+  bouge pas — l'explosion se paie à
+  l'export et se règle par la palette (581 zones → 62 calques), pas par la
+  segmentation. Le regroupement CIELAB des calques reste à faire, et seulement
+  s'il reste des doublons de couleur une fois le snap fait sur une vraie
+  palette : il réunit deux *entrées de palette* voisines, ce que l'absorption
+  ne touche jamais.
 - **Gris de soutien** : vérifier, pas réécrire. + sous-couche grise. Trancher la convention avec l'artiste.
 - **Calques par objet** : faisable = problème de **nommage**, pas de vision. Zone fusionnée = objet. Nomme l'entrée palette, groupe l'export par nom.
 - **Calques par objet inter-cases** : non faisable. Cobra échoue dès que les refs montrent des persos différents. Ne pas construire.

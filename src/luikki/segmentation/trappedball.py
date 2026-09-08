@@ -269,6 +269,13 @@ def expand_under_lines(
     line, otherwise the AA edge blends toward paper white and haloes. Every
     line pixel takes the label of its nearest region.
 
+    ``line_mask`` is really *where this may write*: every unassigned pixel of
+    it takes the label of the nearest assigned one. Ink is the first use and
+    the one it is named for, not the only one — the second pass in
+    `segment_zones` hands it the rest of the residue, the pixels the extractor
+    called line and the artist's ink does not cover. Those belong to no region,
+    are covered by nothing at export, and would otherwise stay white.
+
     Protected pixels are left at 0 — bubbles must stay unpainted. A protected
     polygon can overlap an ink pixel (e.g. a bubble drawn across a panel
     frame border), and a pixel that is both "line" and "protected" must stay

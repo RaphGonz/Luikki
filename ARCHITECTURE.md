@@ -274,9 +274,26 @@ Then, for each panel:
    everything outside the panel polygon.
 2. `LineFillerSegmenter.segment` runs trapped-ball fill on the structural
    lines of that panel. The result is a label map.
-3. `expand_under_lines` makes the zones grow below the ink. It uses the
+3. `split_open_borders` audits the result. It only divides a zone, never moves
+   one. A border that is ink with a hole in it is a leak and the zone is cut.
+   A border that is open along its whole length is a passage and it is not.
+4. `absorb_micro_zones` gives every crumb the label of the neighbour that
+   encloses it: small **as a share of the panel**, and one neighbour holding
+   over 80% of its border. Before the expansion below, or the border would be
+   measured on shapes already fused under the strokes.
+5. `expand_under_lines` makes the zones grow below the ink. It uses the
    **raw** line mask here, because the ink layer of the artist goes on top.
    Without this step each line leaves a white gap in the export.
+6. `expand_under_lines` runs a second time on everything that is left. The
+   zones were cut on the structural lines but grown under the real ink, so a
+   pixel the extractor called line and the artist's ink does not cover belongs
+   to no zone at all. Nothing covers it at export either, so it takes the
+   nearest label. Two holes stay holes: what is protected, and the artist's
+   own spot black, which `inked_zones` finds before the expansion and punches
+   out after it.
+
+`panel.orphans` counts what still has no zone once those two exceptions are
+taken out. It should read 0. Like the zone count it is an alarm, not a score.
 
 **The artist corrects the zones here.** Trapped-ball reads the ink, and the
 ink is not always closed. Two failures follow. The fill goes through a gap and
@@ -481,6 +498,8 @@ browser never holds a second copy of the segmentation.
         bubbles.py            RT-DETR box -> ray trace -> polygon
         segmenter.py          the LineFiller adapter
         trappedball.py        the fill parameters, expand_under_lines
+        leaks.py              the leak audit: a line with a hole gets cut
+        absorb.py             the crumbs join the neighbour enclosing them
         closure.py            gap closure experiments
         protected.py          polygons -> a panel-local blocked mask
       extract/
