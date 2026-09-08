@@ -42,7 +42,8 @@ from ..export.psd import PanelFlats, flats_preview, write_psd
 from ..extract.base import LineExtractor
 from ..extract.manga_line import MangaLineExtractor
 from ..model.entities import PaletteEntry
-from ..model.masks import UNASSIGNED, region_stats
+from ..model.masks import UNASSIGNED, check_coverage, region_stats
+from ..segmentation.absorb import absorb_micro_zones
 from ..segmentation.bubbles import BubbleDetector, detect_bubbles
 from ..segmentation.leaks import LeakParams, split_open_borders
 from ..segmentation.panels import segment_panels
@@ -65,6 +66,11 @@ class PanelState:
     # zone label -> palette entry id. Empty until Generate flats has run.
     assignments: dict[int, int] = field(default_factory=dict)
     flagged: set[int] = field(default_factory=set)
+    # Pixels this panel left with no zone at all, once the two deliberate
+    # exceptions — protected, and the artist's own spot black — are taken out.
+    # An alarm, not a score, like the zone count: it should read 0, and it read
+    # in the thousands in silence until the export showed white.
+    orphans: int = 0
 
     @property
     def zone_count(self) -> int:
@@ -457,6 +463,17 @@ class Session:
                     params=LeakParams(max_open_share=self.leak_gap),
                 )
                 raw = self.line_mask[window]
+                # The crumbs, §1.4. Before expansion, or "80% of this border is
+                # one neighbour" would be measured on shapes already fused
+                # under the strokes. The panel's own area is the denominator:
+                # a crumb is a share of the panel, never a count of pixels.
+                labels = absorb_micro_zones(
+                    labels,
+                    structural[window],
+                    raw,
+                    panel.width * panel.height,
+                    protected=blocked,
+                )
                 # Which zones are the artist's own spot black, measured here
                 # and punched below. Measured on the labels the segmenter
                 # returned, because after expansion every sliver that grew
@@ -468,14 +485,36 @@ class Session:
                 # the artist drops on top is their real ink, so that is what
                 # the flats have to reach under.
                 expanded = expand_under_lines(labels, raw, protected=blocked)
+                # Frozen now, in pixels. `doomed` is indexed by label, and the
+                # pass below moves labels: read through it afterwards and it
+                # would point at somewhere else entirely.
+                spot_black = doomed[expanded]
+                # The rest of the residue. Zones are cut on the *structural*
+                # lines but expansion above only reaches under *real* ink, so
+                # every pixel the extractor called line and the artist's ink
+                # does not cover was left with no zone at all — no segment to
+                # click, no colour, transparent in every PSD layer, white on
+                # the flattened page. Nothing covers those pixels, so they get
+                # the nearest label.
+                expanded = expand_under_lines(
+                    expanded, ~spot_black, protected=blocked
+                )
                 # Now the hole. Left in place through expansion the spot black
                 # was a wall the neighbours stopped against; taken out before
                 # it, they would have flooded it and met in its middle, which
                 # draws zones straight across the stroke separating them.
-                expanded[doomed[expanded]] = UNASSIGNED
+                expanded[spot_black] = UNASSIGNED
                 panel.label_map = expanded
                 panel.assignments = {}
                 panel.flagged = set()
+                # §3's exhaustiveness invariant, with the two exceptions as
+                # the excluded set. Reported, never enforced: a panel that
+                # fails it still colours, and the number is what says so.
+                panel.orphans = int(
+                    check_coverage(expanded, spot_black, protected=blocked)[
+                        "uncovered_pixels"
+                    ]
+                )
 
             self._zones_done = True
             self._flats_done = False
@@ -1442,7 +1481,12 @@ class Session:
                     "height": self.height,
                 },
                 "panels": [
-                    {"order": p.order, "polygon": p.polygon, "zones": p.zone_count}
+                    {
+                        "order": p.order,
+                        "polygon": p.polygon,
+                        "zones": p.zone_count,
+                        "orphans": p.orphans,
+                    }
                     for p in self.panels
                 ],
                 "protected": self.protected,

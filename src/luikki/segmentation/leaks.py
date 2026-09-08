@@ -125,7 +125,7 @@ def _majority(pieces: np.ndarray, coarse: np.ndarray) -> np.ndarray:
     return owner
 
 
-def _border_stats(pieces: np.ndarray, ink: np.ndarray) -> dict:
+def border_stats(pieces: np.ndarray, ink: np.ndarray) -> dict:
     """``{(a, b): [border length, of which ink]}`` over 4-neighbour contacts."""
     size = int(pieces.max()) + 1
     stats: dict = defaultdict(lambda: [0, 0])
@@ -160,7 +160,7 @@ def _undo_tunnels(
     of individually reasonable joins otherwise adds up to a leak, which is
     exactly the failure this module exists to prevent.
     """
-    stats = _border_stats(pieces, ink)
+    stats = border_stats(pieces, ink)
     size = int(pieces.max()) + 1
     area = np.bincount(pieces.ravel(), minlength=size)
 
