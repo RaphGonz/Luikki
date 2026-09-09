@@ -174,8 +174,19 @@ def main(argv: list[str] | None = None) -> int:
         type=float,
         default=None,
         help=(
-            "max weighted CIELAB distance to snap; omit for the default guard, "
-            "pass 0 to snap nothing, pass inf to snap everything regardless"
+            "max weighted CIELAB distance to snap; omit to snap every "
+            "segment to its nearest palette colour, pass a number to guard "
+            "(12 was the old default), pass 0 to snap nothing"
+        ),
+    )
+    flatten.add_argument(
+        "--layers",
+        default="colour",
+        choices=["colour", "panel"],
+        help=(
+            "PSD stack: colour = one layer per palette entry over the "
+            "whole page; panel = one group per panel, one layer per "
+            "colour inside it"
         ),
     )
     flatten.add_argument(
@@ -207,7 +218,6 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "flatten":
-        from .colour.snap import SNAP_MAX_DELTA
         from .web.session import Session
 
         proposer = None
@@ -243,7 +253,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.no_snap:
             print("not snapping: every segment keeps its own proposed colour")
         else:
-            threshold = SNAP_MAX_DELTA if args.threshold is None else args.threshold
+            # No guard unless the artist asks for one: what they want by
+            # default is their own palette, not five hundred invented colours.
+            threshold = args.threshold
             if threshold == float("inf"):
                 threshold = None
             result = session.snap_all(threshold)
@@ -256,8 +268,16 @@ def main(argv: list[str] | None = None) -> int:
                 _dump_flats(session, steps_dir, "06_flats_snapped.png")
                 _dump_remaining(session, steps_dir, "07_left_for_the_artist.png")
 
-        psd = session.export_psd()
-        print(f"PSD: {psd}")
+        psd = session.export_psd(granularity=args.layers)
+        export = session.state()["export"]
+        layers = export["layers"][args.layers]
+        if layers > export["warn_at"]:
+            print(
+                f"warning: {layers} layers. Most of them are colours "
+                "the model proposed, one per segment — snap them to your "
+                "palette to bring the count down."
+            )
+        print(f"PSD: {psd} ({layers} layers, by {args.layers})")
         if steps_dir is not None:
             _dump_psd(psd, steps_dir, "08_psd_composite.png")
             print(f"steps: {steps_dir}")

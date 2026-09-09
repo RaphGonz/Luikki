@@ -30,11 +30,58 @@ Cloud = endpoint GPU authentifié, pas une SaaS. Projet, pages, refs, palette, m
       pupille ont la même forme et la même bordure.
 - [ ] Contre-épreuve du seuil sur les 7 planches de `crosspage`, comme pour 0,14.
 - [ ] Nommer/créer/renommer entrées de palette (SPEC 17).
-- [ ] Granularités export : `colour` / `segment` / `object` + export PNG par couleur.
 - [ ] Vérifier `expand_under_lines` : halo 1px ? jonction 3 zones sous trait épais ? intérieur des aplats noirs ?
-- [ ] Sous-couche grise optionnelle par case, sous tout (~5 lignes dans psd.py).
-- [ ] Demander à l'artiste : couleur-sous-trait (standard flatting) ou gris dédié (encrage couleur) ? Implémentations différentes.
+- [x] Sous-couche grise : hors sujet ici, c'est un autre procédé. La convention
+      est tranchée et déjà en place — la couleur du flat passe **sous l'encre**
+      (`expand_under_lines`), pas un gris dédié.
 - [ ] Brancher `model/store.py` → SPEC 1–4 (dossier projet, SQLite, ajout de pages, save à chaque édition).
+
+### Export final — granularité, compte de calques, garde ΔE (fait)
+
+Une seule cause derrière les trois : **un calque = une entrée de palette**, et
+tant que les entrées sont des couleurs *proposées* il y en a une par segment.
+
+**1. Deux granularités, un `<select>` à côté du bouton 7.**
+
+- [x] `colour` — un calque par entrée de palette, sur toute la page, sans
+      groupe. La même couleur dans cinq cases fait **un** calque, pas cinq.
+      C'est la règle 1 rendue manipulable dans Photoshop : un calque = une
+      couleur = partout.
+- [x] `panel` — ce qu'on fait aujourd'hui : un groupe par case, un calque par
+      couleur dans la case. Pour qui travaille case par case.
+- [x] `write_psd(granularity=…)`, un seul chemin de rasterisation : les masques
+      par entrée sont déjà construits case par case, `colour` les réunit dans un
+      masque page avant d'écrire. `flats_preview` ne bouge pas — le composite
+      est identique, seul l'empilement change. Plus `luikki flatten --layers`.
+- [x] Défaut : `colour`. Moins de calques, et c'est celui qui répond à
+      « change les cheveux partout ».
+
+**2. Prévenir au-delà de 20 calques, au moment d'appuyer.**
+
+- [x] Pas de compteur permanent : un avertissement au clic sur le bouton 7,
+      exactement comme ceux de `warnings` dans `app.js` — un texte, un
+      `confirm`, Annuler ou Continuer. « You are about to write 47 layers. Press
+      Snap all first to bring them back to your palette. »
+- [x] Sous les 20 calques, il ne dit rien. Au-dessus, il ne bloque pas : le
+      studio qui veut ses 200 calques clique Continuer.
+- [x] Le compte vient de `state()` (`export: {layers, granularity, warn_at}`), compté par stack sur
+      des ids distincts sans rien rasteriser — `panel` = somme par case,
+      `colour` = ids de la page. Constante `EXPORT_LAYER_WARNING = 20` dans
+      `psd.py`.
+- [x] Même avertissement imprimé par `luikki flatten`.
+
+**3. Le garde ΔE, coché par défaut.**
+
+- [x] La case « ignore the guard » est cochée au chargement. Par défaut, tout
+      snappe à la palette de l'artiste ; le garde ΔE ne s'applique que s'il le
+      décoche. Une ligne dans `index.html`, plus les défauts côté serveur pour
+      qu'ils ne divergent pas : `snap_all(threshold=None)` dans `session.py` et
+      `app.py`, `--threshold inf` dans `cli.py`.
+- [x] Ne **pas** snapper dans `generate_flats` pour autant : l'étape 5 propose,
+      l'étape 6 décide. C'est la frontière d'étape, elle ne bouge pas.
+- [x] Tests : `test_segments.py` et `test_web.py` sur le défaut inversé, `test_web.py` sur le compte
+      de calques annoncé = le compte de calques écrit, dans les deux
+      granularités.
 
 ## B — Installable + vendable
 
@@ -148,7 +195,9 @@ Rien à réinventer côté segmentation — c'est de l'UI et de la persistance.
 
 ## Verdicts
 
-- **Export couleur par couleur** : à moitié fait. Zone stocke un id, pas un RGB.
+- **Export couleur par couleur** : la moitié faite est la bonne — une zone
+  stocke un id, pas un RGB. Reste à en tirer l'empilement : un calque par
+  entrée sur toute la page, le groupe par case en second choix.
 - **Micro-zones** : fait, seuil 5e-4 jugé sur les rendus — 32 zones sur 470,
   56 sur 756, soit 7 % de chaque planche. Ce qu'il emporte est du détail qu'un
   coloriste veut voir partir ; au-delà (1e-3) il prend des marques dessinées
@@ -160,7 +209,8 @@ Rien à réinventer côté segmentation — c'est de l'UI et de la persistance.
   s'il reste des doublons de couleur une fois le snap fait sur une vraie
   palette : il réunit deux *entrées de palette* voisines, ce que l'absorption
   ne touche jamais.
-- **Gris de soutien** : vérifier, pas réécrire. + sous-couche grise. Trancher la convention avec l'artiste.
+- **Gris de soutien** : abandonné ici — autre procédé, autre moment. Sous le
+  trait, la couleur du flat passe déjà, et c'est la bonne convention.
 - **Calques par objet** : faisable = problème de **nommage**, pas de vision. Zone fusionnée = objet. Nomme l'entrée palette, groupe l'export par nom.
 - **Calques par objet inter-cases** : non faisable. Cobra échoue dès que les refs montrent des persos différents. Ne pas construire.
 - **Lignes ouvertes** : premier poste, avant tout le reste de A. C'est la seule étape dont l'échec se paie en corrections manuelles à chaque page. Recherche d'abord, code ensuite.

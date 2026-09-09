@@ -164,6 +164,16 @@ def test_snap_all_without_a_threshold_snaps_everything(tmp_path):
     assert all(s.palette_entry_id in chosen_ids for s in session.segments)
 
 
+def test_snap_all_has_no_guard_by_default(tmp_path):
+    """No threshold means every segment lands on a colour the artist chose."""
+    session = _ready(tmp_path)
+
+    result = session.snap_all()
+
+    assert result["snapped"] == len(session.segments)
+    assert result["skipped"] == 0
+
+
 def test_snap_all_goes_through_the_same_door_as_a_click(tmp_path):
     """Bulk must not be able to do what clicking cannot, so it stays undoable."""
     session = _ready(tmp_path)

@@ -71,11 +71,18 @@
         within &Delta;E
         <input id="snap-threshold" type="number" min="0" step="0.5" value="12">
       </label>
-      <label class="thresh"><input type="checkbox" id="snap-any"> ignore the guard</label>
+      <label class="thresh"><input type="checkbox" id="snap-any" checked> ignore the guard</label>
       <p class="note" id="snap-note">Nothing to snap until the flats exist.</p>
     </li>
     <li>
       <button class="btn primary" id="btn-export" data-needs="flats">7 &middot; Export PSD</button>
+      <label class="thresh">
+        layers
+        <select id="export-layers">
+          <option value="colour">one per colour</option>
+          <option value="panel">one group per panel</option>
+        </select>
+      </label>
       <p class="note">Flats only. Drop your own line layer on top.</p>
     </li>
   </ol>

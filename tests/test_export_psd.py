@@ -1,4 +1,4 @@
-"""§1.10 export. One group per panel, one layer per colour, no line art.
+"""§1.10 export. One layer per colour — grouped by panel or not — no line art.
 
 Rules 1 and 7 are both properties of the written file rather than of any call
 site, so both are checked by reopening the PSD.
@@ -9,7 +9,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from luikki.export.psd import PanelFlats, flats_preview, write_psd
+from luikki.export.psd import PanelFlats, flats_preview, layer_count, write_psd
 from luikki.model.entities import PaletteEntry
 
 psd_tools = pytest.importorskip("psd_tools")
@@ -37,7 +37,9 @@ def two_panels() -> list[PanelFlats]:
 
 
 def test_group_per_panel_layer_per_colour(tmp_path):
-    path = write_psd(tmp_path / "flats.psd", (100, 40), two_panels(), palette())
+    path = write_psd(
+        tmp_path / "flats.psd", (100, 40), two_panels(), palette(), "panel"
+    )
     reopened = psd_tools.PSDImage.open(path)
 
     groups = [layer for layer in reopened if layer.is_group()]
@@ -58,7 +60,10 @@ def test_layer_colour_comes_from_the_palette_entry(tmp_path):
         if layer.name == "hair"
     )
 
-    pixels = np.asarray(hair.topil().convert("RGBA"))
+    # `composite`, not `topil`: the document is RGB, so psd-tools puts the
+    # layer's transparency in a layer mask rather than in a fourth channel.
+    # `topil` ignores the mask and hands back the bounding box, black and all.
+    pixels = np.asarray(hair.composite().convert("RGBA"))
     opaque = pixels[pixels[:, :, 3] > 0]
     assert np.allclose(opaque[:, :3], (5, 250, 15), atol=2)
 
@@ -117,3 +122,47 @@ def test_preview_and_export_agree_on_colour():
     assert tuple(preview[25, 10][:3]) == (30, 80, 200)
     assert tuple(preview[15, 60][:3]) == (200, 30, 40)  # second panel, offset applied
     assert preview[0, 0][3] == 0  # nothing outside a zone
+
+
+def test_one_layer_per_colour_spans_the_whole_page(tmp_path):
+    """The `colour` stack is rule 1 made selectable: one colour, one layer.
+
+    "hair" is in both panels, so under `panel` it is two layers in two groups
+    and under `colour` it is one layer wide enough to hold both. That width is
+    the whole point — one selection recolours every occurrence.
+    """
+    path = write_psd(
+        tmp_path / "flats.psd", (100, 40), two_panels(), palette(), "colour"
+    )
+    reopened = psd_tools.PSDImage.open(path)
+
+    assert [layer.is_group() for layer in reopened] == [False, False]
+    assert [layer.name for layer in reopened] == ["hair", "coat"]
+
+    hair = next(layer for layer in reopened if layer.name == "hair")
+    assert hair.offset == (5, 5)
+    assert hair.size == (75, 25)
+
+
+@pytest.mark.parametrize("granularity", ["colour", "panel"])
+def test_the_announced_layer_count_is_the_written_one(tmp_path, granularity):
+    """The export warning quotes this number, so it has to be the file's.
+
+    Counted on ids without rasterising anything (the sidebar asks on every
+    poll); a count that drifts from what lands in the PSD would make the
+    warning worse than no warning at all.
+    """
+    panels, entries = two_panels(), palette()
+    path = write_psd(tmp_path / "flats.psd", (100, 40), panels, entries, granularity)
+
+    written = [
+        layer
+        for layer in psd_tools.PSDImage.open(path).descendants()
+        if not layer.is_group()
+    ]
+    assert len(written) == layer_count(panels, entries, granularity)
+
+
+def test_an_unknown_granularity_is_refused(tmp_path):
+    with pytest.raises(ValueError):
+        write_psd(tmp_path / "flats.psd", (100, 40), two_panels(), palette(), "object")

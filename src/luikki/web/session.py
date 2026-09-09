@@ -38,7 +38,14 @@ from ..colour.proposer import (
 from ..colour.references import PALETTE_KIND, Reference, ReferenceStore
 from ..colour.segments import Segment, build_segments
 from ..colour.snap import SNAP_MAX_DELTA, assign_zones, nearest_entry
-from ..export.psd import PanelFlats, flats_preview, write_psd
+from ..export.psd import (
+    EXPORT_LAYER_WARNING,
+    GRANULARITIES,
+    PanelFlats,
+    flats_preview,
+    layer_count,
+    write_psd,
+)
 from ..extract.base import LineExtractor
 from ..extract.manga_line import MangaLineExtractor
 from ..model.entities import PaletteEntry
@@ -204,6 +211,7 @@ class Session:
         # turns: they change it, press Segment zones again, and look. Book-
         # scoped like the palette — an artist's ink does not change per page.
         self.leak_gap = LeakParams().max_open_share
+        self.granularity = "colour"
 
     def _require_page(self) -> None:
         if self.line_mask is None:
@@ -1350,7 +1358,7 @@ class Session:
             self.panels[panel].assignments[label] = original
             return segment
 
-    def snap_all(self, threshold: float | None = SNAP_MAX_DELTA) -> dict[str, int]:
+    def snap_all(self, threshold: float | None = None) -> dict[str, int]:
         """Snap every segment whose suggestion falls within `threshold`.
 
         The bulk shortcut, for a page whose references are good enough that the
@@ -1393,13 +1401,26 @@ class Session:
             if panel.label_map is not None
         ]
 
-    def export_psd(self, path: str | Path | None = None) -> Path:
+    def export_psd(
+        self, path: str | Path | None = None, granularity: str | None = None
+    ) -> Path:
         with self.lock:
             if not self._flats_done:
                 raise StepError("Generate flats first — there is nothing to export.")
+            if granularity is not None:
+                if granularity not in GRANULARITIES:
+                    raise StepError(
+                        f"Unknown export granularity {granularity!r} — "
+                        f"expected one of {', '.join(GRANULARITIES)}."
+                    )
+                self.granularity = granularity
             target = Path(path) if path else self.workdir / f"{Path(self.original_name).stem}_flats.psd"
             return write_psd(
-                target, (self.width, self.height), self._panel_flats(), self.palette_by_id
+                target,
+                (self.width, self.height),
+                self._panel_flats(),
+                self.palette_by_id,
+                self.granularity,
             )
 
     def flats_rgba(self) -> np.ndarray:
@@ -1558,6 +1579,14 @@ class Session:
                 "proposer": self.proposer.name,
                 "extractor": self.extractor.name,
                 "leak_gap": self.leak_gap,
+                "export": {
+                    "granularity": self.granularity,
+                    "warn_at": EXPORT_LAYER_WARNING,
+                    "layers": {
+                        name: layer_count(self._panel_flats(), self.palette_by_id, name)
+                        for name in GRANULARITIES
+                    },
+                },
                 "done": {
                     "page": self.line_mask is not None,
                     "panels": bool(self.panels),
