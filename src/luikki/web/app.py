@@ -490,7 +490,7 @@ def create_app(
         return _png(rgba)
 
     @app.post("/api/snap-all")
-    def snap_all(threshold: float | None = SNAP_MAX_DELTA):
+    def snap_all(threshold: float | None = None):
         """The bulk shortcut. `threshold` of null ignores the guard entirely."""
         # Snap first, then read the state: inside one dict literal the state
         # is built before the call that changes it, and the sidebar ends up
@@ -501,8 +501,11 @@ def create_app(
     # -- 7. export -------------------------------------------------------
 
     @app.post("/api/export")
-    def export():
-        path = session.export_psd()
+    def export(granularity: str | None = None):
+        """`granularity` is "colour" (one layer per palette entry, whole page)
+        or "panel" (one group per panel). Omitted, the session keeps the one it
+        was last given — the choice is the artist's, not the request's."""
+        path = session.export_psd(granularity=granularity)
         return FileResponse(
             path, media_type="image/vnd.adobe.photoshop", filename=path.name
         )

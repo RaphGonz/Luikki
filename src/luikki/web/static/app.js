@@ -1401,11 +1401,28 @@ for (const [id, [path, label]] of Object.entries(buttons)) {
   });
 }
 
+// The one warning that is about the file rather than about losing work: past
+// `warn_at` layers the artist is exporting the model's guesses, one private
+// entry per segment, and the fix is the button above this one. It names it.
 $("btn-export").addEventListener("click", async () => {
+  const granularity = $("export-layers").value;
+  const layers = state?.export?.layers?.[granularity] ?? 0;
+  if (layers > (state?.export?.warn_at ?? Infinity)) {
+    const ok = window.confirm(
+      `You are about to write ${layers} layers.
+
+` +
+        "Most of them are colours the model proposed, one per segment. Press " +
+        "Snap all first to bring them back to your palette."
+    );
+    if (!ok) return;
+  }
   say("Writing PSD…");
   document.body.classList.add("busy");
   try {
-    const response = await fetch("/api/export", { method: "POST" });
+    const response = await fetch(`/api/export?granularity=${granularity}`, {
+      method: "POST",
+    });
     if (!response.ok) {
       const body = await response.json().catch(() => ({}));
       throw new Error(body.error || body.detail || response.statusText);
@@ -1416,7 +1433,11 @@ $("btn-export").addEventListener("click", async () => {
     link.download = (state.page.name.replace(/\.[^.]+$/, "") || "page") + "_flats.psd";
     link.click();
     URL.revokeObjectURL(link.href);
-    say("PSD exported — one group per panel, one layer per colour.");
+    say(
+      granularity === "colour"
+        ? `PSD exported — ${layers} layers, one per colour.`
+        : `PSD exported — ${layers} layers, one group per panel.`
+    );
   } catch (error) {
     say(error.message, true);
   } finally {

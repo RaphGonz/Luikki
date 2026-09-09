@@ -444,7 +444,10 @@ instruction of the artist.
   the artist cannot undo takes the decision away from them.
 - `snap_all` is the bulk action for a page whose references are good. It calls
   `snap_segment` for each segment, so it can do nothing that a click cannot,
-  and each segment stays reversible one at a time.
+  and each segment stays reversible one at a time. **It has no threshold by
+  default**: what the artist wants is their own palette, not five hundred
+  invented colours, and the fastest way there is to snap everything and correct
+  what is wrong. The guard is what they switch on, not what they switch off.
 
 The suggestion uses the palette of the artist only. It never uses the private
 entries of step 5. Those hold the colour of the segment itself, and each
@@ -452,9 +455,23 @@ segment would find itself at distance zero.
 
 ### Step 7 — Export PSD
 
-`write_psd` makes one layer group for each panel. It makes one layer for each
-palette colour. Read the comment on `_set_preview` in `export/psd.py` before
-you change that file. Without that function the export takes eight minutes.
+`write_psd` makes one layer for each palette colour. `granularity` says how
+they stack:
+
+- `colour` (the default) puts one layer per palette entry over the whole page.
+  The same colour in five panels is one layer. This is rule 1 made selectable:
+  one selection recolours every occurrence.
+- `panel` puts one group per panel, one layer per colour inside it, for the
+  colourist who works panel by panel.
+
+Both composite to the same page, which is what makes the choice safe.
+`layer_count` says how many layers a stack would write without writing them;
+the sidebar reads it, and warns past `EXPORT_LAYER_WARNING` before the export.
+A count that high means the page is still wearing the model's guesses, one
+private entry per segment, and Snap all is the answer.
+
+Read the comment on `_set_preview` in `export/psd.py` before you change that
+file. Without that function the export takes eight minutes.
 
 ## 5. Where the state is
 

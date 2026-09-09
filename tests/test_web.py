@@ -100,8 +100,19 @@ def test_every_button_in_order_yields_a_psd(client, page, tmp_path):
     out.write_bytes(export.content)
     from psd_tools import PSDImage
 
+    # The default stack is one layer per colour, over the page: no groups, and
+    # exactly as many layers as the sidebar said it was about to write.
+    top = list(PSDImage.open(out))
+    assert top and not any(layer.is_group() for layer in top)
+    assert len(top) == state["export"]["layers"]["colour"]
+
+    # The other stack, on the same page, from the same button.
+    grouped = client.post("/api/export?granularity=panel")
+    assert grouped.status_code == 200
+    out.write_bytes(grouped.content)
     groups = [layer for layer in PSDImage.open(out) if layer.is_group()]
     assert groups and all(len(group) for group in groups)
+    assert sum(len(group) for group in groups) == state["export"]["layers"]["panel"]
 
 
 def test_buttons_refuse_out_of_order(client):
@@ -621,15 +632,22 @@ def test_a_click_on_the_gutter_resolves_to_nothing(client, page, tmp_path):
     assert client.get("/api/segment?x=0&y=0").status_code == 404
 
 
-def test_ignoring_the_guard_snaps_everything(client, page, tmp_path):
-    """The checkbox sends `inf`, which is the CLI's `--threshold inf`."""
+def test_snap_all_ignores_the_guard_unless_asked(client, page, tmp_path):
+    """The default is the artist's palette, not the guard.
+
+    Pressing Snap all with nothing typed in the box sends no threshold, and
+    every segment goes to its nearest palette colour. What the artist wants by
+    default is their own colours; a segment snapped from far away is still one
+    click from `unsnap`. The guard is what they turn on, not what they turn off.
+    """
     _through_flats(client, page, tmp_path)
 
-    guarded = client.post("/api/snap-all").json()["result"]
-    everything = client.post("/api/snap-all?threshold=inf").json()["result"]
+    # The guard first, while nothing has moved: asked for, it still refuses.
+    guarded = client.post("/api/snap-all?threshold=0").json()["result"]
+    assert guarded["snapped"] == 0
 
+    everything = client.post("/api/snap-all").json()["result"]
     assert everything["skipped"] == 0
-    assert everything["snapped"] >= guarded["snapped"]
     assert everything["snapped"] == everything["segments"]
 
 
