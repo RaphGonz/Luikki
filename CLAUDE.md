@@ -61,7 +61,7 @@ wrong is one click to fix.
 
 - FastAPI + uvicorn (`[web]` extra) - The local app in `src/luikki/web/`. One route per button, plus one per correction and one per preview PNG. Handlers are plain `def`, not `async def`: segmentation and generation are seconds of CPU or GPU work, and FastAPI runs sync handlers in a threadpool instead of stalling the event loop.
 - pydantic - Request bodies for the corrections (`Shape`, `Stroke`, `Merge`, `Cut`, `Colour`, `Pick` in `web/app.py`)
-- Frontend: no framework and no build step - `web/static/` is one HTML, one CSS and one JS file, served as they are. Hand-rolled 2D canvas, one screen↔image transform (`view` in `app.js`), zero runtime dependencies.
+- Frontend: no framework and no build step - `web/static/` is one HTML, one CSS and one JS file, plus `locales/<lang>.json` (every word of the interface) and `favicon.svg`, served as they are. Hand-rolled 2D canvas, one screen↔image transform (`view` in `app.js`), zero runtime dependencies. Layout, colour tokens and the rules for lines on the artwork come from `UI.md`.
 - argparse (Python standard library) - Command-line interface in `src/luikki/cli.py`
 - pytest 8.0+ - Configured in `pyproject.toml`, run via `pytest tests/`
 - setuptools 68+ - Project build and package management
@@ -255,6 +255,24 @@ to its own stage:
   holding it, in one row, which is rule 1 made visible.
 - colour (step 6) - flats propose and never snap; snapping is per segment and
   artist-driven.
+
+The interface is `UI.md`: a step rail on the left drives the canvas, and the
+inspector on the right shows what the canvas selected. Raph's choices sit on
+top of it and are not bugs: the name and logo in the signature orange
+(`--attention`), a dark violet surround (OKLCh L 0.28), zoom and pan kept, and
+layer visibility that follows the open step. Every colour is a token in the
+`:root` block of `app.css`.
+
+No word the artist reads lives in `index.html` or `app.js`. Every string is a
+literal key in `static/locales/en.json`, and `tests/test_locales.py` fails on
+a missing, unused or assembled key. A language is a file; `?lang=en-XA` is a
+pseudo-locale that shows any text left in the code.
+
+The long steps report real progress through `GET /api/progress`
+(`web/progress.py`), read without the session lock the step holds. The server
+sends codes (`phase`, `index`, `count`) and the browser supplies the words.
+Check the UI with `luikki serve --proposer distinct --extractor raw`: Cobra
+does not run on the development machine.
 
 `ARCHITECTURE.md` is the fast way into the code: where things are and how the
 data moves. See `SPEC.md` for what is being built and why.

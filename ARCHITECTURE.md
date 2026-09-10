@@ -68,7 +68,8 @@ pages" one change to one row.
 
 Nothing runs by itself. The artist starts each step. If the artist runs a step
 again, the app deletes the results of all later steps. A step that deletes
-work asks the artist first.
+work asks the artist first. The question is in the rail, and it names what the
+step deletes.
 
 | # | Button | Function | File |
 |---|---|---|---|
@@ -80,7 +81,8 @@ work asks the artist first.
 | 6 | Snap | `snap_segment`, `snap_all` | `colour/segments.py`, `colour/snap.py` |
 | 7 | Export PSD | `write_psd` | `export/psd.py` |
 
-Step 3 needs step 2. The app refuses step 3 before step 2. The steps run in
+Step 3 needs step 2. The app refuses step 3 before step 2. The rail shows that
+refusal before the click: a locked step says what to do first. The steps run in
 one order, because the artist corrects the result of each one, and a step that
 runs again deletes those corrections.
 
@@ -129,8 +131,9 @@ Keep the tolerance small. At 2%, all areas on all pages gave 4 or 5 corners.
 That removes the missing piece of a panel, which is the reason to trace.
 
 **The artist corrects the panels here.** Detection gives a proposal. The
-artist drags a corner, clicks an edge to add a corner, clicks the page to draw
-a new panel, or right-clicks to delete a corner or a panel. Each action sends
+artist clicks inside a panel to select it, drags a corner, clicks an edge to
+add a corner, clicks outside the panels to draw a new panel (Shift-click draws
+inside one), or right-clicks to delete a corner or a panel. Each action sends
 the complete polygon to the server. The server does not receive an edit. It
 receives the shape.
 
@@ -306,9 +309,9 @@ touches. Two zones far apart need two presses, and nothing between them is
 selected, because the button was up. To press a selected zone drops it. A
 sweep only adds.
 
-Right-click gives the actions. Two or more zones give **merge**. Exactly one
-zone gives **cut**: with more, the app cannot know which zone a stroke belongs
-to.
+Right-click gives the actions, and the inspector shows the same actions as
+buttons. Two or more zones give **merge**. Exactly one zone gives **cut**: with
+more, the app cannot know which zone a stroke belongs to.
 
 - `merge_zones` writes the label of the largest zone over the others. The
   zones do not need to touch. The panes of a glass are one thing to colour.
@@ -465,8 +468,9 @@ they stack:
   colourist who works panel by panel.
 
 Both composite to the same page, which is what makes the choice safe.
-`layer_count` says how many layers a stack would write without writing them;
-the sidebar reads it, and warns past `EXPORT_LAYER_WARNING` before the export.
+`layer_count` says how many layers a stack would write without writing them.
+Step 7 in the rail reads it, and it warns past `EXPORT_LAYER_WARNING` before
+the artist clicks.
 A count that high means the page is still wearing the model's guesses, one
 private entry per segment, and Snap all is the answer.
 
@@ -482,6 +486,13 @@ book and not to the page.
 
 A lock makes the buttons sequential. The artist will click two times.
 
+`Session.progress` (`web/progress.py`) tells the browser how far a long step
+is. `GET /api/progress` reads it without the lock, because the step holds the
+lock for its whole run. A tick is a finished piece of work: one tile of the
+extractor, one pass of LineFiller, one panel. `Session._learn` measures what
+each pass costs on this machine, so the steps of the bar match that machine.
+The route sends codes, not words.
+
 `src/luikki/model/store.py` is a full SQLite store with the same shape.
 This version of the app **does not use it**. Persistence is not the purpose of
 this version.
@@ -495,10 +506,24 @@ route. Each preview image is one GET route that sends a PNG. A correction is
 also one route: the browser sends the complete shape, the complete stroke, or
 the complete colour. It never sends an edit.
 
-`src/luikki/web/static/` is the browser. `app.js` holds one screen-to-page
-transform, `view`. Nothing else in that file converts coordinates. Each hit
-test goes through `view.toImage` and then asks the server what is there. The
-browser never holds a second copy of the segmentation.
+`src/luikki/web/static/` is the browser. `UI.md` gives its layout, its colours
+and its rules. The step rail on the left controls the canvas: the open step
+decides what the canvas shows and what a click does. The canvas controls the
+inspector on the right, which shows what the click selected.
+
+`app.js` holds one screen-to-page transform, `view`. Nothing else in that file
+converts coordinates. Each hit test goes through `view.toImage` and then asks
+the server what is there. The browser never holds a second copy of the
+segmentation. The outline of a selected zone comes from the mask that the
+server sends for that zone (`/api/zone/{panel}/{label}.png`).
+
+No word that the artist reads is in `index.html` or in `app.js`. Each word is a
+key in `static/locales/en.json`, and `t("key")` looks it up. A new language is
+a new file in `locales/` and one entry in `LOCALES`. `?lang=en-XA` shows a
+pseudo-language: text that stays plain English is text that is in the code.
+
+No colour is in `app.js`. Each colour is a token in the `:root` block of
+`app.css`. The canvas reads the tokens one time, at start.
 
 ## 6. Map of the source files
 
@@ -506,9 +531,11 @@ browser never holds a second copy of the segmentation.
       cli.py                  the `luikki` command
       web/session.py          all state, the seven buttons      <- start here
       web/app.py              the HTTP routes
-      web/static/app.js       the canvas, the corrections, one transform
-      web/static/index.html   the sidebar: the buttons and the two uploads
-      web/static/app.css      the styles
+      web/progress.py         how far a long step is, for the progress bar
+      web/static/index.html   the shell: header, rail, canvas, inspector, footer
+      web/static/app.js       the rail, the canvas, the corrections, one transform
+      web/static/app.css      the tokens of UI.md, then the styles
+      web/static/locales/     every word of the interface, one file a language
       segmentation/
         preprocess.py         file -> line_mask + grey
         panels.py             gutter network -> panel polygons
@@ -572,6 +599,12 @@ browser never holds a second copy of the segmentation.
 - Keep the bubble detector on `onnxruntime`. Nearly every other comic balloon
   detector on GitHub needs the `ultralytics` package, and that package is
   AGPL-3.0. The licence of the weights does not change this.
+- No word that the artist reads goes in `index.html` or `app.js`. It goes in
+  `static/locales/en.json`, under a key that the code writes out in full. A
+  key that the code builds at run time is a key that `tests/test_locales.py`
+  cannot see.
+- No colour goes outside the `:root` block of `app.css`. A line on the artwork
+  carries luminance, not hue (`UI.md` §11): the artist judges colour there.
 
 ## 8. Known problems
 
@@ -599,6 +632,8 @@ browser never holds a second copy of the segmentation.
   too small. The artist sees the thumbnails and deletes the bad ones.
 - Segmentation is slow. A large page takes approximately two minutes. The cost
   is in LineFiller.
+- The progress bar moves in large steps during segmentation, about one fifth of
+  a panel for each step. LineFiller reports nothing inside one pass.
 
 ## 9. Tests
 
@@ -612,3 +647,8 @@ each screen goes to the next one.
 One test counts the coloured pixels before a cut and after it. A cut that
 loses the pixels of its own stroke shows only as a halo in the PSD of somebody
 else.
+
+`tests/test_locales.py` checks the words. Each key that the interface uses is
+in `en.json`, each key in `en.json` is used, and each other language has the
+same placeholders. `tests/test_progress.py` checks that the bar only goes
+forward and ends at 100 %.
