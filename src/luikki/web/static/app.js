@@ -46,7 +46,7 @@ const remembered = {
 // pieces: `tests/test_locales.py` reads this file for them, and a key built at
 // runtime is a key that test cannot see.
 
-const LOCALES = ["en"];
+const LOCALES = ["en", "fr"];
 // Accented and stretched from English at runtime. A string still unaccented
 // on screen was written into the code; a row that breaks will break in French.
 const PSEUDO = "en-XA";
@@ -2789,16 +2789,21 @@ function setupLanguages() {
   const select = $("language");
   select.hidden = LOCALES.length < 2;
   if (select.hidden) return;
+  // Each language named in itself — "Français", "English" — so an artist who
+  // cannot read the current one can still find their own.
+  const nativeName = (code) => {
+    const name = new Intl.DisplayNames([code], { type: "language" }).of(code);
+    return name.charAt(0).toLocaleUpperCase(code) + name.slice(1);
+  };
   select.replaceChildren(
-    ...LOCALES.map((code) =>
-      h("option", { value: code, selected: code === words.locale }, new Intl.DisplayNames([code], { type: "language" }).of(code)),
-    ),
+    ...LOCALES.map((code) => h("option", { value: code, selected: code === words.locale }, nativeName(code))),
   );
   select.addEventListener("change", async () => {
     remembered.set("lang", select.value);
     await loadWords(select.value);
     applyStaticStrings();
     renderAll();
+    if (!work.timer) say(state && state.page ? t("status.ready") : t("status.start"));
   });
 }
 

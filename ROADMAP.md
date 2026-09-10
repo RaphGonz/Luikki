@@ -38,7 +38,8 @@ Cloud = endpoint GPU authentifié, pas une SaaS. Projet, pages, refs, palette, m
 - [x] Interface refaite d'après `UI.md` (rail · canvas · inspecteur), barre de
       progression réelle (`GET /api/progress`), tout le texte dans
       `static/locales/` — une langue = un fichier (`tests/test_locales.py`).
-- [ ] Traductions : `fr.json` d'abord, puis les `StepError` Python en `{code, params}`.
+- [x] Français : `locales/fr.json`, sélecteur de langue en bas à droite.
+- [ ] Messages d'erreur du serveur traduisibles : les `StepError` Python en `{code, params}`.
 
 ### Export final — granularité, compte de calques, garde ΔE (fait)
 
