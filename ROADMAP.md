@@ -35,6 +35,10 @@ Cloud = endpoint GPU authentifié, pas une SaaS. Projet, pages, refs, palette, m
       est tranchée et déjà en place — la couleur du flat passe **sous l'encre**
       (`expand_under_lines`), pas un gris dédié.
 - [ ] Brancher `model/store.py` → SPEC 1–4 (dossier projet, SQLite, ajout de pages, save à chaque édition).
+- [x] Interface refaite d'après `UI.md` (rail · canvas · inspecteur), barre de
+      progression réelle (`GET /api/progress`), tout le texte dans
+      `static/locales/` — une langue = un fichier (`tests/test_locales.py`).
+- [ ] Traductions : `fr.json` d'abord, puis les `StepError` Python en `{code, params}`.
 
 ### Export final — granularité, compte de calques, garde ΔE (fait)
 
@@ -58,12 +62,11 @@ tant que les entrées sont des couleurs *proposées* il y en a une par segment.
 
 **2. Prévenir au-delà de 20 calques, au moment d'appuyer.**
 
-- [x] Pas de compteur permanent : un avertissement au clic sur le bouton 7,
-      exactement comme ceux de `warnings` dans `app.js` — un texte, un
-      `confirm`, Annuler ou Continuer. « You are about to write 47 layers. Press
-      Snap all first to bring them back to your palette. »
+- [x] Pas de compteur permanent : l'avertissement s'affiche dans l'étape 7,
+      avant le clic, et le bouton devient « Export 47 layers anyway ». Plus de
+      `confirm`.
 - [x] Sous les 20 calques, il ne dit rien. Au-dessus, il ne bloque pas : le
-      studio qui veut ses 200 calques clique Continuer.
+      studio qui veut ses 200 calques exporte quand même.
 - [x] Le compte vient de `state()` (`export: {layers, granularity, warn_at}`), compté par stack sur
       des ids distincts sans rien rasteriser — `panel` = somme par case,
       `colour` = ids de la page. Constante `EXPORT_LAYER_WARNING = 20` dans
