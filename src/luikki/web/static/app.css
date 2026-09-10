@@ -1,339 +1,505 @@
 :root {
-  --bg: #14161a;
-  --panel: #1c1f26;
-  --line: #2c313b;
-  --ink: #e8eaee;
-  --dim: #8d94a3;
-  --accent: #6ea8fe;
-  --warn: #f0a35e;
+  /* ---- Frame ramp. The vertical structure of the app. ---- */
+  --bg:             #3B313F;  /* YOUR (59,49,63). App background.   */
+  --panel:          #46394A;  /* Rail, inspector, header, footer.   */
+  --control:        #514256;  /* Button and field fill.             */
+  --control-hover:  #5E4B61;
+  --control-press:  #6B536C;  /* Also: pressed, and selected.       */
+  --attention:      #E4A280;  /* YOUR (228,162,128). One meaning.   */
+  --attention-tint: rgba(228, 162, 128, 0.16);
+
+  /* The whole frame ramp, as one gradient. See section 6. */
+  --ramp: linear-gradient(90deg,
+    #3B313F, #46394A, #514256, #5E4B61, #6B536C, #795C76, #88647E,
+    #986C85, #A97589, #BA7E8A, #CA8988, #D99484, #E4A280);
+
+  /* ---- Type ramp. Text, borders, disabled. Never a fill. ---- */
+  --text:      #C1C6D1;  /* YOUR (193,198,209). 6.3:1 on --panel.   */
+  --text-dim:  #AFADB8;  /* 4.9:1 on --panel.                       */
+  --text-off:  #726B67;  /* YOUR (114,107,103). Disabled only.      */
+  --border:    #9D959C;  /* 3.7:1 on --panel. A control boundary.   */
+  --separator: #827878;  /* A line between two areas. Decorative.   */
+
+  /* ---- Action ramp. Interactive only. ---- */
+  --action:       #3257A4;  /* YOUR (50,87,164). White text = 6.9:1 */
+  --action-hover: #6369B2;  /* White text = 5.0:1                   */
+  --action-ring:  #85A0D1;  /* YOUR (133,160,209). Ring and accent. */
+  --action-tint:  rgba(50, 87, 164, 0.30);   /* A selected row.     */
+
+  /* ---- The surround. The frame violet, darker, chosen by eye. ---- */
+  --canvas:         #2E2532;  /* OKLCh L 0.28, C 0.028, h 316.3.    */
+  --canvas-neutral: #292929;  /* L 0.28, C 0. The toggle of task 7. */
+  --canvas-edge:    #1B121F;  /* L 0.20, same hue. The page border. */
+
+  /* ---- On the artwork. Luminance only. See section 11. ---- */
+  --over-dark:  rgba(0, 0, 0, 0.62);
+  --over-light: rgba(255, 255, 255, 0.90);
+  --over-wash:  rgba(255, 255, 255, 0.12);
+
+  /* ---- Space. A 4px grid. Nothing off it. ---- */
+  --s-1: 4px;  --s-2: 8px;  --s-3: 12px; --s-4: 16px;
+  --s-5: 20px; --s-6: 24px; --s-8: 32px;
+
+  --r-control: 4px;
+  --r-panel:   6px;
+
+  --rail-w:      232px;
+  --inspector-w: 300px;
+  --header-h:    44px;
+  --footer-h:    32px;
+
+  --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+          "Helvetica Neue", Arial, sans-serif;
+  --fs-body:  13px;
+  --fs-label: 12px;
+  --fs-num:   12px;
 }
+
+/* Every colour below is a token (UI.md R4). Every margin and padding is a
+   --s-* step. Sides are logical (inline/block), so a right-to-left locale
+   needs `dir="rtl"` and nothing else. */
 
 * { box-sizing: border-box; }
 
+* { scrollbar-width: thin; scrollbar-color: var(--control-press) transparent; }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-thumb {
+  background: var(--control-press); border-radius: 5px;
+  border: 3px solid transparent; background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover { background: var(--border); background-clip: padding-box; }
+*::-webkit-scrollbar-track { background: transparent; }
+
+html, body { height: 100%; }
+
 body {
   margin: 0;
-  height: 100vh;
-  display: grid;
-  grid-template-columns: 300px 1fr;
+  overflow: hidden;
   background: var(--bg);
-  color: var(--ink);
-  font: 14px/1.45 ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+  color: var(--text);
+  font: var(--fs-body)/1.45 var(--font);
 }
 
-aside {
+button, input, select { font: inherit; color: inherit; }
+
+:focus-visible { outline: 2px solid var(--action-ring); outline-offset: 2px; }
+
+.sr {
+  position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip-path: inset(50%); white-space: nowrap;
+}
+
+.num { font-size: var(--fs-num); font-variant-numeric: tabular-nums; }
+
+/* ---- The shell (§7) ------------------------------------------------------ */
+
+/* The 1px gaps show --bg between the four --panel areas: that is the whole of
+   the structure, with no border drawn. */
+.shell {
+  display: grid;
+  grid-template-columns: var(--rail-w) minmax(0, 1fr) var(--inspector-w);
+  grid-template-rows: var(--header-h) minmax(0, 1fr) var(--footer-h);
+  gap: 1px;
+  height: 100vh;
+  background: var(--bg);
+}
+.shell.no-inspector { grid-template-columns: var(--rail-w) minmax(0, 1fr); }
+.shell.no-inspector .inspector { display: none; }
+
+.header {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  min-width: 0;
+  padding-inline: var(--s-4);
   background: var(--panel);
-  border-right: 1px solid var(--line);
-  padding: 18px 16px;
+}
+
+/* The app's two signature colours are the frame violet and its orange, so the
+   name and the logo wear the orange (Raph's call, over UI.md's one-meaning
+   rule for --attention). */
+.logo { flex: none; width: 20px; height: 20px; fill: var(--attention); }
+.brand { color: var(--attention); font-size: 14px; font-weight: 600; }
+.rule { flex: none; width: 1px; height: var(--s-5); background: var(--separator); }
+.page-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-dim);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.header .btn.icon { margin-inline-start: auto; }
+
+.rail {
   overflow-y: auto;
+  padding-block: var(--s-2);
+  background: var(--panel);
 }
 
-h1 {
-  font-size: 15px;
-  letter-spacing: .04em;
-  text-transform: uppercase;
-  margin: 0 0 18px;
-}
-
-.badge {
-  font-size: 10px;
-  color: var(--dim);
-  border: 1px solid var(--line);
-  border-radius: 3px;
-  padding: 1px 5px;
-  text-transform: none;
-  letter-spacing: 0;
-}
-
-.steps { list-style: none; margin: 0; padding: 0; }
-.steps li { margin-bottom: 14px; }
-
-.btn {
-  display: block;
-  width: 100%;
-  padding: 9px 12px;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  background: #232833;
-  color: var(--ink);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.btn:hover:not(:disabled) { border-color: var(--accent); }
-.btn:disabled { opacity: .38; cursor: not-allowed; }
-.btn.primary { background: #2a3d5c; }
-.btn.subtle { background: transparent; color: var(--dim); }
-.opt { float: right; font-size: 11px; color: var(--dim); }
-
-.note { margin: 5px 2px 0; font-size: 12px; color: var(--dim); }
-.note.bad { color: var(--warn); }
-
-.palette { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 7px; }
-.palette i {
-  width: 14px; height: 14px;
-  border-radius: 2px;
-  border: 1px solid rgba(255,255,255,.15);
-}
-
-.view {
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  margin: 18px 0;
-  padding: 6px 10px 10px;
-}
-.view legend { font-size: 11px; color: var(--dim); text-transform: uppercase; }
-.view label { display: block; font-size: 13px; color: var(--dim); }
-
-main { position: relative; overflow: hidden; }
+.stage-cell { position: relative; overflow: hidden; background: var(--canvas); }
+.shell.neutral .stage-cell { background: var(--canvas-neutral); }
 canvas { display: block; width: 100%; height: 100%; }
 
-.status {
-  position: absolute;
-  left: 16px; bottom: 14px;
-  padding: 6px 11px;
-  border-radius: 4px;
-  background: rgba(20,22,26,.88);
-  border: 1px solid var(--line);
-  font-size: 12px;
-  color: var(--dim);
+.inspector {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--panel);
 }
-.status.bad { color: var(--warn); border-color: var(--warn); }
-
-/* Opposite corner from the status line, and quieter: this one is a label on
-   the canvas, not something the app is telling you. */
-.viewhint {
-  position: absolute;
-  right: 16px; bottom: 14px;
-  padding: 6px 11px;
-  border-radius: 4px;
-  background: rgba(20,22,26,.72);
-  border: 1px solid var(--line);
-  font-size: 12px;
-  color: var(--dim);
-  opacity: .75;
-  pointer-events: none;
-}
-body.busy { cursor: progress; }
-
-.kind {
-  margin-top: 0.4rem;
-  font: inherit;
-  font-size: 0.85rem;
-  padding: 0.2rem 0.3rem;
-}
-
-.refs {
+.inspector-body { flex: 1; overflow-y: auto; padding: var(--s-4); }
+.inspector-footer {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-top: 0.5rem;
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-4);
+  border-block-start: 1px solid var(--separator);
 }
+.inspector-footer:empty { display: none; }
 
-.refs figure {
-  position: relative;
-  margin: 0;
-  width: 72px;
-}
-
-.refs img {
-  width: 72px;
-  height: 72px;
-  object-fit: cover;
-  display: block;
-  border-radius: 3px;
-}
-
-.refs figcaption {
-  font-size: 0.7rem;
-  opacity: 0.7;
-  text-align: center;
-}
-
-.refs .x {
-  position: absolute;
-  top: -6px;
-  right: -6px;
-  width: 18px;
-  height: 18px;
-  line-height: 1;
-  border: 0;
-  border-radius: 50%;
-  cursor: pointer;
-}
-
-/* Step 6 -------------------------------------------------------------- */
-
-.thresh {
-  display: block;
-  margin-top: 6px;
-  font-size: 12px;
-  color: var(--dim);
-}
-.thresh input[type="number"] { width: 62px; font: inherit; margin-left: 4px; }
-.thresh input:disabled { opacity: .4; }
-
-canvas.pickable { cursor: crosshair; }
-
-.inspector {
-  position: absolute;
-  top: 16px;
-  right: 16px;
-  width: 250px;
-  padding: 12px 14px 14px;
-  background: rgba(28,31,38,.96);
-  border: 1px solid var(--line);
-  border-radius: 6px;
-}
-
-.inspector header {
+.footer {
+  grid-column: 1 / -1;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 13px;
-  letter-spacing: .02em;
+  gap: var(--s-4);
+  min-width: 0;
+  padding-inline: var(--s-4);
+  background: var(--panel);
 }
 
-.inspector .x {
-  width: 20px; height: 20px;
-  line-height: 1;
+/* ---- Controls (§12) ------------------------------------------------------ */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-2);
+  min-height: 28px;
+  padding: var(--s-1) var(--s-3);
   border: 0;
-  border-radius: 50%;
-  background: transparent;
-  color: var(--dim);
-  font-size: 16px;
+  border-radius: var(--r-control);
+  background: var(--control);
+  color: var(--text);
+  line-height: 1.3;
+  text-align: center;
+  cursor: pointer;
+  transition: background-color 120ms, opacity 120ms;
+}
+.btn:hover { background: var(--control-hover); }
+.btn:active, .btn[aria-pressed="true"] { background: var(--control-press); }
+.btn[aria-disabled="true"] { background: var(--panel); color: var(--text-off); cursor: not-allowed; }
+
+.btn.primary { background: var(--action); color: white; }
+.btn.primary:hover { background: var(--action-hover); }
+.btn.primary:active { background: var(--action); box-shadow: inset 0 2px 0 var(--bg); }
+.btn.primary[aria-disabled="true"] { background: var(--control); color: var(--text-off); box-shadow: none; }
+
+.btn.quiet { background: transparent; color: var(--text-dim); }
+.btn.quiet:hover { background: var(--control); }
+.btn.quiet:active, .btn.quiet[aria-pressed="true"] { background: var(--control-press); }
+.btn.quiet[aria-disabled="true"] { background: transparent; color: var(--text-off); }
+
+.btn.destructive { background: transparent; color: var(--attention); }
+.btn.destructive:hover, .btn.destructive:active { background: var(--attention-tint); }
+.btn.destructive[aria-disabled="true"] { background: transparent; color: var(--text-off); }
+
+.btn.icon { width: 28px; padding: 0; }
+.btn svg, .glyph svg {
+  display: block;
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.row { display: flex; flex-wrap: wrap; gap: var(--s-2); }
+
+.field {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  color: var(--text-dim);
+  font-size: var(--fs-label);
+}
+.field > span { flex: 1 1 8em; }
+
+input[type="number"], select {
+  height: 28px;
+  padding-inline: var(--s-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-control);
+  background: var(--control);
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+input[type="number"] { width: 72px; }
+input:disabled, select:disabled { color: var(--text-off); border-color: var(--separator); }
+input[type="checkbox"] { margin: 0; accent-color: var(--action); }
+
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  color: var(--text-dim);
+  font-size: var(--fs-label);
   cursor: pointer;
 }
-.inspector .x:hover { color: var(--ink); }
+.check:has(input:disabled) { color: var(--text-off); cursor: not-allowed; }
 
-.inspector .btn { margin-top: 8px; }
-.inspector .note { margin-top: 10px; }
+.note { margin: 0; color: var(--text-dim); font-size: var(--fs-label); }
+.note.attention { color: var(--attention); }
 
-.ins-row {
+/* ---- The step rail (§8) -------------------------------------------------- */
+
+.steps, .books { margin: 0; padding: 0; list-style: none; }
+
+.step { border-inline-start: 2px solid transparent; background: var(--panel); }
+.step[data-state="current"] { border-inline-start-color: var(--action); background: var(--action-tint); }
+.step[data-state="locked"] { background: var(--bg); }
+
+.step-head, .book {
   display: flex;
   align-items: center;
-  gap: 7px;
-  margin: 9px 0 0;
-  font-size: 12px;
-  color: var(--dim);
+  gap: var(--s-3);
+  width: 100%;
+  min-height: 36px;
+  padding: var(--s-2) var(--s-4);
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  text-align: start;
+  cursor: pointer;
+  transition: background-color 120ms;
 }
-.ins-row i {
+.step-head:hover, .book:hover { background: var(--control); }
+.step[data-state="current"] .step-head { color: var(--text); cursor: default; }
+.step[data-state="current"] .step-head:hover { background: transparent; }
+.step[data-state="locked"] .step-head { color: var(--text-off); cursor: not-allowed; }
+.step[data-state="locked"] .step-head:hover { background: transparent; }
+
+.step-num {
   flex: none;
-  width: 20px; height: 20px;
-  border-radius: 3px;
-  border: 1px solid rgba(255,255,255,.2);
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  color: var(--attention);
+  font-size: var(--fs-num);
+  font-variant-numeric: tabular-nums;
 }
-.ins-row.far { color: var(--warn); }
+/* The step numbers wear the signature orange. The open step inverts it: dark
+   on orange, 5.8:1 (UI.md §5). A locked number fades with its row, so orange
+   never reads as clickable there. */
+.step[data-state="current"] .step-num { background: var(--attention); color: var(--bg); }
+.step[data-state="locked"] .step-num { opacity: 0.45; }
 
-/* Snapping to a colour is a click on it, so the swatches are targets. */
-.palette.pick i { width: 18px; height: 18px; cursor: pointer; }
-.palette.pick i:hover { outline: 2px solid var(--accent); }
-.palette.pick i.on { outline: 2px solid var(--ink); }
+.step-name { flex: 1; min-width: 0; }
+.step-meta {
+  flex: none;
+  color: var(--text-dim);
+  font-size: var(--fs-label);
+  font-variant-numeric: tabular-nums;
+}
+.step[data-state="locked"] .step-meta { color: var(--text-off); }
 
-/* Steps 2 and 3: correcting the geometry ------------------------------ */
+.step-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  padding-block: 0 var(--s-4);
+  padding-inline: calc(var(--s-4) + 20px + var(--s-3)) var(--s-4);
+}
 
-/* The cursor is half the affordance: a crosshair says "this click places
-   something", and the corner and edge shapes say what a drag would do. */
-canvas.editing { cursor: crosshair; }
-canvas.on-corner { cursor: move; }
-canvas.on-edge { cursor: copy; }
-/* Pan wins over every editing cursor: the hand is what you are doing. */
-canvas.grab { cursor: grab; }
-canvas.panning { cursor: grabbing; }
+.ask {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-3);
+  border-inline-start: 2px solid var(--attention);
+  border-radius: var(--r-control);
+  background: var(--bg);
+}
+.ask p { margin: 0; color: var(--text); }
 
-.view label input[type="radio"] { margin-right: 4px; }
-.view label input:disabled + * { opacity: .4; }
+.separator { margin: var(--s-2) var(--s-4); border: 0; border-block-start: 1px solid var(--separator); }
 
+.book { border-inline-start: 2px solid transparent; }
+.book[aria-pressed="true"] { border-inline-start-color: var(--action); background: var(--action-tint); color: var(--text); }
+.book > span:first-child { flex: 1; }
+
+/* ---- The inspector (§9) -------------------------------------------------- */
+
+.ins-title { margin: 0 0 var(--s-3); color: var(--text); font-size: var(--fs-body); font-weight: 600; }
+.ins-sub { margin: var(--s-5) 0 var(--s-2); color: var(--text-dim); font-size: var(--fs-label); font-weight: 400; }
+.inspector-body > * + * { margin-block-start: var(--s-3); }
+.inspector-body > .ins-title + * { margin-block-start: 0; }
+
+.ins-row { display: flex; align-items: center; gap: var(--s-2); color: var(--text-dim); }
+.ins-row .label { flex: 1; min-width: 0; }
+.ins-swatch {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-control);
+}
+.delta { color: var(--text-dim); }
+.delta.far { color: var(--attention); }
+
+.swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(36px, 1fr)); gap: var(--s-2); }
+.swatch {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s-1);
+  padding: var(--s-1) 0;
+  border: 0;
+  border-radius: var(--r-control);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.swatch i {
+  display: block;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-control);
+}
+.swatch[aria-pressed="true"] i { box-shadow: 0 0 0 2px var(--action-ring); }
+.swatch span { font-size: var(--fs-num); font-variant-numeric: tabular-nums; }
+
+.editor { display: flex; flex-direction: column; gap: var(--s-2); }
+input[type="color"] {
+  width: 48px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-control);
+  background: var(--control);
+  cursor: pointer;
+}
+
+.refs { display: flex; flex-direction: column; gap: var(--s-4); }
+.ref { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: var(--s-3); margin: 0; }
+.ref img {
+  display: block;
+  width: 72px;
+  height: 72px;
+  border: 1px solid var(--separator);
+  border-radius: var(--r-control);
+  background: var(--bg);
+  object-fit: cover;
+}
+.ref.strip img { object-fit: contain; }
+.ref figcaption { display: flex; flex-direction: column; gap: var(--s-1); min-width: 0; }
+.ref-head { display: flex; align-items: center; gap: var(--s-2); }
+.ref-head > span { flex: 1; min-width: 0; }
+.ref-name {
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: var(--fs-label);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* A colour a reference offers is flat and dashed; taking it lights it. The
+   difference is alpha and border, never hue (§12). */
+.chips { display: flex; flex-wrap: wrap; gap: var(--s-1); }
+.chip {
+  position: relative;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px dashed var(--separator);
+  border-radius: var(--r-control);
+  opacity: 0.6;
+  cursor: pointer;
+  transition: opacity 120ms;
+}
+.chip:hover { opacity: 0.85; }
+.chip[aria-pressed="true"] { border: 1px solid var(--border); opacity: 1; }
+
+.tick svg { position: absolute; inset: 0; margin: auto; width: 14px; height: 14px; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.tick .under { stroke: var(--over-dark); stroke-width: 3; }
+.tick .over { stroke: var(--over-light); stroke-width: 1.5; }
+
+/* ---- The footer (§6, T7) ------------------------------------------------- */
+
+.progress { display: flex; flex: 1; align-items: center; gap: var(--s-3); min-width: 0; }
+.status {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: var(--fs-label);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.status.bad { color: var(--attention); }
+
+/* The gradient's size is the track's, fixed: the colour at 40 % is the same
+   on every run, and 100 % lands exactly on --attention. */
+.bar {
+  --track: 240px;
+  flex: none;
+  width: var(--track);
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--control);
+}
+.bar-fill {
+  width: 0;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--ramp);
+  background-size: var(--track) 4px;
+  transition: width 200ms linear;
+}
+.bar.indeterminate .bar-fill { visibility: hidden; }
+
+.toggles { display: flex; flex: none; align-items: center; gap: var(--s-4); }
+.zoom { color: var(--text-dim); font-size: var(--fs-label); font-variant-numeric: tabular-nums; }
+
+/* ---- On the canvas ------------------------------------------------------- */
+
+/* The one thing allowed over the page (§15): corrections belong on the object. */
 .menu {
   position: absolute;
-  min-width: 170px;
-  padding: 4px;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  box-shadow: 0 6px 20px rgba(0,0,0,.45);
   z-index: 5;
+  min-width: 180px;
+  padding: var(--s-1);
+  border: 1px solid var(--border);
+  border-radius: var(--r-panel);
+  background: var(--panel);
 }
-
 .menu button {
   display: block;
   width: 100%;
-  padding: 7px 10px;
+  padding: var(--s-2) var(--s-3);
   border: 0;
-  border-radius: 3px;
+  border-radius: var(--r-control);
   background: transparent;
-  color: var(--ink);
-  font: inherit;
-  text-align: left;
+  color: var(--text);
+  text-align: start;
   cursor: pointer;
 }
-.menu button:hover { background: #2a3d5c; }
+.menu button:hover { background: var(--control-hover); }
 
-/* The correction box sits inside the step list, so it carries no bullet and
-   lines up with the buttons above and below it. */
-.view.edit { margin: 0; }
+body.busy { cursor: progress; }
+canvas.editing, canvas.pickable { cursor: crosshair; }
+canvas.on-corner { cursor: move; }
+canvas.on-edge { cursor: copy; }
+canvas.grab { cursor: grab; }
+canvas.panning { cursor: grabbing; }
 
-/* The palette, and the colours a reference offers it -------------------- */
-
-.chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px;
-  margin-top: 3px;
-}
-
-/* An offered colour reads as offered — flat and unlit. Taking it into the
-   palette lights it, so the thumbnail says at a glance what this image has
-   given the book. */
-.chips i {
-  width: 13px;
-  height: 13px;
-  border-radius: 2px;
-  border: 1px solid rgba(255,255,255,.12);
-  opacity: .45;
-  cursor: pointer;
-}
-.chips i:hover { opacity: .8; }
-.chips i.on {
-  opacity: 1;
-  border-color: var(--ink);
-  box-shadow: 0 0 0 1px var(--ink);
-}
-
-.swatch { position: relative; display: inline-flex; }
-.swatch input[type="color"] {
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  border: 1px solid rgba(255,255,255,.2);
-  border-radius: 3px;
-  background: none;
-  cursor: pointer;
-}
-.swatch input[type="color"]::-webkit-color-swatch-wrapper { padding: 1px; }
-.swatch input[type="color"]::-webkit-color-swatch { border: 0; border-radius: 2px; }
-
-.swatch .x {
-  position: absolute;
-  top: -5px;
-  right: -5px;
-  width: 14px;
-  height: 14px;
-  padding: 0;
-  line-height: 1;
-  font-size: 11px;
-  border: 0;
-  border-radius: 50%;
-  background: var(--panel);
-  color: var(--dim);
-  cursor: pointer;
-  opacity: 0;
-}
-.swatch:hover .x { opacity: 1; }
-.swatch .x:hover { color: var(--ink); }
-
-/* A swatch strip is wide and short. Cropping it to a square shows one colour
-   and hides the rest, which is the opposite of what the thumbnail is for. */
-.refs.strips img {
-  object-fit: contain;
-  background: var(--bg);
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
 }

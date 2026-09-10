@@ -4,133 +4,68 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Luikki</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/app.css">
 </head>
 <body>
 
-<aside>
-  <h1>Luikki <span id="proposer" class="badge"></span></h1>
+<!-- No word the artist reads is written here: every one is a key into
+     locales/<lang>.json, filled in by app.js. The one exception is the name,
+     which is a name. -->
 
-  <ol class="steps">
-    <li>
-      <label class="btn" for="page-file">1 &middot; Upload page</label>
-      <input id="page-file" type="file" accept="image/*" hidden>
-      <p class="note" id="page-note">No page loaded.</p>
-    </li>
-    <li>
-      <button class="btn" id="btn-panels" data-needs="page">2 &middot; Detect panels</button>
-      <p class="note" id="panels-note"></p>
-    </li>
-    <li>
-      <button class="btn" id="btn-bubbles" data-needs="panels">3 &middot; Detect bubbles</button>
-      <p class="note" id="bubbles-note"></p>
-    </li>
-    <li>
-      <fieldset class="view edit" id="edit-mode" hidden>
-        <legend>Correct</legend>
-        <label><input type="radio" name="layer" id="layer-panels" value="panels"> panel corners</label>
-        <label><input type="radio" name="layer" id="layer-bubbles" value="bubbles"> bubble corners</label>
-        <label><input type="radio" name="layer" id="layer-zones" value="zones"> zones: merge &amp; cut</label>
-        <p class="note" id="edit-note"></p>
-      </fieldset>
-    </li>
-    <li>
-      <button class="btn" id="btn-zones" data-needs="panels">4 &middot; Segment zones</button>
-      <label class="thresh" title="Where a hole in a line stops looking like a hole and starts looking like a passage. Raise it to cut more, lower it to cut less.">
-        cut across gaps up to
-        <input id="leak-gap" type="number" min="0" max="100" step="1" value="14">%
-        of a border
-      </label>
-      <p class="note" id="zones-note"></p>
-    </li>
-    <li>
-      <label class="btn subtle" for="pal-file">Add palette <span class="opt">optional</span></label>
-      <input id="pal-file" type="file" accept="image/*" hidden>
-      <p class="note" id="pal-note">An image of your swatches. Every colour in it joins the palette.</p>
-      <div id="palettes" class="refs strips"></div>
-      <div id="palette" class="palette pick"></div>
-      <p class="note" id="palette-note"></p>
+<div class="shell" id="shell">
 
-      <label class="btn subtle" for="ref-file">Add reference <span class="opt">optional</span></label>
-      <input id="ref-file" type="file" accept="image/*" hidden>
-      <select id="ref-kind" class="kind" title="What kind of image this is">
-        <option value="sheet">character sheet</option>
-        <option value="page">finished coloured page</option>
-        <option value="panel">finished coloured panel</option>
-      </select>
-      <p class="note" id="ref-note">Shown to the model. Its colours are offered, not taken.</p>
-      <div id="refs" class="refs"></div>
-    </li>
-    <li>
-      <button class="btn" id="btn-flats" data-needs="zones">5 &middot; Generate flats</button>
-      <p class="note" id="flats-note"></p>
-    </li>
-    <li>
-      <button class="btn" id="btn-snap-all" data-needs="flats">6 &middot; Snap all</button>
-      <label class="thresh">
-        within &Delta;E
-        <input id="snap-threshold" type="number" min="0" step="0.5" value="12">
-      </label>
-      <label class="thresh"><input type="checkbox" id="snap-any" checked> ignore the guard</label>
-      <p class="note" id="snap-note">Nothing to snap until the flats exist.</p>
-    </li>
-    <li>
-      <button class="btn primary" id="btn-export" data-needs="flats">7 &middot; Export PSD</button>
-      <label class="thresh">
-        layers
-        <select id="export-layers">
-          <option value="colour">one per colour</option>
-          <option value="panel">one group per panel</option>
-        </select>
-      </label>
-      <p class="note">Flats only. Drop your own line layer on top.</p>
-    </li>
-  </ol>
+  <header class="header">
+    <svg class="logo" viewBox="84 54 2954 2349" aria-hidden="true">
+      <path d="M1254 54L2763 1556L2717 1579C2506 1422 2182 1460 2001 1652L1246 2391L84 1220Z"/>
+      <circle cx="2694.5" cy="2052.7" r="344.4"/>
+    </svg>
+    <span class="brand">Luikki</span>
+    <span class="rule" aria-hidden="true"></span>
+    <span class="page-name" id="page-name"></span>
+    <button class="btn quiet icon" id="toggle-inspector" type="button" aria-pressed="true"
+            data-i18n-title="header.inspector" data-i18n-aria-label="header.inspector">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="3" width="11" height="10" rx="1"/><path d="M10 3v10"/></svg>
+    </button>
+  </header>
 
-  <fieldset class="view">
-    <legend>Show</legend>
-    <label><input type="checkbox" id="v-page" checked> line art</label>
-    <label><input type="checkbox" id="v-lines"> extracted lines</label>
-    <label><input type="checkbox" id="v-panels" checked> panels</label>
-    <label><input type="checkbox" id="v-bubbles" checked> bubbles</label>
-    <label><input type="checkbox" id="v-zones" checked> zones</label>
-    <label><input type="checkbox" id="v-flats" checked> flats</label>
-    <label><input type="checkbox" id="v-left"> left to snap</label>
-  </fieldset>
+  <nav class="rail" data-i18n-aria-label="rail.label">
+    <ol class="steps" id="steps"></ol>
+    <hr class="separator">
+    <ul class="books" id="books"></ul>
+  </nav>
 
-  <button class="btn subtle" id="btn-reset">Start over</button>
-</aside>
+  <main class="stage-cell">
+    <canvas id="stage" data-i18n-aria-label="stage.label"></canvas>
+    <div id="menu" class="menu" role="menu" hidden></div>
+  </main>
 
-<main>
-  <canvas id="stage"></canvas>
+  <aside class="inspector" data-i18n-aria-label="inspector.label">
+    <div class="inspector-body" id="inspector-body"></div>
+    <div class="inspector-footer" id="inspector-footer"></div>
+  </aside>
 
-  <section id="inspector" class="inspector" hidden>
-    <header>
-      <span id="ins-title"></span>
-      <button class="x" id="ins-close" title="Close (Esc)">&times;</button>
-    </header>
-    <p class="note" id="ins-area"></p>
+  <footer class="footer">
+    <div class="progress">
+      <span class="status" id="status" role="status" aria-live="polite"></span>
+      <div class="bar indeterminate" id="bar" role="progressbar" hidden data-i18n-aria-label="footer.progress">
+        <div class="bar-fill" id="bar-fill"></div>
+      </div>
+    </div>
+    <div class="toggles">
+      <label class="check"><input type="checkbox" id="v-lines"><span data-i18n="toggle.lines"></span></label>
+      <label class="check"><input type="checkbox" id="v-neutral"><span data-i18n="toggle.neutral"></span></label>
+      <label class="check" id="v-left-label" hidden><input type="checkbox" id="v-left"><span data-i18n="toggle.left"></span></label>
+      <span class="zoom" id="zoom"></span>
+      <select id="language" hidden data-i18n-aria-label="footer.language"></select>
+    </div>
+  </footer>
 
-    <p class="ins-row">
-      <i id="ins-current"></i>
-      <span id="ins-current-label"></span>
-    </p>
-    <p class="ins-row" id="ins-suggestion-row">
-      <i id="ins-suggestion"></i>
-      <span id="ins-suggestion-label"></span>
-    </p>
+</div>
 
-    <button class="btn" id="ins-snap">Snap to suggestion</button>
-    <button class="btn subtle" id="ins-unsnap">Put back what the model proposed</button>
-
-    <p class="note" id="ins-pick-note">Or pick a reference colour:</p>
-    <div id="ins-palette" class="palette pick"></div>
-  </section>
-
-  <div id="menu" class="menu" hidden></div>
-  <div id="status" class="status"></div>
-  <div id="viewhint" class="viewhint" hidden></div>
-</main>
+<input id="page-file" type="file" accept="image/*" hidden>
+<input id="ref-file" type="file" accept="image/*" hidden>
+<input id="pal-file" type="file" accept="image/*" hidden>
 
 <script src="/app.js"></script>
 </body>

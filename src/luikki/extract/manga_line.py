@@ -91,7 +91,11 @@ class MangaLineExtractor:
         self._model = model
         return model
 
-    def extract(self, grey: np.ndarray) -> ExtractionResult:
+    def extract(
+        self,
+        grey: np.ndarray,
+        progress: Callable[[int, int], None] | None = None,
+    ) -> ExtractionResult:
         import torch
 
         model = self._load()
@@ -105,9 +109,11 @@ class MangaLineExtractor:
 
         with torch.no_grad():
             if use_tiling:
-                lines = self._extract_tiled(model, grey, torch)
+                lines = self._extract_tiled(model, grey, torch, progress)
             else:
                 lines = self._extract_whole(model, grey, torch)
+                if progress is not None:
+                    progress(1, 1)
 
         return ExtractionResult(
             lines=lines,
@@ -137,34 +143,45 @@ class MangaLineExtractor:
     def _extract_whole(self, model, grey: np.ndarray, torch) -> np.ndarray:
         return self._run(model, grey.astype(np.float32), torch).astype(np.uint8)
 
-    def _extract_tiled(self, model, grey: np.ndarray, torch) -> np.ndarray:
-        height, width = grey.shape
+    def _tiles(self, height: int, width: int) -> list[tuple[int, int, int, int]]:
+        """Every tile as ``(y0, y1, x0, x1)``, listed up front so it can be counted."""
         tile = int(self.tile)
         step = max(1, tile - self.overlap)
-
-        accum = np.zeros((height, width), dtype=np.float32)
-        weight = np.zeros((height, width), dtype=np.float32)
-
+        tiles = []
         for y0 in range(0, height, step):
             for x0 in range(0, width, step):
                 y1 = min(y0 + tile, height)
                 x1 = min(x0 + tile, width)
                 # Pull short edge tiles back so they keep full context rather
                 # than shrinking, which would change the model's field of view.
-                y0a = max(0, y1 - tile)
-                x0a = max(0, x1 - tile)
-
-                patch = grey[y0a:y1, x0a:x1].astype(np.float32)
-                result = self._run(model, patch, torch)
-
-                blend = _feather(result.shape, self.overlap)
-                accum[y0a:y1, x0a:x1] += result * blend
-                weight[y0a:y1, x0a:x1] += blend
-
+                tiles.append((max(0, y1 - tile), y1, max(0, x1 - tile), x1))
                 if x1 >= width:
                     break
             if y0 + tile >= height:
                 break
+        return tiles
+
+    def _extract_tiled(
+        self,
+        model,
+        grey: np.ndarray,
+        torch,
+        progress: Callable[[int, int], None] | None = None,
+    ) -> np.ndarray:
+        height, width = grey.shape
+        accum = np.zeros((height, width), dtype=np.float32)
+        weight = np.zeros((height, width), dtype=np.float32)
+
+        tiles = self._tiles(height, width)
+        for done, (y0a, y1, x0a, x1) in enumerate(tiles, start=1):
+            patch = grey[y0a:y1, x0a:x1].astype(np.float32)
+            result = self._run(model, patch, torch)
+
+            blend = _feather(result.shape, self.overlap)
+            accum[y0a:y1, x0a:x1] += result * blend
+            weight[y0a:y1, x0a:x1] += blend
+            if progress is not None:
+                progress(done, len(tiles))
 
         weight[weight == 0] = 1.0
         return np.clip(accum / weight, 0, 255).astype(np.uint8)

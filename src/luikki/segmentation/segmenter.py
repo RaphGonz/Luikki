@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -54,9 +55,15 @@ class Segmenter(Protocol):
     def name(self) -> str: ...
 
     def segment(
-        self, line_mask: np.ndarray, protected: np.ndarray | None = None
+        self,
+        line_mask: np.ndarray,
+        protected: np.ndarray | None = None,
+        progress: Callable[[int, int], None] | None = None,
     ) -> np.ndarray:
-        """``line_mask`` True on ink. Returns an int32 label map, 0 = unassigned."""
+        """``line_mask`` True on ink. Returns an int32 label map, 0 = unassigned.
+
+        ``progress(done, total)`` is called as each internal pass finishes.
+        """
         ...
 
 
@@ -71,9 +78,15 @@ class TrappedBallSegmenter:
         return "trappedball"
 
     def segment(
-        self, line_mask: np.ndarray, protected: np.ndarray | None = None
+        self,
+        line_mask: np.ndarray,
+        protected: np.ndarray | None = None,
+        progress: Callable[[int, int], None] | None = None,
     ) -> np.ndarray:
-        return trapped_ball_segment(line_mask, protected=protected, params=self.params)
+        labels = trapped_ball_segment(line_mask, protected=protected, params=self.params)
+        if progress is not None:
+            progress(1, 1)
+        return labels
 
 
 class LineFillerSegmenter:
@@ -130,9 +143,18 @@ class LineFillerSegmenter:
         return trappedball_fill
 
     def segment(
-        self, line_mask: np.ndarray, protected: np.ndarray | None = None
+        self,
+        line_mask: np.ndarray,
+        protected: np.ndarray | None = None,
+        progress: Callable[[int, int], None] | None = None,
     ) -> np.ndarray:
         lf = self._load()
+        # One pass per radius, then the flood, then the merge.
+        passes = len(self.radii) + 2
+
+        def passed(done: int) -> None:
+            if progress is not None:
+                progress(done, passes)
 
         # Upstream convention: uint8, 255 = unfilled area, 0 = line or filled.
         # Protected areas are handed over as line, so they are never filled and
@@ -146,13 +168,15 @@ class LineFillerSegmenter:
         fills: list = []
         result = image
 
-        for radius, method in zip(self.radii, self.methods):
+        for done, (radius, method) in enumerate(zip(self.radii, self.methods), start=1):
             fill = lf.trapped_ball_fill_multi(result, radius, method=method)
             fills += fill
             result = lf.mark_fill(result, fill)
+            passed(done)
 
         fills += lf.flood_fill_multi(result)
         ball_seconds = time.perf_counter() - started
+        passed(passes - 1)
 
         fillmap = lf.build_fill_map(result, fills)
 
@@ -160,6 +184,7 @@ class LineFillerSegmenter:
         if self.merge:
             fillmap = lf.merge_fill(fillmap, max_iter=self.merge_iterations)
         merge_seconds = time.perf_counter() - merge_started
+        passed(passes)
 
         self.last_timing = {
             "ball_seconds": round(ball_seconds, 2),

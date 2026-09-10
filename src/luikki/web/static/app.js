@@ -1,80 +1,338 @@
-// The seven buttons, and one transform.
+// Luikki — the interface: a rail of seven steps, one canvas, one inspector.
 //
 // Rule 5: exactly one screen <-> image transform, `view`, recomputed on every
-// render. Nothing else in this file converts coordinates. Step 6 is the first
-// thing here that hit-tests, and it does it the way this comment always said
-// it would: `view.toImage` on the click, then the server resolves the point
-// off the label map. There is no second copy of the arithmetic and no
-// client-side guess at which zone was clicked.
+// render. Nothing else in this file converts coordinates. Every hit test goes
+// through `view.toImage`, and the server resolves a point off the label map:
+// there is no second copy of the arithmetic and no client-side guess at which
+// zone was clicked.
+//
+// The rail controls the canvas and the canvas controls the inspector (UI.md
+// R5). Which step is open decides what the canvas shows and what a click on
+// it does; what the click lands on decides what the inspector holds.
+//
+// No word the artist reads is written in this file. Every one is a key into
+// `locales/<lang>.json`, looked up through `t`, so a new language is a new
+// file and nothing else.
+
+"use strict";
 
 const $ = (id) => document.getElementById(id);
-const PANEL = "#6ea8fe";
-const BUBBLE = "#f0a35e";
+
+const remembered = {
+  get(name) {
+    try {
+      return localStorage.getItem("luikki:" + name);
+    } catch {
+      return null;
+    }
+  },
+  set(name, value) {
+    try {
+      localStorage.setItem("luikki:" + name, value);
+    } catch {
+      // A browser that refuses storage just forgets the preference.
+    }
+  },
+};
+
+// ---- words ------------------------------------------------------------------
+//
+// A locale is a flat map of dotted keys. A value is a string with `{name}`
+// placeholders, or an object of plural forms named the way `Intl.PluralRules`
+// names them — `one`/`other` in English, `other` alone in Japanese, `few` and
+// `many` in Polish — so no language has to fit English grammar.
+//
+// Keys are written out in full wherever they are used, never assembled from
+// pieces: `tests/test_locales.py` reads this file for them, and a key built at
+// runtime is a key that test cannot see.
+
+const LOCALES = ["en"];
+// Accented and stretched from English at runtime. A string still unaccented
+// on screen was written into the code; a row that breaks will break in French.
+const PSEUDO = "en-XA";
+
+const words = {
+  locale: "en",
+  numbers: "en",
+  strings: {},
+  fallback: {},
+  plural: new Intl.PluralRules("en"),
+  warned: new Set(),
+};
+
+function chooseLocale() {
+  const asked = new URLSearchParams(location.search).get("lang");
+  if (asked === PSEUDO || LOCALES.includes(asked)) return asked;
+  const stored = remembered.get("lang");
+  if (LOCALES.includes(stored)) return stored;
+  for (const tag of navigator.languages || []) {
+    if (LOCALES.includes(tag)) return tag;
+    if (LOCALES.includes(tag.split("-")[0])) return tag.split("-")[0];
+  }
+  return "en";
+}
+
+async function loadWords(locale) {
+  const read = async (path) => (await fetch(path)).json();
+  words.fallback = await read("/locales/en.json");
+  if (locale === PSEUDO) words.strings = pseudoLocale(words.fallback);
+  else if (locale === "en") words.strings = words.fallback;
+  else words.strings = await read(`/locales/${locale}.json`).catch(() => words.fallback);
+  words.locale = locale;
+  words.numbers = locale === PSEUDO ? "en" : locale;
+  words.plural = new Intl.PluralRules(words.numbers);
+  document.documentElement.lang = locale;
+}
+
+function lookup(key, params = {}) {
+  let entry = words.strings[key];
+  if (entry === undefined) {
+    entry = words.fallback[key];
+    if (!words.warned.has(key)) {
+      words.warned.add(key);
+      console.warn(`luikki: no "${key}" in ${words.locale}`);
+    }
+  }
+  if (entry === undefined) return key;
+  if (typeof entry === "object") {
+    entry = entry[words.plural.select(params.count ?? 0)] ?? entry.other;
+  }
+  return entry.replace(/\{(\w+)\}/g, (whole, name) => {
+    if (!(name in params)) return whole;
+    const value = params[name];
+    return typeof value === "number" ? fmt.number(value) : String(value);
+  });
+}
+
+const t = (key, params) => lookup(key, params);
+
+function pseudoLocale(source) {
+  const accents = {
+    a: "á", b: "ƀ", c: "ç", d: "ð", e: "é", f: "ƒ", g: "ĝ", h: "ĥ", i: "í",
+    j: "ĵ", k: "ķ", l: "ĺ", m: "ɱ", n: "ñ", o: "ö", p: "þ", r: "ŕ", s: "š",
+    t: "ţ", u: "ü", w: "ŵ", y: "ý", z: "ž", A: "Á", C: "Ç", D: "Ð", E: "É",
+    G: "Ĝ", I: "Í", L: "Ĺ", N: "Ñ", O: "Ö", P: "Þ", R: "Ŕ", S: "Š", T: "Ţ",
+    U: "Ü", Z: "Ž",
+  };
+  const stretch = (text) => {
+    // Placeholders pass through untouched: they are code, not words.
+    const accented = text
+      .split(/(\{\w+\})/)
+      .map((part) => (/^\{\w+\}$/.test(part) ? part : part.replace(/[A-Za-z]/g, (c) => accents[c] ?? c)))
+      .join("");
+    return `[${accented} ${"·".repeat(Math.ceil(text.length * 0.35))}]`;
+  };
+  const each = (value) =>
+    typeof value === "object"
+      ? Object.fromEntries(Object.entries(value).map(([form, text]) => [form, stretch(text)]))
+      : stretch(value);
+  return Object.fromEntries(Object.entries(source).map(([key, value]) => [key, each(value)]));
+}
+
+const fmt = {
+  number: (value, digits = 0) =>
+    new Intl.NumberFormat(words.numbers, {
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits,
+    }).format(value),
+  percent: (value) =>
+    new Intl.NumberFormat(words.numbers, { style: "percent", maximumFractionDigits: 0 }).format(
+      value / 100,
+    ),
+  clock: (seconds) =>
+    `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`,
+};
+
+function applyStaticStrings() {
+  for (const el of document.querySelectorAll("[data-i18n]")) {
+    el.textContent = lookup(el.dataset.i18n);
+  }
+  for (const el of document.querySelectorAll("[data-i18n-title]")) {
+    el.title = lookup(el.dataset.i18nTitle);
+  }
+  for (const el of document.querySelectorAll("[data-i18n-aria-label]")) {
+    el.setAttribute("aria-label", lookup(el.dataset.i18nAriaLabel));
+  }
+}
+
+// ---- elements ---------------------------------------------------------------
+
+// Text goes in as text, never as markup: a reference label is a file name,
+// and a file name is not HTML.
+function h(tag, props = {}, ...children) {
+  const el = document.createElement(tag);
+  for (const [name, value] of Object.entries(props)) {
+    if (value === undefined || value === null || value === false) continue;
+    if (name === "class") el.className = value;
+    else if (name === "style") Object.assign(el.style, value);
+    else if (name.startsWith("on")) el.addEventListener(name.slice(2), value);
+    else if (name in el) el[name] = value;
+    else el.setAttribute(name, value === true ? "" : value);
+  }
+  el.append(...children.flat().filter((child) => child !== null && child !== undefined && child !== false));
+  return el;
+}
+
+// A disabled button keeps its tooltip and its place in the tab order, so the
+// reason it is disabled can still be read (§12). `aria-disabled` rather than
+// `disabled` is what allows both.
+function button(content, { kind = "", key, onclick, disabled = false, why, label, pressed } = {}) {
+  return h(
+    "button",
+    {
+      type: "button",
+      class: `btn ${kind}`.trim(),
+      "data-key": key,
+      "aria-disabled": disabled ? "true" : null,
+      "aria-label": label,
+      "aria-pressed": pressed === undefined ? null : String(pressed),
+      title: disabled ? why : label,
+      onclick: (event) => {
+        if (!disabled) onclick(event);
+      },
+    },
+    content,
+  );
+}
+
+const ICONS = {
+  check: '<path d="M3.5 8.5l3 3 6-7"/>',
+  close: '<path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/>',
+};
+
+function icon(name) {
+  const glyph = document.createElement("span");
+  glyph.className = "glyph";
+  glyph.setAttribute("aria-hidden", "true");
+  glyph.innerHTML = `<svg viewBox="0 0 16 16">${ICONS[name]}</svg>`;
+  return glyph;
+}
+
+// The check on a taken chip sits on an arbitrary colour, so it is drawn the
+// way lines on the artwork are: dark under light.
+function tick() {
+  const mark = document.createElement("span");
+  mark.className = "tick";
+  mark.setAttribute("aria-hidden", "true");
+  mark.innerHTML =
+    '<svg viewBox="0 0 16 16"><path class="under" d="M3.5 8.5l3 3 6-7"/><path class="over" d="M3.5 8.5l3 3 6-7"/></svg>';
+  return mark;
+}
+
+// Re-rendering a column replaces its buttons. The one holding the keyboard
+// focus is found again by its key, so tabbing through the rail survives it.
+function keepFocus(draw) {
+  const focused = document.activeElement?.dataset?.key;
+  draw();
+  if (focused && document.activeElement?.dataset?.key !== focused) {
+    document.querySelector(`[data-key="${CSS.escape(focused)}"]`)?.focus({ preventScroll: true });
+  }
+}
+
+// ---- tokens -----------------------------------------------------------------
+
+// Read once. The canvas cannot use a CSS variable, so it uses the value the
+// variable holds, and `app.css` stays the only place a colour is written.
+const tokens = (() => {
+  const style = getComputedStyle(document.documentElement);
+  const read = (name) => style.getPropertyValue(name).trim();
+  return {
+    dark: read("--over-dark"),
+    light: read("--over-light"),
+    wash: read("--over-wash"),
+    ring: read("--action-ring"),
+    edge: read("--canvas-edge"),
+    chip: read("--bg"),
+    chipText: read("--text"),
+    font: read("--font"),
+    surround: parseFloat(read("--s-6")),
+  };
+})();
+
+// The paper under the page. Not an interface colour: it is the artwork's own
+// white, and multiply needs it to leave the line art exactly as drawn.
+const PAPER = "white";
+
+// ---- state ------------------------------------------------------------------
+
 const stage = $("stage");
 const ctx = stage.getContext("2d");
 
 let state = null;
-// The segment payload from /api/segment — what a click resolved to, and the
-// unit of work for step 6. Null means nothing is selected.
-let selected = null;
+// The open step in the rail. Everything on the canvas follows it.
+let current = null;
+// `references` or `palette` when the inspector shows the book instead of the step.
+let shelf = null;
+// The rail's one inline confirmation: {id, sentence}.
+let asking = null;
 const layers = { page: null, lines: null, zones: null, flats: null, left: null };
-
-// Steps 2 and 3 are editable, and this is everything that takes: which of the
-// two layers the pointer is aimed at, the corner being dragged, and the
-// polygon being drawn. All page-space; screen space exists only inside the
-// hit tests, and only through `view`.
-// null means "whichever layer the page is up to" — the furthest one the
-// artist has reached. Only pressing a step or the radio pins it, so a reload
-// at the balloon stage aims at balloons rather than at the panels underneath
-// them, which is how a traced balloon becomes a stray panel.
-let layer = null;
-let drag = null; // {index, corner, dirty}
-let draft = null; // {points: [[x, y], …]} — a new panel or bubble, mid-draw
-let cursor = null; // where the pointer is, for the rubber band
-
-// The single transform. `scale` fits the page inside the canvas; `ox`/`oy`
-// centre it.
-const view = {
-  scale: 1, ox: 0, oy: 0,
-  toScreen(x, y) { return [x * this.scale + this.ox, y * this.scale + this.oy]; },
-  toImage(x, y) { return [(x - this.ox) / this.scale, (y - this.oy) / this.scale]; },
+const controls = {
+  gap: 14,
+  threshold: 12,
+  ignoreGuard: true,
+  granularity: "colour",
+  refKind: "sheet",
+  lines: false,
+  neutral: false,
+  left: false,
 };
 
-// Zoom and pan sit *on top of* that fit rather than beside it: `zoom` is a
-// multiplier on the scale that fits the page in the canvas, `pan` a
-// screen-space offset from centred. At zoom 1 with no pan the page lands
-// exactly where it always did, so nothing moves until the artist asks.
-//
-// This is not a second transform. `applyView` folds both into `view` at the
-// top of every render, and `view` remains the only thing in this file that
-// converts a coordinate — rule 5 still holds.
-const FIT_MARGIN = 24;
+// The artist's corrections since each stage last ran in this browser, so a
+// confirmation can say what it deletes. null is "unknown": after a reload the
+// server still holds the corrections, and this page never saw them made.
+let edits = freshEdits();
+
+function freshEdits() {
+  return { panels: 0, bubbles: 0, zones: { merges: 0, cuts: 0 } };
+}
+
+const bump = (count) => (count === null ? null : count + 1);
+
+// ---- the view ---------------------------------------------------------------
+
+const view = {
+  scale: 1,
+  ox: 0,
+  oy: 0,
+  toScreen(x, y) {
+    return [x * this.scale + this.ox, y * this.scale + this.oy];
+  },
+  toImage(x, y) {
+    return [(x - this.ox) / this.scale, (y - this.oy) / this.scale];
+  },
+};
+
+// Zoom and pan sit on top of the fit rather than beside it: `zoom` multiplies
+// the scale that fits the page inside its surround, `pan` offsets it from
+// centred. `applyView` folds both into `view`, which stays the only converter.
 const MAX_ZOOM = 32;
 let zoom = 1;
 let pan = { x: 0, y: 0 };
-let panning = null; // [x, y] — last pointer position while panning, screen space
+let panning = null;
+let panned = false;
 let spaceHeld = false;
 
+// The surround is `--s-6` at the minimum on every side (§10).
 function fitScale() {
+  const margin = tokens.surround;
   return Math.min(
-    (stage.clientWidth - FIT_MARGIN * 2) / state.page.width,
-    (stage.clientHeight - FIT_MARGIN * 2) / state.page.height,
+    (stage.clientWidth - margin * 2) / state.page.width,
+    (stage.clientHeight - margin * 2) / state.page.height,
   );
 }
 
-// The clamp is the whole safety of the feature: the page cannot be flung off
-// screen and lost. An edge stops at the canvas edge, and a page smaller than
-// the canvas cannot be panned at all, which is why zoom 1 is untouched.
+// The one sizing function. The clamp is the safety of zooming: the page cannot
+// be flung off screen, and a page smaller than the canvas cannot be panned.
 function applyView() {
   const page = state.page;
   zoom = Math.min(MAX_ZOOM, Math.max(1, zoom));
   view.scale = fitScale() * zoom;
   const drawnWidth = page.width * view.scale;
   const drawnHeight = page.height * view.scale;
-  const slackX = Math.max(0, (drawnWidth - stage.clientWidth) / 2);
-  const slackY = Math.max(0, (drawnHeight - stage.clientHeight) / 2);
-  pan.x = Math.max(-slackX, Math.min(slackX, pan.x));
-  pan.y = Math.max(-slackY, Math.min(slackY, pan.y));
+  const slackX = Math.max(0, (drawnWidth - stage.clientWidth) / 2 + tokens.surround);
+  const slackY = Math.max(0, (drawnHeight - stage.clientHeight) / 2 + tokens.surround);
+  pan.x = zoom > 1 ? Math.max(-slackX, Math.min(slackX, pan.x)) : 0;
+  pan.y = zoom > 1 ? Math.max(-slackY, Math.min(slackY, pan.y)) : 0;
   view.ox = (stage.clientWidth - drawnWidth) / 2 + pan.x;
   view.oy = (stage.clientHeight - drawnHeight) / 2 + pan.y;
 }
@@ -85,82 +343,145 @@ function fitPage() {
   render();
 }
 
-// Nobody guesses "space and drag" from an empty canvas. Fitted, the hint
-// teaches the two gestures; zoomed, it stops teaching the wheel — you have
-// just used it — and becomes the readout that says where you are and how to
-// get back.
-function showViewHint() {
-  const hint = $("viewhint");
-  hint.hidden = !state || !state.page;
-  if (hint.hidden) return;
-  hint.textContent = zoom > 1.01
-    ? `${Math.round(zoom * 100)}%  ·  space + drag to move  ·  0 to fit`
-    : "scroll to zoom  ·  space + drag to move";
-}
+// ---- the server -------------------------------------------------------------
 
-// ---- server ---------------------------------------------------------------
-
-function say(message, bad = false) {
-  const el = $("status");
-  el.textContent = message;
-  el.classList.toggle("bad", bad);
+// A server that names its error by code gets it translated. One that sends a
+// sentence gets the sentence — English, until the Python learns codes.
+function failure(body, fallback) {
+  const code = body && body.code ? "error." + body.code : null;
+  if (code && (code in words.strings || code in words.fallback)) {
+    return new Error(lookup(code, body.params || {}));
+  }
+  const message = body && (body.error || body.detail);
+  if (typeof message === "string") return new Error(message);
+  return new Error(message ? t("error.refused") : fallback || t("error.refused"));
 }
 
 async function call(path, options = {}) {
-  document.body.classList.add("busy");
+  let response;
   try {
-    const response = await fetch(path, options);
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(body.error || body.detail || response.statusText);
-    return body;
+    response = await fetch(path, options);
+  } catch {
+    throw new Error(t("error.network"));
+  }
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw failure(body, response.statusText);
+  return body;
+}
+
+// An upload, through XMLHttpRequest because it is the one request a browser
+// can measure: the bar shows the bytes really sent.
+function send(path, form) {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open("POST", path);
+    request.responseType = "json";
+    request.upload.addEventListener("progress", (event) => {
+      if (!event.lengthComputable) return;
+      if (event.loaded < event.total) {
+        work.percent = (100 * event.loaded) / event.total;
+      } else {
+        work.percent = null;
+        work.label = t("work.reading");
+      }
+      showWork();
+    });
+    request.addEventListener("load", () => {
+      if (request.status < 300) resolve(request.response);
+      else reject(failure(request.response || {}, request.statusText));
+    });
+    request.addEventListener("error", () => reject(new Error(t("error.network"))));
+    request.send(form);
+  });
+}
+
+// ---- the footer: status and progress ----------------------------------------
+
+function say(message, bad = false) {
+  const status = $("status");
+  status.textContent = message;
+  status.classList.toggle("bad", bad);
+}
+
+const work = { timer: null, started: 0, label: "", phase: null, polling: false, pending: false, percent: null };
+
+// A long step, with the bar running. Segmenting and colouring report a real
+// percent through `/api/progress`; a step that reports none gets a still track
+// and the time it has taken, never an invented percent (§6).
+async function working(label, polling, task) {
+  Object.assign(work, {
+    started: performance.now(),
+    label,
+    phase: null,
+    polling,
+    pending: false,
+    percent: null,
+  });
+  document.body.classList.add("busy");
+  $("bar").hidden = false;
+  showWork();
+  work.timer = setInterval(tickWork, 250);
+  try {
+    return await task();
   } finally {
+    clearInterval(work.timer);
+    work.timer = null;
+    $("bar").hidden = true;
+    $("bar-fill").style.width = "0";
     document.body.classList.remove("busy");
   }
 }
 
-async function step(label, path, options) {
-  say(label + "…");
-  try {
-    const next = await call(path, options);
-    state = next;
-    // Re-running any step can invalidate the segments, so a selection made
-    // before it is a pointer at something that may no longer exist. The same
-    // goes for a half-drawn polygon: the geometry it was being drawn onto is
-    // gone.
-    selected = null;
-    draft = null;
-    drag = null;
-    picked.clear();
-    cutting = null;
-    await reloadLayers();
-    apply();
-    say(summary(next, label));
-  } catch (error) {
-    say(error.message, true);
+async function tickWork() {
+  if (work.polling && !work.pending) {
+    work.pending = true;
+    try {
+      const progress = await call("/api/progress");
+      if (work.timer && progress.running) {
+        work.percent = progress.percent;
+        work.phase = progressLabel(progress);
+      }
+    } catch {
+      // A missed poll is a bar that waits a tick. The step itself reports errors.
+    } finally {
+      work.pending = false;
+    }
+  }
+  if (work.timer) showWork();
+}
+
+function progressLabel(progress) {
+  switch (progress.phase) {
+    case "extract":
+      return t("progress.extract");
+    case "segment":
+      return t("progress.segment", { index: progress.index, total: progress.count });
+    case "colour":
+      return t("progress.colour", { index: progress.index, total: progress.count });
+    default:
+      return null;
   }
 }
 
-function summary(next, label) {
-  if (next.result) {
-    const { assigned, segments, colours, snapped, skipped, added, kind, panels } = next.result;
-    // One file in, several references out: a finished page is stored as the
-    // panels it splits into, and the artist pressed one button.
-    if (added !== undefined) {
-      // A page is kept whole and cut up: the artist pressed one button and
-      // got several references, and the count of each is the honest answer.
-      // Panels too small for the model to read are not cut out, which is why
-      // this number is often lower than the panels they can see.
-      return panels
-        ? `Page kept whole, plus ${panels} panel${panels > 1 ? "s" : ""} cut from it — ${added} references.`
-        : `Reference added as one ${kind}.`;
-    }
-    if (snapped !== undefined && skipped !== undefined) {
-      return `${snapped} segments snapped, ${skipped} left as proposed.`;
-    }
-    return `${assigned} zones coloured, ${segments} segments, ${colours} palette entries.`;
+function showWork() {
+  const bar = $("bar");
+  const determinate = work.percent !== null;
+  bar.classList.toggle("indeterminate", !determinate);
+  if (determinate) {
+    $("bar-fill").style.width = `${work.percent}%`;
+    bar.setAttribute("aria-valuenow", String(Math.round(work.percent)));
+  } else {
+    bar.removeAttribute("aria-valuenow");
   }
-  return label + " — done.";
+  const label = work.phase || work.label;
+  say(
+    determinate
+      ? t("progress.percent", { label, percent: fmt.percent(work.percent) })
+      : t("progress.elapsed", { label, time: fmt.clock((performance.now() - work.started) / 1000) }),
+  );
 }
+
+// ---- layers -----------------------------------------------------------------
 
 // Overlays are server-rendered PNGs, cache-busted per load so a re-run never
 // shows the previous pass.
@@ -173,493 +494,1148 @@ function loadImage(url) {
   });
 }
 
+// The server paints what is left to snap in orange, and orange on a comic page
+// is skin (§11). Keep its shape, drop its hue.
+function luminanceOnly(image) {
+  if (!image) return null;
+  const canvas = document.createElement("canvas");
+  canvas.width = image.naturalWidth;
+  canvas.height = image.naturalHeight;
+  const paint = canvas.getContext("2d");
+  paint.drawImage(image, 0, 0);
+  paint.globalCompositeOperation = "source-in";
+  paint.fillStyle = tokens.dark;
+  paint.fillRect(0, 0, canvas.width, canvas.height);
+  return canvas;
+}
+
 async function reloadLayers() {
   const done = state.done;
-  layers.page = done.page ? await loadImage("/api/page.png") : null;
-  // Extraction happens inside Segment zones, so this only exists afterwards.
-  layers.lines = done.zones ? await loadImage("/api/lines.png") : null;
-  layers.zones = done.zones ? await loadImage("/api/zones.png") : null;
-  layers.flats = done.flats ? await loadImage("/api/flats.png") : null;
-  layers.left = done.flats ? await loadImage("/api/unsnapped.png") : null;
+  [layers.page, layers.lines, layers.zones, layers.flats, layers.left] = await Promise.all([
+    done.page ? loadImage("/api/page.png") : null,
+    // Extraction happens inside Segment zones, so this only exists afterwards.
+    done.zones ? loadImage("/api/lines.png") : null,
+    done.zones ? loadImage("/api/zones.png") : null,
+    done.flats ? loadImage("/api/flats.png") : null,
+    done.flats ? loadImage("/api/unsnapped.png").then(luminanceOnly) : null,
+  ]);
 }
 
-// ---- rendering ------------------------------------------------------------
-
-function resize() {
-  const ratio = window.devicePixelRatio || 1;
-  stage.width = stage.clientWidth * ratio;
-  stage.height = stage.clientHeight * ratio;
-  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-  render();
+async function adopt(next) {
+  state = next;
+  await reloadLayers();
+  renderAll();
 }
 
-function render() {
-  const width = stage.clientWidth;
-  const height = stage.clientHeight;
-  ctx.clearRect(0, 0, width, height);
-  if (!state || !state.page) return showViewHint();
+// ---- the steps --------------------------------------------------------------
 
-  const page = state.page;
-  applyView();
-  showViewHint();
+const STEPS = [
+  { id: "upload", number: 1, needs: null, done: (d) => d.page },
+  { id: "panels", number: 2, needs: "page", done: (d) => d.panels },
+  { id: "bubbles", number: 3, needs: "panels", done: (d) => d.bubbles },
+  { id: "zones", number: 4, needs: "panels", done: (d) => d.zones },
+  { id: "flats", number: 5, needs: "zones", done: (d) => d.flats },
+  // Snapping is per segment and never finished; exporting can always happen again.
+  { id: "snap", number: 6, needs: "flats", done: () => false },
+  { id: "export", number: 7, needs: "flats", done: () => false },
+];
 
-  const box = [view.ox, view.oy, page.width * view.scale, page.height * view.scale];
+// The stages whose geometry the artist corrects, and which the next step closes.
+const CORRECTED = ["panels", "bubbles", "zones"];
 
-  // Past 1:1 the artist is inspecting ink, and interpolation turns a hard edge
-  // into a smear. Magnified, draw the pixels rather than a guess at what lies
-  // between them — a gap you cannot see is a gap you cannot close.
-  ctx.imageSmoothingEnabled = view.scale <= 1;
-
-  ctx.fillStyle = "#fff";
-  ctx.fillRect(...box);
-
-  // Colour underneath, ink on top — the order the artist works in, and the
-  // order the exported PSD stacks in. Flats drawn *over* the line art wash it
-  // out, and a colourist cannot judge a colour without the lines that bound
-  // it: the ink is half of what the eye reads as the colour.
-  //
-  // Flats sit above zones: once the colours exist, the zone map is scaffolding.
-  if (layers.zones && $("v-zones").checked) ctx.drawImage(layers.zones, ...box);
-  if (layers.flats && $("v-flats").checked) ctx.drawImage(layers.flats, ...box);
-
-  // Multiply is what makes ink over colour behave like ink: black stays
-  // black, paper drops out, and grey holds its weight. Over the white
-  // background — no flats yet — it is identical to drawing the page plainly,
-  // so this needs no branch for "before the colours exist".
-  ctx.globalCompositeOperation = "multiply";
-  if (layers.page && $("v-page").checked) ctx.drawImage(layers.page, ...box);
-
-  // What segmentation actually saw, so you can compare the structural lines
-  // against the artist's ink.
-  if (layers.lines && $("v-lines").checked) ctx.drawImage(layers.lines, ...box);
-  ctx.globalCompositeOperation = "source-over";
-
-  // Step 6's remaining workload, above the ink: it is a marker, not a layer
-  // of the drawing, and it is no use if the linework hides it.
-  if (layers.left && $("v-left").checked) ctx.drawImage(layers.left, ...box);
-
-  const editing = activeLayer();
-
-  if (visible("bubbles")) {
-    ctx.strokeStyle = BUBBLE;
-    ctx.lineWidth = 1.5;
-    for (const polygon of state.protected) trace(polygon);
+function stepName(id) {
+  switch (id) {
+    case "upload": return t("step.upload.name");
+    case "panels": return t("step.panels.name");
+    case "bubbles": return t("step.bubbles.name");
+    case "zones": return t("step.zones.name");
+    case "flats": return t("step.flats.name");
+    case "snap": return t("step.snap.name");
+    default: return t("step.export.name");
   }
+}
 
-  if (visible("panels")) {
-    ctx.strokeStyle = PANEL;
-    ctx.lineWidth = 2;
-    ctx.font = "600 15px ui-sans-serif, system-ui, sans-serif";
-    ctx.fillStyle = PANEL;
-    for (const panel of state.panels) {
-      trace(panel.polygon);
-      const [x, y] = view.toScreen(panel.polygon[0][0], panel.polygon[0][1]);
-      ctx.fillText(String(panel.order + 1), x + 6, y + 18);
-    }
+function lockedReason(needs) {
+  switch (needs) {
+    case "page": return t("locked.page");
+    case "panels": return t("locked.panels");
+    case "zones": return t("locked.zones");
+    default: return t("locked.flats");
   }
-
-  drawHandles(editing);
-  drawDraft(editing);
-  if (editing === "zones") drawPicked();
-  drawSelection();
 }
 
-// Every corner of the layer being corrected, as something to aim at. Squares
-// rather than dots: a corner is a thing you grab, and it has to read as one
-// from across the page.
-function drawHandles(editing) {
-  if (!editing || draft || !visible(editing)) return;
-  ctx.save();
-  ctx.lineWidth = 1.5;
-  ctx.strokeStyle = editing === "panels" ? PANEL : BUBBLE;
-  ctx.fillStyle = "#14161a";
-  for (const polygon of shapes()) {
-    for (const [px, py] of polygon) {
-      const [x, y] = view.toScreen(px, py);
-      ctx.beginPath();
-      ctx.rect(x - 4, y - 4, 8, 8);
-      ctx.fill();
-      ctx.stroke();
-    }
+function closedReason(id) {
+  switch (id) {
+    case "panels": return t("closed.panels");
+    case "bubbles": return t("closed.bubbles");
+    default: return t("closed.zones");
   }
-  ctx.restore();
 }
 
-// The polygon being drawn: what has been placed, a rubber band to the
-// pointer, and a ring on the first corner once clicking it would close the
-// shape. The ring is the whole instruction — "click here to finish" — said
-// without a sentence.
-function drawDraft(editing) {
-  if (!draft || !editing) return;
-  const points = draft.points;
-  ctx.save();
-  ctx.strokeStyle = editing === "panels" ? PANEL : BUBBLE;
-  ctx.lineWidth = 2;
-
-  ctx.beginPath();
-  points.forEach(([px, py], index) => {
-    const [x, y] = view.toScreen(px, py);
-    index === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-  });
-  if (cursor) {
-    const [x, y] = view.toScreen(cursor[0], cursor[1]);
-    ctx.lineTo(x, y);
+function stateName(status) {
+  switch (status) {
+    case "done": return t("state.done");
+    case "current": return t("state.current");
+    case "next": return t("state.next");
+    case "locked": return t("state.locked");
+    default: return t("state.closed");
   }
-  ctx.stroke();
+}
 
-  ctx.fillStyle = "#14161a";
-  for (const [px, py] of points) {
-    const [x, y] = view.toScreen(px, py);
-    ctx.beginPath();
-    ctx.rect(x - 4, y - 4, 8, 8);
-    ctx.fill();
-    ctx.stroke();
+const isLocked = (step) => Boolean(step.needs) && !state.done[step.needs];
+
+// Five states from the server's flags and the open step (§8). The order the
+// server enforces is shown before the click, never discovered by it (R6).
+function stepState(step) {
+  if (isLocked(step)) return "locked";
+  if (step.id === current) return "current";
+  if (step.done(state.done)) {
+    return CORRECTED.includes(step.id) && !state.editable[step.id] ? "closed" : "done";
   }
-
-  if (points.length >= 3) {
-    const [x, y] = view.toScreen(points[0][0], points[0][1]);
-    ctx.beginPath();
-    ctx.arc(x, y, 9, 0, Math.PI * 2);
-    ctx.stroke();
-  }
-  ctx.restore();
+  return "next";
 }
 
-// The selected segment, as its bounding box and the anchor the server
-// resolved. Not the zone's outline: the mask lives on the server, and
-// shipping it per click to draw a prettier marquee would be a second copy of
-// the segmentation on the client.
-function drawSelection() {
-  if (!selected) return;
-  const [x0, y0, x1, y1] = selected.bounds;
-  const [sx, sy] = view.toScreen(x0, y0);
-  const [ex, ey] = view.toScreen(x1 + 1, y1 + 1);
-
-  ctx.save();
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = "#fff";
-  ctx.setLineDash([5, 4]);
-  ctx.strokeRect(sx, sy, ex - sx, ey - sy);
-
-  const [ax, ay] = view.toScreen(selected.anchor[0], selected.anchor[1]);
-  ctx.setLineDash([]);
-  ctx.beginPath();
-  ctx.arc(ax, ay, 4, 0, Math.PI * 2);
-  ctx.fillStyle = "#fff";
-  ctx.fill();
-  ctx.strokeStyle = "#14161a";
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-  ctx.restore();
-}
-
-function trace(polygon) {
-  if (polygon.length < 2) return;
-  ctx.beginPath();
-  polygon.forEach(([px, py], index) => {
-    const [x, y] = view.toScreen(px, py);
-    index === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-  });
-  ctx.closePath();
-  ctx.stroke();
-}
-
-// ---- sidebar --------------------------------------------------------------
-
-const rgb = (colour) => `rgb(${colour.join(",")})`;
-
-function paletteById() {
-  return new Map(state.palette.map((entry) => [entry.id, entry]));
-}
-
-function apply() {
+// The furthest step the page has reached — where a reload opens.
+function furthest() {
   const done = state.done;
-  $("proposer").textContent = `${state.extractor} → ${state.proposer}`;
+  if (!done.page) return "upload";
+  if (!done.panels) return "panels";
+  if (!done.zones) return done.bubbles ? "zones" : "bubbles";
+  if (!done.flats) return "zones";
+  return "snap";
+}
 
-  for (const button of document.querySelectorAll("[data-needs]")) {
-    button.disabled = !done[button.dataset.needs];
+function ensureCurrent() {
+  const step = STEPS.find((candidate) => candidate.id === current);
+  if (!step || isLocked(step)) current = furthest();
+}
+
+const zoneCount = (source = state) => source.panels.reduce((sum, panel) => sum + panel.zones, 0);
+
+function stepMeta(id) {
+  const done = state.done;
+  switch (id) {
+    case "panels": return done.panels ? t("meta.panels", { count: state.panels.length }) : "";
+    case "bubbles": return done.bubbles ? t("meta.bubbles", { count: state.protected.length }) : "";
+    case "zones": return done.zones ? t("meta.zones", { count: zoneCount() }) : "";
+    case "flats": return done.flats ? t("meta.segments", { count: state.segments.count }) : "";
+    case "snap":
+      return done.flats
+        ? t("meta.snapped", { snapped: state.segments.snapped, count: state.segments.count })
+        : "";
+    default: return "";
   }
-
-  $("page-note").textContent = state.page
-    ? `${state.page.name} — ${state.page.width}×${state.page.height}`
-    : "No page loaded.";
-
-  const zones = state.panels.reduce((sum, p) => sum + p.zones, 0);
-  $("panels-note").textContent = done.panels
-    ? `${state.panels.length} panels` +
-      (editable("panels") ? " — correct them below before the zones are cut." : ".")
-    : "";
-  $("bubbles-note").textContent = done.bubbles
-    ? `${state.protected.length} protected areas — never coloured` +
-      (editable("bubbles") ? ", and correctable below." : ".")
-    : "";
-  $("zones-note").textContent = done.zones
-    ? `${zones} zones across the page` +
-      (editable("zones") ? " — merge and cut them below, while you still can." : ".")
-    : "";
-
-  applyPalette();
-  const proposed = state.palette.length - chosen().length;
-
-  // A click only means something once there are segments under it.
-  stage.classList.toggle("pickable", done.flats);
-  applyEditMode();
-
-  applySnapStep(proposed);
-  showInspector();
-  render();
 }
 
-// ---- step 4b: zones the artist corrects -----------------------------------
+const RUNS = {
+  panels: {
+    path: () => "/api/panels",
+    polling: false,
+    label: () => t("work.panels"),
+    done: (next) => t("done.panels", { count: next.panels.length }),
+  },
+  bubbles: {
+    path: () => "/api/bubbles",
+    polling: false,
+    label: () => t("work.bubbles"),
+    done: (next) => t("done.bubbles", { count: next.protected.length }),
+  },
+  zones: {
+    // The gap allowance rides along with the press that uses it: turning the
+    // dial changes nothing on its own, because the zones on screen were cut
+    // with the old one.
+    path: () => `/api/zones?gap=${controls.gap / 100}`,
+    polling: true,
+    label: () => t("work.zones"),
+    done: (next) => t("done.zones", { count: zoneCount(next) }),
+  },
+  flats: {
+    path: () => "/api/flats",
+    polling: true,
+    label: () => t("work.flats"),
+    done: (next) => t("done.flats", { count: next.result.segments }),
+  },
+};
+
+function pressRow(step, status) {
+  if (status === "locked" || status === "current") return;
+  if (status === "next") {
+    if (step.id === "upload") return choosePage();
+    if (RUNS[step.id]) return requestRun(step.id);
+    // Export and snap only open: each has a choice to make first (the layers,
+    // the guard), and a row click that skipped it hid the choice entirely.
+  }
+  open(step.id);
+}
+
+function open(id) {
+  current = id;
+  shelf = null;
+  asking = null;
+  forgetCanvasSelection();
+  renderAll();
+}
+
+// ---- confirmations ----------------------------------------------------------
 //
-// Trapped-ball cuts from the ink it can see, so it leaks a garment into the
-// background wherever the ink is open, and returns forty scraps wherever the
-// drawing is busy. Merging and cutting are the corrections, and they happen
-// here — between the cut and the colour — because they are permanent and
-// there is no unmerge to fall back on.
-//
-// One rule runs the selection: a zone is selected while the button is pressed
-// over it. A press picks one; holding and moving picks up everything the
-// pointer passes over; two zones on opposite sides of the page take two
-// presses and drag nothing in between, because the button was up.
+// Re-running a step replaces what it produced and clears what was built on it
+// (rule 4). A press that would delete the artist's own work asks first, in the
+// rail, naming what goes (T9). A press that loses nothing asks nothing.
 
-// "panel:label" -> {panel, label, bounds, image}. Insertion order is the order
-// the artist met them, which is what the menu counts.
-const picked = new Map();
-let sweep = null; // {points: [[x, y], …], sent: number} while the button is down
-let cutting = null; // {panel, label, stroke: [[x, y], …]} after "Cut this zone"
-
-const key = (panel, label) => `${panel}:${label}`;
-
-async function rememberZone(zone) {
-  const at = key(zone.panel, zone.label);
-  if (picked.has(at)) return;
-  picked.set(at, {
-    ...zone,
-    image: await loadImage(`/api/zone/${zone.panel}/${zone.label}.png`),
-  });
-}
-
-function clearPicked() {
-  picked.clear();
-  render();
-  applyEditMode();
-}
-
-// A press toggles the zone under it; a sweep only ever adds. Otherwise
-// wobbling back over a zone mid-sweep would drop it again, and a long sweep
-// would be a coin toss.
-async function pressZone(x, y) {
-  try {
-    const zone = await call(`/api/zone?x=${Math.round(x)}&y=${Math.round(y)}`);
-    const at = key(zone.panel, zone.label);
-    if (picked.has(at)) {
-      picked.delete(at);
-      say(`Zone ${zone.label} dropped — ${picked.size} selected.`);
-    } else {
-      await rememberZone(zone);
-      say(`Zone ${zone.label} selected — ${picked.size} selected.`);
+function ownLoss(id) {
+  switch (id) {
+    case "panels":
+      if (!state.done.panels) return null;
+      if (edits.panels === null) return t("confirm.panels.unknown");
+      return edits.panels ? t("confirm.panels.counted", { count: edits.panels }) : null;
+    case "bubbles":
+      if (!state.done.bubbles) return null;
+      if (edits.bubbles === null) return t("confirm.bubbles.unknown");
+      return edits.bubbles ? t("confirm.bubbles.counted", { count: edits.bubbles }) : null;
+    case "zones": {
+      if (!state.done.zones) return null;
+      const zones = edits.zones;
+      if (zones === null) return t("confirm.zones.unknown");
+      if (!zones.merges && !zones.cuts) return null;
+      return t("confirm.zones.counted", {
+        merges: t("count.merges", { count: zones.merges }),
+        cuts: t("count.cuts", { count: zones.cuts }),
+      });
     }
-  } catch {
-    say("No zone there — that pixel is line, gutter, or a protected balloon.");
+    case "flats":
+      return state.done.flats && state.segments.snapped
+        ? t("confirm.flats.counted", { count: state.segments.snapped })
+        : null;
+    default:
+      return null;
   }
-  render();
-  applyEditMode();
 }
 
-// The sweep goes to the server as a path, once, rather than as a hit test per
-// mouse move: one request knows every zone the stroke crossed, including the
-// ones that fell between two samples.
-async function sweptZones(points) {
-  const found = await call("/api/zones/along", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ points }),
-  });
-  for (const zone of found.zones) await rememberZone(zone);
-  if (found.zones.length) say(`${picked.size} zones selected.`);
-  render();
-  applyEditMode();
-}
-
-function drawPicked() {
-  for (const zone of picked.values()) {
-    if (!zone.image) continue;
-    const [left, top, right, bottom] = zone.bounds;
-    const [x, y] = view.toScreen(left, top);
-    const [ex, ey] = view.toScreen(right + 1, bottom + 1);
-    ctx.drawImage(zone.image, x, y, ex - x, ey - y);
+// What the server clears downstream: panels and bubbles both invalidate the
+// zones, and with them the flats. The traced balloons survive new panels.
+// Whole sentences rather than a list of nouns, so no language has to fit the
+// nouns into an English list.
+function laterLoss(id) {
+  const done = state.done;
+  if ((id === "panels" || id === "bubbles") && done.zones) {
+    return done.flats ? t("confirm.later.all") : t("confirm.later.zones");
   }
-  if (cutting) drawCut();
+  if (id === "zones" && done.flats) return t("confirm.later.flats");
+  return null;
 }
 
-// The cut, while it is being drawn: the line the ink was missing.
-function drawCut() {
-  if (!cutting.stroke.length) return;
-  ctx.save();
-  ctx.strokeStyle = "#ff5c5c";
-  ctx.lineWidth = 2.5;
-  ctx.lineCap = "round";
-  ctx.beginPath();
-  cutting.stroke.forEach(([px, py], index) => {
-    const [x, y] = view.toScreen(px, py);
-    index === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-  });
-  ctx.stroke();
-  ctx.restore();
-}
-
-async function mergePicked() {
-  const zones = [...picked.values()];
-  const panel = zones[0].panel;
-  if (zones.some((zone) => zone.panel !== panel)) {
-    say("Zones merge inside one panel. The same shirt in the next panel is the palette's job.", true);
-    return;
+function question(id) {
+  switch (id) {
+    case "panels": return t("confirm.panels.ask");
+    case "bubbles": return t("confirm.bubbles.ask");
+    default: return t("confirm.zones.ask");
   }
+}
+
+function rerunSentence(id) {
+  const own = ownLoss(id);
+  const later = laterLoss(id);
+  if (!own && !later) return null;
+  const first = own || question(id);
+  return later ? t("confirm.with_later", { first, later }) : first;
+}
+
+function askFor(id, sentence) {
+  asking = { id, sentence };
+  renderRail();
+  document.querySelector(`[data-key="ask-${id}"]`)?.focus();
+}
+
+function requestRun(id) {
+  const sentence = rerunSentence(id);
+  if (sentence) return askFor(id, sentence);
+  runStep(id);
+}
+
+function askLabel(id) {
+  switch (id) {
+    case "panels": return t("ask.panels");
+    case "bubbles": return t("ask.bubbles");
+    case "zones": return t("ask.zones");
+    case "flats": return t("ask.flats");
+    case "upload": return t("ask.upload");
+    default: return t("ask.reset");
+  }
+}
+
+function confirmAsked(id) {
+  asking = null;
+  if (id === "upload") return choosePage();
+  if (id === "reset") return startOver();
+  runStep(id);
+}
+
+function askBlock(id) {
+  if (!asking || asking.id !== id) return null;
+  return h(
+    "div",
+    { class: "ask", role: "alert" },
+    h("p", {}, asking.sentence),
+    h(
+      "div",
+      { class: "row" },
+      button(askLabel(id), { kind: "destructive", key: `ask-${id}`, onclick: () => confirmAsked(id) }),
+      button(t("ask.keep"), {
+        kind: "quiet",
+        key: "ask-keep",
+        onclick: () => {
+          asking = null;
+          renderRail();
+        },
+      }),
+    ),
+  );
+}
+
+// ---- running a step ---------------------------------------------------------
+
+async function runStep(id) {
+  asking = null;
+  const run = RUNS[id];
+  renderRail();
   try {
-    const next = await call("/api/zones/merge", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ panel, labels: zones.map((zone) => zone.label) }),
-    });
-    picked.clear();
-    await adopt(next);
-    say(`${next.result.merged} zones are now one.`);
+    const next = await working(run.label(), run.polling, () => call(run.path(), { method: "POST" }));
+    forgetCanvasSelection();
+    traces.clear();
+    if (id === "panels" || id === "bubbles") edits[id] = 0;
+    // Flats leave the zones as they were, merges and cuts included.
+    if (id !== "flats") edits.zones = { merges: 0, cuts: 0 };
+    state = next;
+    // A correction stage opens on itself: detecting is what moves the artist
+    // onto the geometry. Colours open on snapping, which is what comes next.
+    current = id === "flats" ? "snap" : id;
+    shelf = null;
+    await reloadLayers();
+    renderAll();
+    say(run.done(next));
   } catch (error) {
+    renderAll();
     say(error.message, true);
   }
 }
 
-function startCut() {
-  const [zone] = [...picked.values()];
-  cutting = { panel: zone.panel, label: zone.label, stroke: [] };
-  applyEditMode();
-  say("Draw the line the ink was missing: press, drag across the zone, release.");
+function choosePage() {
+  $("page-file").click();
 }
 
-function stopCut() {
-  cutting = null;
-  applyEditMode();
-  render();
+function requestUpload() {
+  if (state.done.panels) return askFor("upload", t("confirm.upload"));
+  choosePage();
 }
 
-async function applyCut() {
-  const { panel, label, stroke } = cutting;
-  cutting = null;
+async function uploadFile(input, path, label, extra = {}) {
+  if (!input.files.length) return null;
+  const form = new FormData();
+  form.append("file", input.files[0]);
+  for (const [name, value] of Object.entries(extra)) form.append(name, value);
+  input.value = "";
   try {
-    const next = await call("/api/zones/cut", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ panel, label, stroke }),
-    });
-    picked.clear();
-    await adopt(next);
-    say(`Zone cut into ${next.result.pieces}.`);
+    return await working(label, false, () => send(path, form));
   } catch (error) {
-    // The zone is untouched, so the selection still means something.
-    applyEditMode();
-    render();
     say(error.message, true);
+    return null;
   }
 }
 
-// ---- the palette, and the references that offer colours to it -------------
-//
-// Two different things, and the sidebar has to say so. A reference is an
-// image: Cobra is shown it, and colours are *found* in it. The palette is the
-// artist's list, and nothing lands in it without a click. The chips under a
-// thumbnail are that click — every colour the image offers, lit when it has
-// been taken.
-
-// The artist's half of the palette. The other half is one private entry per
-// segment, which is hundreds of swatches on a real page and not one of them a
-// colour anybody chose.
-const chosen = () => state.palette.filter((entry) => entry.source === "palette");
-
-const hex = (colour) =>
-  "#" + colour.map((part) => part.toString(16).padStart(2, "0")).join("");
-
-function applyPalette() {
-  const taken = chosen();
-  const offered = state.references.reduce((sum, r) => sum + r.candidates.length, 0);
-
-  $("ref-note").textContent = state.references.length
-    ? `${state.references.length} reference(s) shown to the model, ${offered} colours offered — click the ones this book uses.`
-    : "Shown to the model. Its colours are offered, not taken.";
-
-  // A palette image has no chips: every colour in it is already in, which is
-  // the difference between a decision and a proposal.
-  $("pal-note").textContent = state.palettes.length
-    ? `${state.palettes.length} palette image(s). Removing one takes its colours out again.`
-    : "An image of your swatches. Every colour in it joins the palette.";
-  $("palettes").innerHTML = state.palettes
-    .map(
-      (p) => `<figure data-id="${p.id}">
-        <img src="/api/reference/${p.id}.png" alt="${p.label}">
-        <figcaption>${p.colours.length} colours</figcaption>
-        <button class="x" data-id="${p.id}" title="Remove ${p.label} and its colours">&times;</button>
-      </figure>`
-    )
-    .join("");
-
-  $("refs").innerHTML = state.references
-    .map(
-      (r) => `<figure data-id="${r.id}">
-        <img src="/api/reference/${r.id}.png" alt="${r.label}">
-        <figcaption>${r.kind}</figcaption>
-        <button class="x" data-id="${r.id}" title="Remove ${r.label}">&times;</button>
-        <div class="chips">${r.candidates
-          .map(
-            (c) => `<i class="${c.entry_id === null ? "" : "on"}"
-              style="background: ${rgb(c.rgb)}"
-              data-ref="${r.id}" data-rgb="${c.rgb.join(",")}"
-              data-entry="${c.entry_id === null ? "" : c.entry_id}"
-              title="${c.entry_id === null ? "Add to the palette" : "Take out of the palette"}"></i>`
-          )
-          .join("")}</div>
-      </figure>`
-    )
-    .join("");
-
-  // A palette swatch is a colour input, because changing a colour here changes
-  // it on every zone holding that entry — one row, the whole page (rule 1).
-  $("palette").innerHTML = taken
-    .map(
-      (e) => `<span class="swatch">
-        <input type="color" value="${hex(e.rgb)}" data-id="${e.id}" title="${e.label}">
-        <button class="x" data-id="${e.id}" title="Remove ${e.label} from the palette">&times;</button>
-      </span>`
-    )
-    .join("");
-
-  $("palette-note").textContent = taken.length
-    ? "Click a colour to change it everywhere it is used."
-    : offered
-      ? "Nothing in the palette yet — a reference's colours are only offered."
-      : "";
-}
-
-// Chips add and remove; the palette is never a side effect of an upload.
-$("refs").addEventListener("click", (event) => {
-  const chip = event.target;
-  if (chip.tagName !== "I" || !chip.dataset.ref) return;
-  if (chip.dataset.entry) {
-    dropColour(chip.dataset.entry);
-    return;
-  }
-  takeColour(Number(chip.dataset.ref), chip.dataset.rgb.split(",").map(Number));
+$("page-file").addEventListener("change", async () => {
+  const next = await uploadFile($("page-file"), "/api/page", t("work.page"));
+  if (!next) return;
+  forgetCanvasSelection();
+  traces.clear();
+  edits = freshEdits();
+  state = next;
+  current = furthest();
+  shelf = null;
+  zoom = 1;
+  pan = { x: 0, y: 0 };
+  await reloadLayers();
+  renderAll();
+  say(t("done.page", { name: next.page.name }));
 });
 
-async function takeColour(reference_id, colour) {
+async function startOver() {
+  try {
+    const next = await working(t("work.reset"), false, () => call("/api/reset", { method: "POST" }));
+    forgetCanvasSelection();
+    traces.clear();
+    edits = freshEdits();
+    state = next;
+    current = furthest();
+    shelf = null;
+    await reloadLayers();
+    renderAll();
+    say(t("done.reset"));
+  } catch (error) {
+    renderAll();
+    say(error.message, true);
+  }
+}
+
+async function snapAll() {
+  // `inf` is the artist overriding the guard deliberately — the same override
+  // `luikki flatten --threshold inf` takes.
+  const threshold = controls.ignoreGuard ? "inf" : controls.threshold;
+  try {
+    const next = await working(t("work.snap_all"), false, () =>
+      call(`/api/snap-all?threshold=${threshold}`, { method: "POST" }),
+    );
+    selected = null;
+    await adopt(next);
+    say(t("done.snap_all", { snapped: next.result.snapped, skipped: next.result.skipped }));
+  } catch (error) {
+    say(error.message, true);
+  }
+}
+
+const exportLayers = () => state.export.layers[controls.granularity] ?? 0;
+const heavyExport = () => exportLayers() > state.export.warn_at;
+
+async function exportPsd() {
+  const granularity = controls.granularity;
+  const count = exportLayers();
+  try {
+    const blob = await working(t("work.export"), false, async () => {
+      const response = await fetch(`/api/export?granularity=${granularity}`, { method: "POST" });
+      if (!response.ok) throw failure(await response.json().catch(() => ({})), response.statusText);
+      return response.blob();
+    });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = (state.page.name.replace(/\.[^.]+$/, "") || "page") + "_flats.psd";
+    link.click();
+    URL.revokeObjectURL(link.href);
+    say(t("done.export", { count }));
+  } catch (error) {
+    say(error.message, true);
+  }
+}
+
+// ---- rendering: the header, the rail, the footer ----------------------------
+
+function renderAll() {
+  if (!state) return;
+  ensureCurrent();
+  renderHeader();
+  renderRail();
+  renderInspector();
+  renderFooter();
+  applyCanvasMode();
+  render();
+}
+
+function renderHeader() {
+  $("page-name").textContent = state.page ? state.page.name : t("header.no_page");
+  document.title = state.page ? t("header.title", { page: state.page.name }) : "Luikki";
+}
+
+function renderRail() {
+  keepFocus(() => {
+    $("steps").replaceChildren(...STEPS.map(stepRow));
+    $("books").replaceChildren(bookRow("references"), bookRow("palette"));
+  });
+}
+
+function stepRow(step) {
+  const status = stepState(step);
+  const head = h(
+    "button",
+    {
+      type: "button",
+      class: "step-head",
+      "data-key": `step-${step.id}`,
+      "aria-expanded": String(status === "current"),
+      "aria-disabled": status === "locked" ? "true" : null,
+      title: status === "locked" ? lockedReason(step.needs) : status === "closed" ? closedReason(step.id) : null,
+      onclick: () => pressRow(step, status),
+    },
+    h("span", { class: "step-num", "aria-hidden": "true" }, status === "done" ? icon("check") : fmt.number(step.number)),
+    h("span", { class: "step-name" }, stepName(step.id)),
+    h("span", { class: "sr" }, stateName(status)),
+    h("span", { class: "step-meta" }, stepMeta(step.id)),
+  );
+  return h(
+    "li",
+    { class: "step", "data-state": status },
+    head,
+    status === "current" ? h("div", { class: "step-body" }, stepBody(step.id)) : null,
+  );
+}
+
+const note = (text, attention = false) => h("p", { class: attention ? "note attention" : "note" }, text);
+
+function runButton(id, first, again) {
+  const done = state.done[id];
+  return h(
+    "div",
+    { class: "row" },
+    button(done ? again : first, {
+      kind: done ? "" : "primary",
+      key: `run-${id}`,
+      onclick: () => requestRun(id),
+    }),
+  );
+}
+
+function stepBody(id) {
+  const done = state.done;
+  switch (id) {
+    case "upload":
+      return [
+        state.page
+          ? note(t("upload.page", { name: state.page.name, width: String(state.page.width), height: String(state.page.height) }))
+          : note(t("upload.hint")),
+        note(t("upload.engine", { extractor: state.extractor, proposer: state.proposer })),
+        askBlock("upload"),
+        askBlock("reset"),
+        h(
+          "div",
+          { class: "row" },
+          button(state.page ? t("upload.again") : t("upload.run"), {
+            kind: "primary",
+            key: "run-upload",
+            onclick: requestUpload,
+          }),
+          state.page
+            ? button(t("upload.reset"), {
+                kind: "destructive",
+                key: "reset",
+                onclick: () => askFor("reset", t("confirm.reset")),
+              })
+            : null,
+        ),
+      ];
+    case "panels":
+      return [
+        askBlock("panels"),
+        note(state.editable.panels ? t("hint.panels") : done.panels ? t("closed.panels") : t("about.panels")),
+        runButton("panels", t("run.panels"), t("run.panels.again")),
+      ];
+    case "bubbles":
+      return [
+        askBlock("bubbles"),
+        note(state.editable.bubbles ? t("hint.bubbles") : done.bubbles ? t("closed.bubbles") : t("about.bubbles")),
+        runButton("bubbles", t("run.bubbles"), t("run.bubbles.again")),
+      ];
+    case "zones":
+      return [
+        askBlock("zones"),
+        h(
+          "label",
+          { class: "field", title: t("zones.gap_tip") },
+          h("span", {}, t("zones.gap")),
+          h("input", {
+            type: "number",
+            min: 0,
+            max: 100,
+            step: 1,
+            value: controls.gap,
+            "data-key": "gap",
+            oninput: (event) => {
+              controls.gap = Number(event.target.value);
+            },
+          }),
+        ),
+        note(state.editable.zones ? t("hint.zones") : done.zones ? t("closed.zones") : t("about.zones")),
+        runButton("zones", t("run.zones"), t("run.zones.again")),
+      ];
+    case "flats":
+      return [
+        askBlock("flats"),
+        note(done.flats ? t("flats.done", { count: state.segments.count }) : t("about.flats")),
+        runButton("flats", t("run.flats"), t("run.flats.again")),
+      ];
+    case "snap": {
+      const snappable = state.segments.snappable;
+      return [
+        note(snappable ? t("snap.hint") : t("snap.no_palette"), !snappable),
+        h(
+          "label",
+          { class: "check" },
+          h("input", {
+            type: "checkbox",
+            checked: controls.ignoreGuard,
+            "data-key": "guard",
+            onchange: (event) => {
+              controls.ignoreGuard = event.target.checked;
+              renderRail();
+            },
+          }),
+          h("span", {}, t("snap.ignore_guard")),
+        ),
+        h(
+          "label",
+          { class: "field" },
+          h("span", {}, t("snap.threshold")),
+          h("input", {
+            type: "number",
+            min: 0,
+            step: 0.5,
+            value: controls.threshold,
+            disabled: controls.ignoreGuard,
+            "data-key": "threshold",
+            oninput: (event) => {
+              controls.threshold = Number(event.target.value);
+            },
+          }),
+        ),
+        h(
+          "div",
+          { class: "row" },
+          button(t("run.snap_all"), {
+            kind: "primary",
+            key: "run-snap",
+            disabled: !snappable,
+            why: t("snap.no_palette"),
+            onclick: snapAll,
+          }),
+        ),
+      ];
+    }
+    default: {
+      const count = exportLayers();
+      const heavy = heavyExport();
+      return [
+        h(
+          "label",
+          { class: "field" },
+          h("span", {}, t("export.layers")),
+          h(
+            "select",
+            {
+              "data-key": "granularity",
+              onchange: (event) => {
+                controls.granularity = event.target.value;
+                renderAll();
+              },
+            },
+            h("option", { value: "colour", selected: controls.granularity === "colour" }, t("export.per_colour")),
+            h("option", { value: "panel", selected: controls.granularity === "panel" }, t("export.per_panel")),
+          ),
+        ),
+        heavy ? note(t("export.warning", { count }), true) : note(t("export.count", { count })),
+        note(t("export.note")),
+        h(
+          "div",
+          { class: "row" },
+          button(heavy ? t("run.export.anyway", { count }) : t("run.export"), {
+            kind: "primary",
+            key: "run-export",
+            onclick: exportPsd,
+          }),
+        ),
+      ];
+    }
+  }
+}
+
+function bookRow(which) {
+  const pressed = shelf === which;
+  const references = which === "references";
+  return h(
+    "li",
+    {},
+    h(
+      "button",
+      {
+        type: "button",
+        class: "book",
+        "data-key": `book-${which}`,
+        "aria-pressed": String(pressed),
+        onclick: () => {
+          shelf = pressed ? null : which;
+          renderRail();
+          renderInspector();
+        },
+      },
+      h("span", {}, references ? t("book.references") : t("book.palette")),
+      h(
+        "span",
+        { class: "step-meta" },
+        references
+          ? t("meta.references", { count: state.references.length })
+          : t("meta.colours", { count: paletteColours().length }),
+      ),
+    ),
+  );
+}
+
+function renderFooter() {
+  const lines = $("v-lines");
+  lines.checked = controls.lines;
+  lines.disabled = !layers.lines;
+  lines.parentElement.title = layers.lines ? "" : t("toggle.lines_why");
+  $("v-neutral").checked = controls.neutral;
+  $("v-left").checked = controls.left;
+  $("v-left-label").hidden = !(current === "snap" && state.done.flats);
+  $("shell").classList.toggle("neutral", controls.neutral);
+}
+
+function showZoom() {
+  const readout = $("zoom");
+  if (!state || !state.page) {
+    readout.textContent = "";
+    return;
+  }
+  readout.textContent = zoom > 1.01 ? t("zoom.zoomed", { percent: fmt.percent(zoom * 100) }) : t("zoom.fit");
+}
+
+// ---- the inspector (§9) -----------------------------------------------------
+
+function renderInspector() {
+  keepFocus(() => {
+    const [body, footer] = inspectorContent();
+    $("inspector-body").replaceChildren(...body.filter(Boolean));
+    $("inspector-footer").replaceChildren(...footer.filter(Boolean));
+  });
+}
+
+const heading = (text) => h("h2", { class: "ins-title" }, text);
+const rgb = (colour) => `rgb(${colour.join(",")})`;
+const hex = (colour) => "#" + colour.map((part) => part.toString(16).padStart(2, "0")).join("");
+const paletteById = () => new Map(state.palette.map((entry) => [entry.id, entry]));
+// The artist's half of the palette. The other half is one private entry per
+// segment — hundreds on a real page, and not one a colour anybody chose.
+const paletteColours = () => state.palette.filter((entry) => entry.source === "palette");
+
+function inspectorContent() {
+  if (!state) return [[], []];
+  if (shelf === "references") return referencesView();
+  if (shelf === "palette") return paletteView();
+  switch (current) {
+    case "upload": return uploadView();
+    case "panels":
+    case "bubbles": return shapeView();
+    case "zones": return zonesView();
+    case "flats": return flatsView();
+    case "snap": return snapView();
+    default: return exportView();
+  }
+}
+
+function uploadView() {
+  if (!state.page) return [[note(t("inspect.upload.empty"))], []];
+  return [
+    [
+      heading(t("inspect.page")),
+      h("div", { class: "ins-row" }, h("span", { class: "label" }, state.page.name)),
+      h(
+        "div",
+        { class: "ins-row num" },
+        t("inspect.size", { width: String(state.page.width), height: String(state.page.height) }),
+      ),
+    ],
+    [],
+  ];
+}
+
+function shapeView() {
+  const panels = current === "panels";
+  if (!state.done[current]) {
+    return [[note(panels ? t("inspect.panels.not_run") : t("inspect.bubbles.not_run"))], []];
+  }
+  if (!state.editable[current]) return [[note(closedReason(current))], []];
+  const polygons = shapes();
+  if (shapeSelected === null || !polygons[shapeSelected]) {
+    return [[note(panels ? t("inspect.panels.empty") : t("inspect.bubbles.empty"))], []];
+  }
+  const index = shapeSelected;
+  return [
+    [
+      heading(
+        panels
+          ? t("inspect.panel", { number: state.panels[index].order + 1 })
+          : t("inspect.bubble", { number: index + 1 }),
+      ),
+      h("div", { class: "ins-row num" }, t("inspect.corners", { count: polygons[index].length })),
+    ],
+    [
+      button(panels ? t("inspect.panel.delete") : t("inspect.bubble.delete"), {
+        kind: "destructive",
+        key: "delete-shape",
+        onclick: () => deleteShape(index),
+      }),
+    ],
+  ];
+}
+
+function zonesView() {
+  if (!state.done.zones) return [[note(t("inspect.zones.not_run"))], []];
+  if (!state.editable.zones) return [[note(t("closed.zones"))], []];
+  if (cutting) {
+    return [
+      [note(t("inspect.zones.cutting"))],
+      [button(t("inspect.zones.stop_cut"), { kind: "quiet", key: "stop-cut", onclick: stopCut })],
+    ];
+  }
+  if (!picked.size) return [[note(t("inspect.zones.empty"))], []];
+  const zones = [...picked.values()];
+  const measured = zones.every((zone) => zone.trace);
+  const area = zones.reduce((sum, zone) => sum + (zone.trace ? zone.trace.area : 0), 0);
+  return [
+    [
+      heading(t("inspect.zones.selected", { count: picked.size })),
+      h("div", { class: "ins-row num" }, measured ? t("inspect.area", { count: area }) : t("inspect.area.measuring")),
+    ],
+    [
+      button(t("inspect.zones.merge"), {
+        key: "merge",
+        disabled: picked.size < 2,
+        why: t("inspect.zones.merge_why"),
+        onclick: mergePicked,
+      }),
+      button(t("inspect.zones.cut"), {
+        key: "cut",
+        disabled: picked.size !== 1,
+        why: t("inspect.zones.cut_why"),
+        onclick: startCut,
+      }),
+      button(t("inspect.zones.clear"), { kind: "quiet", key: "clear", onclick: clearPicked }),
+    ],
+  ];
+}
+
+function flatsView() {
+  if (!state.done.flats) return [[note(t("inspect.flats.not_run"))], []];
+  const { count, snapped } = state.segments;
+  return [
+    [
+      heading(t("inspect.flats.title")),
+      h("div", { class: "ins-row num" }, t("inspect.flats.segments", { count })),
+      h("div", { class: "ins-row num" }, t("inspect.flats.private", { count: count - snapped })),
+    ],
+    [],
+  ];
+}
+
+// Choosing a colour other than the suggestion opens the palette under it.
+let choosing = false;
+
+function snapView() {
+  if (!state.done.flats) return [[note(t("inspect.flats.not_run"))], []];
+  if (!selected) return [[note(t("inspect.snap.empty"))], []];
+
+  const holding = paletteById().get(selected.palette_entry_id);
+  const suggestion = selected.suggestion;
+  // Measured against what the segment holds now, so after a snap the nearest
+  // colour is that same colour at ΔE 0. Saying so beats offering a zero.
+  const taken = Boolean(suggestion) && suggestion.palette_entry_id === selected.palette_entry_id;
+  const colours = paletteColours();
+
+  const body = [
+    // A label is a name, not a quantity: no digit grouping.
+    heading(t("inspect.snap.title", { panel: selected.panel + 1, zone: String(selected.label) })),
+    h("div", { class: "ins-row num" }, t("inspect.area", { count: selected.area })),
+    note(selected.snapped ? t("inspect.snap.by_you") : t("inspect.snap.by_model")),
+    h(
+      "div",
+      { class: "ins-row" },
+      h("i", { class: "ins-swatch", style: { background: holding ? rgb(holding.rgb) : "transparent" } }),
+      h(
+        "span",
+        { class: "label" },
+        !holding
+          ? t("inspect.snap.no_colour")
+          : holding.source === "proposed"
+            ? t("inspect.snap.proposed")
+            : t("inspect.snap.held", { name: holding.label }),
+      ),
+    ),
+  ];
+
+  if (suggestion) {
+    const delta = fmt.number(suggestion.delta, 1);
+    body.push(
+      h(
+        "div",
+        { class: "ins-row" },
+        h("i", { class: "ins-swatch", style: { background: rgb(suggestion.rgb) } }),
+        h("span", { class: "label" }, t("inspect.snap.nearest")),
+      ),
+      // The number the old automatic pass decided on in silence. It orders the
+      // artist's attention; it refuses nothing (§9).
+      taken
+        ? note(t("inspect.snap.taken"))
+        : h(
+            "p",
+            { class: suggestion.within_threshold ? "note num delta" : "note num delta far" },
+            suggestion.within_threshold
+              ? t("inspect.snap.delta_close", { delta })
+              : t("inspect.snap.delta_far", { delta }),
+          ),
+    );
+  } else {
+    body.push(note(t("inspect.snap.no_suggestion")));
+  }
+
+  if (choosing && colours.length) {
+    body.push(
+      h(
+        "div",
+        { class: "swatches" },
+        colours.map((entry) =>
+          h(
+            "button",
+            {
+              type: "button",
+              class: "swatch",
+              "data-key": `pick-${entry.id}`,
+              "aria-pressed": String(entry.id === selected.palette_entry_id),
+              title: entry.label,
+              onclick: () => snapSelected(entry.id),
+            },
+            h("i", { style: { background: rgb(entry.rgb) } }),
+            h("span", {}, String(entry.id)),
+          ),
+        ),
+      ),
+    );
+  }
+
+  return [
+    body,
+    [
+      button(t("inspect.snap.snap"), {
+        key: "snap",
+        disabled: !suggestion || taken,
+        why: taken ? t("inspect.snap.taken") : t("inspect.snap.no_suggestion"),
+        onclick: () => snapSelected(),
+      }),
+      button(t("inspect.snap.pick"), {
+        key: "pick",
+        disabled: !colours.length,
+        why: t("snap.no_palette"),
+        pressed: choosing,
+        onclick: () => {
+          choosing = !choosing;
+          renderInspector();
+        },
+      }),
+      button(t("inspect.snap.unsnap"), {
+        kind: "quiet",
+        key: "unsnap",
+        disabled: !selected.snapped,
+        why: t("inspect.snap.not_snapped"),
+        onclick: unsnapSelected,
+      }),
+    ],
+  ];
+}
+
+function exportView() {
+  if (!state.done.flats) return [[note(t("inspect.flats.not_run"))], []];
+  return [
+    [
+      heading(t("inspect.export.title")),
+      h("div", { class: "ins-row num" }, t("inspect.export.per_colour", { count: state.export.layers.colour ?? 0 })),
+      h("div", { class: "ins-row num" }, t("inspect.export.per_panel", { count: state.export.layers.panel ?? 0 })),
+    ],
+    [],
+  ];
+}
+
+function kindName(kind) {
+  switch (kind) {
+    case "sheet": return t("kind.sheet");
+    case "page": return t("kind.page");
+    case "panel": return t("kind.panel");
+    default: return kind;
+  }
+}
+
+// A reference is an image: the model is shown it, and colours are found in
+// it. The palette is the artist's list, and nothing lands in it without a
+// click. The chips under a thumbnail are that click.
+function referencesView() {
+  const body = [heading(t("book.references"))];
+  if (!state.references.length) {
+    body.push(note(t("refs.empty")));
+  } else {
+    body.push(
+      note(t("refs.about")),
+      h(
+        "div",
+        { class: "refs" },
+        state.references.map((reference) =>
+          h(
+            "figure",
+            { class: "ref" },
+            h("img", { src: `/api/reference/${reference.id}.png`, alt: reference.label }),
+            h(
+              "figcaption",
+              {},
+              h(
+                "div",
+                { class: "ref-head" },
+                h("span", {}, kindName(reference.kind)),
+                button(icon("close"), {
+                  kind: "quiet icon",
+                  key: `remove-ref-${reference.id}`,
+                  label: t("refs.remove", { name: reference.label }),
+                  onclick: () => removeReference(reference.id, false),
+                }),
+              ),
+              h("div", { class: "ref-name" }, reference.label),
+              h("div", { class: "chips" }, reference.candidates.map((candidate) => chip(reference, candidate))),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+  return [
+    body,
+    [
+      h(
+        "select",
+        {
+          "aria-label": t("refs.kind"),
+          "data-key": "ref-kind",
+          onchange: (event) => {
+            controls.refKind = event.target.value;
+          },
+        },
+        h("option", { value: "sheet", selected: controls.refKind === "sheet" }, t("kind.sheet")),
+        h("option", { value: "page", selected: controls.refKind === "page" }, t("kind.page")),
+        h("option", { value: "panel", selected: controls.refKind === "panel" }, t("kind.panel")),
+      ),
+      button(t("refs.add"), { key: "add-ref", onclick: () => $("ref-file").click() }),
+    ],
+  ];
+}
+
+function chip(reference, candidate) {
+  const taken = candidate.entry_id !== null;
+  const label = taken ? t("chip.remove") : t("chip.add");
+  return h(
+    "button",
+    {
+      type: "button",
+      class: "chip",
+      "aria-pressed": String(taken),
+      "aria-label": label,
+      title: label,
+      style: { background: rgb(candidate.rgb) },
+      onclick: () => (taken ? dropColour(candidate.entry_id) : takeColour(reference.id, candidate.rgb)),
+    },
+    taken ? tick() : null,
+  );
+}
+
+// The id under a swatch never changes, whatever colour it holds — that is what
+// makes "change the hair colour everywhere" one row (rule 1), and the
+// interface shows it.
+let entrySelected = null;
+
+function paletteView() {
+  const colours = paletteColours();
+  const body = [heading(t("book.palette")), note(colours.length ? t("palette.about") : t("palette.empty"))];
+  if (colours.length) {
+    body.push(
+      h(
+        "div",
+        { class: "swatches" },
+        colours.map((entry) =>
+          h(
+            "button",
+            {
+              type: "button",
+              class: "swatch",
+              "data-key": `swatch-${entry.id}`,
+              "aria-pressed": String(entry.id === entrySelected),
+              title: entry.label,
+              onclick: () => {
+                entrySelected = entry.id === entrySelected ? null : entry.id;
+                renderInspector();
+              },
+            },
+            h("i", { style: { background: rgb(entry.rgb) } }),
+            h("span", {}, String(entry.id)),
+          ),
+        ),
+      ),
+    );
+  }
+  const entry = colours.find((candidate) => candidate.id === entrySelected);
+  if (entry) {
+    body.push(
+      h(
+        "div",
+        { class: "editor" },
+        h(
+          "label",
+          { class: "field" },
+          h("span", {}, t("palette.colour", { id: String(entry.id) })),
+          h("input", {
+            type: "color",
+            value: hex(entry.rgb),
+            "data-key": "recolour",
+            onchange: (event) => recolour(entry.id, event.target.value),
+          }),
+        ),
+        h(
+          "div",
+          { class: "row" },
+          button(t("palette.remove"), {
+            kind: "destructive",
+            key: "remove-colour",
+            onclick: () => dropColour(entry.id),
+          }),
+        ),
+      ),
+    );
+  }
+  if (state.palettes.length) {
+    body.push(
+      h("h3", { class: "ins-sub" }, t("palette.images")),
+      h(
+        "div",
+        { class: "refs" },
+        state.palettes.map((image) =>
+          h(
+            "figure",
+            { class: "ref strip" },
+            h("img", { src: `/api/reference/${image.id}.png`, alt: image.label }),
+            h(
+              "figcaption",
+              {},
+              h(
+                "div",
+                { class: "ref-head" },
+                h("span", { class: "num" }, t("palette.image_colours", { count: image.colours.length })),
+                button(icon("close"), {
+                  kind: "quiet icon",
+                  key: `remove-pal-${image.id}`,
+                  label: t("palette.image_remove", { name: image.label }),
+                  onclick: () => removeReference(image.id, true),
+                }),
+              ),
+              h("div", { class: "ref-name" }, image.label),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+  return [body, [button(t("palette.add_image"), { key: "add-palette", onclick: () => $("pal-file").click() })]];
+}
+
+// ---- the palette and the references, over the wire --------------------------
+
+async function takeColour(referenceId, colour) {
   try {
     await adopt(
       await call("/api/palette", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ reference_id, rgb: colour }),
-      })
+        body: JSON.stringify({ reference_id: referenceId, rgb: colour }),
+      }),
     );
-    say("Colour added to the palette.");
+    say(t("status.colour_added"));
   } catch (error) {
     say(error.message, true);
   }
@@ -667,156 +1643,425 @@ async function takeColour(reference_id, colour) {
 
 async function dropColour(entryId) {
   try {
+    if (entrySelected === entryId) entrySelected = null;
     await adopt(await call(`/api/palette/${entryId}`, { method: "DELETE" }));
-    say("Colour taken out — zones snapped to it went back to what was proposed.");
+    say(t("status.colour_removed"));
   } catch (error) {
     say(error.message, true);
   }
 }
 
-$("palette").addEventListener("change", async (event) => {
-  const input = event.target;
-  if (input.type !== "color") return;
-  const value = input.value;
+// Changing a colour here changes it on every zone holding that entry: one row,
+// the whole page (rule 1).
+async function recolour(entryId, value) {
   const colour = [1, 3, 5].map((at) => parseInt(value.slice(at, at + 2), 16));
   try {
     await adopt(
-      await call(`/api/palette/${input.dataset.id}`, {
+      await call(`/api/palette/${entryId}`, {
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ rgb: colour }),
-      })
+      }),
     );
-    say("Colour changed on every zone holding it.");
+    say(t("status.colour_changed"));
   } catch (error) {
     say(error.message, true);
   }
-});
-
-$("palette").addEventListener("click", (event) => {
-  if (event.target.tagName === "BUTTON") dropColour(event.target.dataset.id);
-});
-
-// The "Correct" panel is the whole announcement that geometry is editable:
-// it appears when a layer can be corrected, names the gestures, and goes away
-// again the moment the zones are cut from the shapes.
-function applyEditMode() {
-  const which = activeLayer();
-  const box = $("edit-mode");
-  box.hidden = !which;
-  stage.classList.toggle("editing", Boolean(which));
-  if (!which) {
-    stage.classList.remove("on-corner", "on-edge");
-    return;
-  }
-  for (const name of ["panels", "bubbles", "zones"]) {
-    $(`layer-${name}`).disabled = !editable(name);
-    $(`layer-${name}`).checked = which === name;
-  }
-
-  if (which === "zones") {
-    $("edit-note").textContent = cutting
-      ? "Draw the line the ink was missing: press, drag across the zone, release. Right-click to stop."
-      : `Press a zone to select it, hold and sweep to add more, press again to drop it.` +
-        ` Right-click to merge${picked.size === 1 ? ", cut" : ""} or clear.` +
-        (picked.size ? ` ${picked.size} selected.` : "");
-    return;
-  }
-  if (!visible(which)) {
-    $("edit-note").textContent =
-      `The ${which} are hidden — tick ${which} under Show to correct them.`;
-    return;
-  }
-  $("edit-note").textContent =
-    `Drag a corner to move it. Click an edge to add one. Click empty page to` +
-    ` draw a new ${which === "panels" ? "panel" : "bubble"}, and click its first` +
-    ` corner to close it. Right-click to delete.`;
 }
 
-function applySnapStep(proposed) {
-  const segments = state.segments;
-  $("flats-note").textContent = state.done.flats
-    ? `${segments.count} segments, ${proposed} colours proposed — one per zone.`
-    : "";
-
-  const snappable = segments.snappable;
-  $("btn-snap-all").disabled = !state.done.flats || !snappable;
-  if (!state.done.flats) {
-    $("snap-note").textContent = "Nothing to snap until the flats exist.";
-  } else if (!snappable) {
-    $("snap-note").textContent =
-      "No reference colours to snap to — add a character sheet first.";
-  } else {
-    const left = segments.count - segments.snapped;
-    $("snap-note").textContent =
-      `${segments.snapped} of ${segments.count} snapped, ${left} still the model's guess.` +
-      " Click a zone to decide it yourself.";
+// Deleting a reference deletes the image, not the colours taken from it; the
+// flats go stale all the same, because they came from an image now gone.
+async function removeReference(id, palette) {
+  try {
+    await adopt(await call(`/api/reference/${id}`, { method: "DELETE" }));
+    say(palette ? t("done.palette_removed") : t("done.reference_removed"));
+  } catch (error) {
+    say(error.message, true);
   }
-  $("snap-threshold").disabled = $("snap-any").checked;
 }
 
-// ---- steps 2 and 3: correcting the geometry -------------------------------
+$("ref-file").addEventListener("change", async () => {
+  const next = await uploadFile($("ref-file"), "/api/reference", t("work.reference"), {
+    kind: controls.refKind,
+  });
+  if (!next) return;
+  shelf = "references";
+  await adopt(next);
+  // A finished page is kept whole and cut into its panels: one press, several
+  // references, and the count is the honest answer.
+  say(
+    next.result.panels
+      ? t("done.reference.page", { count: next.result.panels })
+      : t("done.reference", { kind: kindName(next.result.kind) }),
+  );
+});
+
+$("pal-file").addEventListener("change", async () => {
+  const next = await uploadFile($("pal-file"), "/api/palette/image", t("work.palette"));
+  if (!next) return;
+  shelf = "palette";
+  await adopt(next);
+  say(t("done.palette"));
+});
+
+// ---- the canvas: what each step shows ---------------------------------------
+
+function shows() {
+  const colour = current === "flats" || current === "snap" || current === "export";
+  return {
+    zones: current === "zones" || (current === "flats" && !state.done.flats),
+    flats: colour,
+    panels: current === "panels" || current === "bubbles" || current === "zones",
+    bubbles: current === "bubbles" || current === "zones",
+    left: current === "snap" && controls.left,
+  };
+}
+
+// Which geometry the pointer corrects: the open step's, while it is still open
+// to correction. Nothing else on the canvas takes a click.
+function activeLayer() {
+  if (!state || !state.page) return null;
+  return CORRECTED.includes(current) && state.editable[current] ? current : null;
+}
+
+const picking = () => Boolean(state && current === "snap" && state.done.flats);
+
+function applyCanvasMode() {
+  const editing = Boolean(activeLayer());
+  stage.classList.toggle("editing", editing);
+  stage.classList.toggle("pickable", picking());
+  if (!editing) stage.classList.remove("on-corner", "on-edge");
+}
+
+function resize() {
+  const ratio = window.devicePixelRatio || 1;
+  stage.width = Math.round(stage.clientWidth * ratio);
+  stage.height = Math.round(stage.clientHeight * ratio);
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  render();
+}
+
+function render() {
+  ctx.clearRect(0, 0, stage.clientWidth, stage.clientHeight);
+  showZoom();
+  if (!state || !state.page) return;
+
+  applyView();
+  const page = state.page;
+  const box = [view.ox, view.oy, page.width * view.scale, page.height * view.scale];
+  const show = shows();
+
+  // Past 1:1 the artist is inspecting ink, and interpolation turns a hard edge
+  // into a smear. Magnified, draw the pixels.
+  ctx.imageSmoothingEnabled = view.scale <= 1;
+
+  ctx.fillStyle = PAPER;
+  ctx.fillRect(...box);
+
+  // Colour underneath, ink on top — the order the artist works in and the
+  // order the PSD stacks in. A colourist cannot judge a colour without the
+  // lines that bound it.
+  if (layers.zones && show.zones) ctx.drawImage(layers.zones, ...box);
+  if (layers.flats && show.flats) ctx.drawImage(layers.flats, ...box);
+
+  // Multiply is what makes ink over colour behave like ink: black stays black,
+  // paper drops out, grey holds its weight.
+  ctx.globalCompositeOperation = "multiply";
+  if (layers.page) ctx.drawImage(layers.page, ...box);
+  // What segmentation actually saw, against the artist's own ink.
+  if (layers.lines && controls.lines) ctx.drawImage(layers.lines, ...box);
+  ctx.globalCompositeOperation = "source-over";
+
+  if (layers.left && show.left) ctx.drawImage(layers.left, ...box);
+
+  // The page border: 1px, no shadow, no gradient (§10).
+  ctx.save();
+  ctx.strokeStyle = tokens.edge;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(Math.round(box[0]) - 0.5, Math.round(box[1]) - 0.5, Math.round(box[2]) + 1, Math.round(box[3]) + 1);
+  ctx.restore();
+
+  const editing = activeLayer();
+  if (show.bubbles) {
+    state.protected.forEach((polygon, index) =>
+      outline(polygon, DASH.protected, editing === "bubbles" && shapeSelected === index),
+    );
+  }
+  if (show.panels) {
+    state.panels.forEach((panel, index) =>
+      outline(panel.polygon, [], editing === "panels" && shapeSelected === index),
+    );
+    for (const panel of state.panels) panelNumber(panel);
+  }
+
+  drawHandles(editing);
+  drawDraft(editing);
+  if (editing === "zones") drawPicked();
+  if (picking()) drawSegment();
+  startMarching();
+}
+
+// ---- lines on the artwork (§11) ---------------------------------------------
+//
+// A coloured line on a comic page competes with the drawing and shifts the
+// colour being judged, so every line here carries luminance, not hue: the
+// same path twice, dark underneath and light on top, which stays visible on
+// white paper and on a spot black alike.
+
+const DASH = { protected: [6, 4], selected: [4, 4], cut: [6, 4] };
+
+function strokeTwice(dash = [], offset = 0, under = 3, over = 1.5) {
+  ctx.save();
+  ctx.lineJoin = "round";
+  ctx.setLineDash(dash);
+  ctx.lineDashOffset = offset;
+  ctx.strokeStyle = tokens.dark;
+  ctx.lineWidth = under;
+  ctx.stroke();
+  ctx.strokeStyle = tokens.light;
+  ctx.lineWidth = over;
+  ctx.stroke();
+  ctx.restore();
+}
+
+function tracePath(points, close) {
+  points.forEach(([px, py], index) => {
+    const [x, y] = view.toScreen(px, py);
+    if (index === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  if (close) ctx.closePath();
+}
+
+// A selected shape marches; the rest stand still.
+function outline(polygon, dash, selectedShape) {
+  if (polygon.length < 2) return;
+  ctx.beginPath();
+  tracePath(polygon, true);
+  strokeTwice(selectedShape ? DASH.selected : dash, selectedShape ? -marching : 0);
+}
+
+function panelNumber(panel) {
+  const [x, y] = view.toScreen(panel.polygon[0][0], panel.polygon[0][1]);
+  const label = fmt.number(panel.order + 1);
+  ctx.save();
+  ctx.font = `600 12px ${tokens.font}`;
+  const width = Math.max(18, ctx.measureText(label).width + 8);
+  ctx.globalAlpha = 0.8;
+  ctx.fillStyle = tokens.chip;
+  ctx.fillRect(x + 4, y + 4, width, 18);
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = tokens.chipText;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, x + 4 + width / 2, y + 13);
+  ctx.restore();
+}
+
+// A corner is a thing the hand grabs, so it reads as a square. The one under
+// the pointer takes the action colour: under 100 square pixels, it cannot
+// shift the page, and the artist has to find it (§11's first exception).
+function handle(x, y, under) {
+  ctx.fillStyle = under ? tokens.ring : tokens.light;
+  ctx.fillRect(Math.round(x) - 4, Math.round(y) - 4, 8, 8);
+  ctx.strokeStyle = tokens.dark;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(Math.round(x) - 4.5, Math.round(y) - 4.5, 9, 9);
+}
+
+let hover = null; // {index, corner} — the corner under the pointer
+
+function drawHandles(editing) {
+  if (!editing || editing === "zones" || draft) return;
+  ctx.save();
+  shapes().forEach((polygon, index) =>
+    polygon.forEach(([px, py], corner) => {
+      const [x, y] = view.toScreen(px, py);
+      handle(x, y, Boolean(hover) && hover.index === index && hover.corner === corner);
+    }),
+  );
+  ctx.restore();
+}
+
+// The polygon being drawn: what has been placed, a rubber band to the pointer,
+// and a ring on the first corner once clicking it would close the shape.
+function drawDraft(editing) {
+  if (!draft || !editing) return;
+  const points = cursor ? [...draft.points, cursor] : draft.points;
+  ctx.beginPath();
+  tracePath(points, false);
+  strokeTwice();
+  ctx.save();
+  for (const [px, py] of draft.points) {
+    const [x, y] = view.toScreen(px, py);
+    handle(x, y, false);
+  }
+  ctx.restore();
+  if (draft.points.length >= 3) {
+    const [x, y] = view.toScreen(draft.points[0][0], draft.points[0][1]);
+    ctx.beginPath();
+    ctx.arc(x, y, 9, 0, Math.PI * 2);
+    strokeTwice();
+  }
+}
+
+// ---- zone outlines, traced from the masks -----------------------------------
+//
+// The server sends one zone as a cropped mask (`/api/zone/{panel}/{label}.png`).
+// Its outline is traced here along pixel edges, so a selection is drawn as a
+// line around the zone rather than a hue over it — the artist is looking at
+// that zone's colour (§11). The same pass counts its pixels, which is the
+// area the inspector shows.
+
+const key = (panel, label) => `${panel}:${label}`;
+const traces = new Map(); // "panel:label" -> Promise<{loops, area} | null>
+
+function traceOf(panel, label) {
+  const at = key(panel, label);
+  if (!traces.has(at)) {
+    traces.set(at, loadImage(`/api/zone/${panel}/${label}.png`).then((image) => image && traceMask(image)));
+  }
+  return traces.get(at);
+}
+
+function traceMask(image) {
+  const width = image.naturalWidth;
+  const height = image.naturalHeight;
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const paint = canvas.getContext("2d", { willReadFrequently: true });
+  paint.drawImage(image, 0, 0);
+  const alpha = paint.getImageData(0, 0, width, height).data;
+  const inside = (x, y) => x >= 0 && y >= 0 && x < width && y < height && alpha[(y * width + x) * 4 + 3] > 0;
+
+  // Every edge between an inside pixel and an outside one, directed clockwise
+  // around the inside, keyed by the vertex it starts from.
+  const stride = width + 1;
+  const edges = new Map();
+  const edge = (x0, y0, x1, y1) => {
+    const from = y0 * stride + x0;
+    const to = y1 * stride + x1;
+    const list = edges.get(from);
+    if (list) list.push(to);
+    else edges.set(from, [to]);
+  };
+  let area = 0;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (!inside(x, y)) continue;
+      area++;
+      if (!inside(x, y - 1)) edge(x, y, x + 1, y);
+      if (!inside(x + 1, y)) edge(x + 1, y, x + 1, y + 1);
+      if (!inside(x, y + 1)) edge(x + 1, y + 1, x, y + 1);
+      if (!inside(x - 1, y)) edge(x, y + 1, x, y);
+    }
+  }
+
+  // Chained into closed loops, keeping only the corners.
+  const loops = [];
+  for (const start of [...edges.keys()]) {
+    while (edges.has(start)) {
+      const vertices = [];
+      let at = start;
+      do {
+        const list = edges.get(at);
+        const next = list.pop();
+        if (!list.length) edges.delete(at);
+        vertices.push(at);
+        at = next;
+      } while (at !== start && edges.has(at));
+      loops.push(corners(vertices, stride));
+    }
+  }
+  return { loops, area };
+}
+
+function corners(vertices, stride) {
+  const points = vertices.map((vertex) => [vertex % stride, Math.floor(vertex / stride)]);
+  return points.filter((point, index) => {
+    const before = points[(index + points.length - 1) % points.length];
+    const after = points[(index + 1) % points.length];
+    const straight =
+      (before[0] === point[0] && point[0] === after[0]) || (before[1] === point[1] && point[1] === after[1]);
+    return !straight;
+  });
+}
+
+function traceZone(zone) {
+  const [left, top] = zone.bounds;
+  for (const loop of zone.trace.loops) {
+    tracePath(
+      loop.map(([x, y]) => [left + x, top + y]),
+      true,
+    );
+  }
+}
+
+// ---- marching selection -----------------------------------------------------
+
+const calm = window.matchMedia("(prefers-reduced-motion: reduce)");
+let marching = 0;
+let frame = null;
+let lastMarch = 0;
+
+function selectionShown() {
+  const editing = activeLayer();
+  if (editing === "zones") return picked.size > 0;
+  if (editing === "panels" || editing === "bubbles") return shapeSelected !== null;
+  return picking() && Boolean(selected && selected.trace);
+}
+
+function march(time) {
+  if (calm.matches || !selectionShown()) {
+    frame = null;
+    return;
+  }
+  frame = requestAnimationFrame(march);
+  if (time - lastMarch > 80) {
+    lastMarch = time;
+    marching = (marching + 1) % 8;
+    render();
+  }
+}
+
+// The artist started the selection, so it may move (§15); it stops the moment
+// there is none, and never moves at all under reduced motion.
+function startMarching() {
+  if (!frame && !calm.matches && selectionShown()) frame = requestAnimationFrame(march);
+}
+
+// ---- steps 2 and 3: correcting the geometry ---------------------------------
 //
 // The detector proposes panels and balloons; this is how the artist disagrees
-// with it. Three gestures and no modes: drag a corner, click an edge to add
-// one, click empty page to start drawing a new shape. Right-click is the
-// destructive half, and it always names what it is about to destroy.
+// with it. Drag a corner, click an edge to add one, click inside a shape to
+// select it, click outside every shape to draw a new one — Shift-click draws
+// even inside one. Right-click is the destructive half, and it always names
+// what it is about to destroy.
 //
-// Every change is sent as the whole polygon. The alternative — "corner 3 of
-// panel 2 moved to here" — is a second description of the shape, and the two
-// go out of step the first time a corner is inserted mid-drag.
+// Every change is sent as the whole polygon. "Corner 3 of panel 2 moved here"
+// would be a second description of the shape, and the two go out of step the
+// first time a corner is inserted mid-drag.
 
-// How near a corner or an edge has to be, in screen pixels: the target stays
-// the same size to the hand whatever the page is scaled to.
+// How near a corner or an edge must be, in screen pixels: the target stays the
+// same size to the hand whatever the page is scaled to.
 const HANDLE = 8;
 const EDGE = 6;
 
-function editable(which) {
-  return Boolean(state && state.editable && state.editable[which]);
-}
+let drag = null; // {index, corner, dirty}
+let draft = null; // {points: [[x, y], …]}
+let cursor = null; // the pointer, for the rubber band
+let shapeSelected = null; // index into shapes()
 
-// A layer switched off under Show is off everywhere: outline, corner handles,
-// and the corners a click can grab. Half of it — the edges gone and the
-// handles left floating — is what made the toggle look broken. Zones are not
-// drawn as polygons, so they have nothing to hide here.
-function visible(which) {
-  if (which !== "panels" && which !== "bubbles") return true;
-  return $("v-" + which).checked;
-}
-
-// Which layer the pointer is aimed at, or null when nothing is correctable.
-//
-// Follows the step the artist is on — panels until balloons exist, balloons
-// after — because that is the order the buttons run in. The radio in the
-// sidebar is there for the one case that order does not cover: noticing a bad
-// panel *after* detecting the balloons, which otherwise costs a re-detect and
-// every correction made so far.
-function activeLayer() {
-  if (layer && editable(layer)) return layer;
-  // Zones last in the list and first in time: once they exist, the panels and
-  // balloons they were cut from are settled, so nothing else is editable.
-  if (editable("zones")) return "zones";
-  if (editable("bubbles")) return "bubbles";
-  if (editable("panels")) return "panels";
-  return null;
-}
-
-const noun = () => (activeLayer() === "panels" ? "panel" : "bubble");
-
-// The polygons of the layer being corrected, live — mutating one mutates
-// `state`, which is what lets a drag repaint at pointer speed without asking
-// the server. The zone stage corrects pixels, not corners, and owns none.
 function shapes() {
   const which = activeLayer();
-  if (which === "panels") return state.panels.map((p) => p.polygon);
+  if (which === "panels") return state.panels.map((panel) => panel.polygon);
   if (which === "bubbles") return state.protected;
   return [];
 }
 
 function shapePath(index) {
-  return activeLayer() === "panels"
-    ? "/api/panel/" + state.panels[index].order
-    : "/api/bubble/" + index;
+  return activeLayer() === "panels" ? `/api/panel/${state.panels[index].order}` : `/api/bubble/${index}`;
 }
 
 function local(event) {
@@ -843,7 +2088,6 @@ function hitCorner(sx, sy) {
   return null;
 }
 
-// The edge under the pointer, and where along it the new corner goes.
 function hitEdge(sx, sy) {
   const polygons = shapes();
   for (let index = polygons.length - 1; index >= 0; index--) {
@@ -855,8 +2099,7 @@ function hitEdge(sx, sy) {
       const dy = by - ay;
       const length = dx * dx + dy * dy;
       if (!length) continue;
-      // Clamped to the edge's ends, so the corners keep their own hit test
-      // rather than losing it to the edge that ends there.
+      // Clamped to the edge's ends, so the corners keep their own hit test.
       const along = Math.max(0, Math.min(1, ((sx - ax) * dx + (sy - ay) * dy) / length));
       const px = ax + along * dx;
       const py = ay + along * dy;
@@ -885,27 +2128,43 @@ function shapeAt(sx, sy) {
   return null;
 }
 
-async function adopt(next) {
-  state = next;
-  await reloadLayers();
-  apply();
+function selectShape(index) {
+  if (shapeSelected === index) return;
+  shapeSelected = index;
+  renderInspector();
+  render();
+}
+
+function forgetCanvasSelection() {
+  draft = null;
+  drag = null;
+  cursor = null;
+  hover = null;
+  shapeSelected = null;
+  picked.clear();
+  sweep = null;
+  cutting = null;
+  selected = null;
+  choosing = false;
+  closeMenu();
 }
 
 async function saveShape(index) {
+  const which = activeLayer();
   const polygon = shapes()[index];
-  const label = noun();
   try {
     await adopt(
       await call(shapePath(index), {
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ polygon }),
-      })
+      }),
     );
-    say(label + " corrected.");
+    edits[which] = bump(edits[which]);
+    say(which === "panels" ? t("status.panel_saved") : t("status.bubble_saved"));
   } catch (error) {
-    // The local copy is now a shape the server refused, so re-read it rather
-    // than leave the screen describing something that does not exist.
+    // The local copy is now a shape the server refused: re-read it rather than
+    // leave the screen describing something that does not exist.
     await adopt(await call("/api/state"));
     say(error.message, true);
   }
@@ -913,21 +2172,20 @@ async function saveShape(index) {
 
 async function deleteCorner({ index, corner }) {
   // A triangle has no smaller shape to become. Taking a corner off it is the
-  // artist saying this detection is wrong, not that it needs one fewer side,
-  // so delete the whole thing rather than refuse the click.
-  if (shapes()[index].length <= 3) {
-    await deleteShape(index);
-    return;
-  }
+  // artist saying the detection is wrong, so the whole shape goes.
+  if (shapes()[index].length <= 3) return deleteShape(index);
   shapes()[index].splice(corner, 1);
   await saveShape(index);
 }
 
 async function deleteShape(index) {
-  const label = noun();
+  const which = activeLayer();
   try {
     await adopt(await call(shapePath(index), { method: "DELETE" }));
-    say(label + " deleted.");
+    shapeSelected = null;
+    edits[which] = bump(edits[which]);
+    renderInspector();
+    say(which === "panels" ? t("status.panel_deleted") : t("status.bubble_deleted"));
   } catch (error) {
     say(error.message, true);
   }
@@ -936,14 +2194,14 @@ async function deleteShape(index) {
 function startDraft(point) {
   draft = { points: [point] };
   render();
-  say("Drawing a " + noun() + " — click the first corner to close it, right-click to stop.");
+  say(activeLayer() === "panels" ? t("status.drawing_panel") : t("status.drawing_bubble"));
 }
 
 function discardDraft() {
   draft = null;
   cursor = null;
   render();
-  say("Stopped drawing.");
+  say(t("status.draw_stopped"));
 }
 
 async function closeDraft() {
@@ -957,21 +2215,239 @@ async function closeDraft() {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ polygon }),
-      })
+      }),
     );
-    say("New " + (which === "panels" ? "panel" : "bubble") + " added.");
+    edits[which] = bump(edits[which]);
+    say(which === "panels" ? t("status.panel_added") : t("status.bubble_added"));
   } catch (error) {
     render();
     say(error.message, true);
   }
 }
 
+// ---- step 4: zones the artist corrects --------------------------------------
+//
+// Trapped-ball leaks a garment into the background wherever the ink is open,
+// and returns forty scraps wherever the drawing is busy. Merging and cutting
+// are the corrections, and they happen between the cut and the colour because
+// they are permanent: there is no unmerge.
+//
+// One rule runs the selection: a zone is selected while the button is pressed
+// over it. A press toggles one; holding and moving adds everything the pointer
+// passes over; two zones apart take two presses and nothing in between.
+
+const picked = new Map(); // "panel:label" -> {panel, label, bounds, trace}
+let sweep = null; // {points, sent} while the button is down
+let cutting = null; // {panel, label, stroke} after "Cut"
+
+function rememberZone(zone) {
+  const at = key(zone.panel, zone.label);
+  if (picked.has(at)) return;
+  const entry = { ...zone, trace: null };
+  picked.set(at, entry);
+  traceOf(zone.panel, zone.label).then((trace) => {
+    entry.trace = trace;
+    if (picked.get(at) === entry) {
+      renderInspector();
+      render();
+    }
+  });
+}
+
+function clearPicked() {
+  picked.clear();
+  renderInspector();
+  render();
+}
+
+async function pressZone(x, y) {
+  try {
+    const zone = await call(`/api/zone?x=${Math.round(x)}&y=${Math.round(y)}`);
+    const at = key(zone.panel, zone.label);
+    if (picked.has(at)) picked.delete(at);
+    else rememberZone(zone);
+    say(t("status.zone_selected", { count: picked.size }));
+  } catch {
+    say(t("status.no_zone"));
+  }
+  renderInspector();
+  render();
+}
+
+// The sweep goes to the server as a path rather than as a hit test per mouse
+// move: one request knows every zone the stroke crossed, including the ones
+// that fell between two samples.
+async function sweptZones(points) {
+  try {
+    const found = await call("/api/zones/along", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ points }),
+    });
+    for (const zone of found.zones) rememberZone(zone);
+    if (found.zones.length) say(t("status.zone_selected", { count: picked.size }));
+  } catch (error) {
+    say(error.message, true);
+  }
+  renderInspector();
+  render();
+}
+
+function drawPicked() {
+  const zones = [...picked.values()].filter((zone) => zone.trace);
+  if (zones.length) {
+    ctx.beginPath();
+    for (const zone of zones) traceZone(zone);
+    // Several zones also take a white wash, so a sweep reads as one body.
+    if (picked.size > 1) {
+      ctx.fillStyle = tokens.wash;
+      ctx.fill("evenodd");
+    }
+    strokeTwice(DASH.selected, -marching);
+  }
+  if (cutting && cutting.stroke.length) {
+    ctx.beginPath();
+    tracePath(cutting.stroke, false);
+    strokeTwice(DASH.cut, 0, 4, 2);
+  }
+}
+
+async function mergePicked() {
+  const zones = [...picked.values()];
+  const panel = zones[0].panel;
+  if (zones.some((zone) => zone.panel !== panel)) {
+    say(t("error.merge_panels"), true);
+    return;
+  }
+  try {
+    const next = await call("/api/zones/merge", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ panel, labels: zones.map((zone) => zone.label) }),
+    });
+    picked.clear();
+    traces.clear();
+    if (edits.zones) edits.zones.merges++;
+    await adopt(next);
+    say(t("status.merged", { count: next.result.merged }));
+  } catch (error) {
+    say(error.message, true);
+  }
+}
+
+function startCut() {
+  const [zone] = [...picked.values()];
+  cutting = { panel: zone.panel, label: zone.label, stroke: [] };
+  renderInspector();
+  say(t("status.cut_draw"));
+}
+
+function stopCut() {
+  cutting = null;
+  renderInspector();
+  render();
+  say(t("status.cut_stopped"));
+}
+
+async function applyCut() {
+  const { panel, label, stroke } = cutting;
+  cutting = null;
+  try {
+    const next = await call("/api/zones/cut", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ panel, label, stroke }),
+    });
+    picked.clear();
+    traces.clear();
+    if (edits.zones) edits.zones.cuts++;
+    await adopt(next);
+    say(t("status.cut", { count: next.result.pieces }));
+  } catch (error) {
+    // The zone is untouched, so the selection still means something.
+    renderInspector();
+    render();
+    say(error.message, true);
+  }
+}
+
+// ---- step 6: one segment at a time ------------------------------------------
+
+let selected = null; // the /api/segment payload, plus its traced outline
+
+async function pickSegment(x, y) {
+  choosing = false;
+  try {
+    selected = await call(`/api/segment?x=${Math.round(x)}&y=${Math.round(y)}`);
+    attachTrace(selected);
+  } catch {
+    selected = null;
+    say(t("status.no_zone"));
+  }
+  renderInspector();
+  render();
+}
+
+function attachTrace(segment) {
+  traceOf(segment.panel, segment.label).then((trace) => {
+    segment.trace = trace;
+    if (selected === segment) render();
+  });
+}
+
+function drawSegment() {
+  if (!selected || !selected.trace) return;
+  ctx.beginPath();
+  traceZone(selected);
+  strokeTwice(DASH.selected, -marching);
+}
+
+// A snap changes one row, but the flats raster and the counts derive from it,
+// so both are re-read rather than patched here.
+async function afterSegmentChange(message) {
+  state = await call("/api/state");
+  const [flats, left] = await Promise.all([loadImage("/api/flats.png"), loadImage("/api/unsnapped.png")]);
+  layers.flats = flats;
+  layers.left = luminanceOnly(left);
+  renderAll();
+  say(message);
+}
+
+async function snapSelected(entryId) {
+  if (!selected) return;
+  const { panel, label, trace } = selected;
+  const query = entryId === undefined ? "" : `?entry_id=${entryId}`;
+  try {
+    selected = { ...(await call(`/api/segment/${panel}/${label}/snap${query}`, { method: "POST" })), trace };
+    choosing = false;
+    await afterSegmentChange(t("status.snapped", { zone: String(label) }));
+  } catch (error) {
+    say(error.message, true);
+  }
+}
+
+async function unsnapSelected() {
+  if (!selected) return;
+  const { panel, label, trace } = selected;
+  try {
+    selected = { ...(await call(`/api/segment/${panel}/${label}/unsnap`, { method: "POST" })), trace };
+    await afterSegmentChange(t("status.unsnapped", { zone: String(label) }));
+  } catch (error) {
+    say(error.message, true);
+  }
+}
+
+// ---- pointer ----------------------------------------------------------------
+
 stage.addEventListener("pointerdown", (event) => {
-  if (event.button !== 0 || !activeLayer()) return;
+  if (event.button !== 0 || !state || !state.page) return;
+  closeMenu();
+  const which = activeLayer();
+  if (!which) return;
   const [sx, sy] = local(event);
   const point = onPage(view.toImage(sx, sy));
 
-  if (activeLayer() === "zones") {
+  if (which === "zones") {
     stage.setPointerCapture(event.pointerId);
     if (cutting) {
       cutting.stroke = [point];
@@ -983,9 +2459,6 @@ stage.addEventListener("pointerdown", (event) => {
     pressZone(point[0], point[1]);
     return;
   }
-
-  // Nothing to grab on a layer that is switched off.
-  if (!visible(activeLayer())) return;
 
   if (draft) {
     const [fx, fy] = view.toScreen(draft.points[0][0], draft.points[0][1]);
@@ -1000,6 +2473,7 @@ stage.addEventListener("pointerdown", (event) => {
 
   const corner = hitCorner(sx, sy);
   if (corner) {
+    selectShape(corner.index);
     drag = { index: corner.index, corner: corner.corner, dirty: false };
     stage.setPointerCapture(event.pointerId);
     return;
@@ -1009,6 +2483,7 @@ stage.addEventListener("pointerdown", (event) => {
   // "add a corner" and "put it where I want it" are one gesture.
   const edge = hitEdge(sx, sy);
   if (edge) {
+    selectShape(edge.index);
     shapes()[edge.index].splice(edge.corner, 0, edge.point);
     drag = { index: edge.index, corner: edge.corner, dirty: true };
     stage.setPointerCapture(event.pointerId);
@@ -1016,20 +2491,27 @@ stage.addEventListener("pointerdown", (event) => {
     return;
   }
 
+  const inside = shapeAt(sx, sy);
+  if (inside !== null && !event.shiftKey) {
+    selectShape(inside);
+    return;
+  }
+  selectShape(null);
   startDraft(point);
 });
 
 stage.addEventListener("pointermove", (event) => {
-  if (!activeLayer()) return;
+  const which = activeLayer();
+  if (!which) return;
   const [sx, sy] = local(event);
 
-  if (activeLayer() === "zones") {
+  if (which === "zones") {
     if (cutting && cutting.stroke.length) {
       cutting.stroke.push(onPage(view.toImage(sx, sy)));
       render();
     } else if (sweep) {
       sweep.points.push(onPage(view.toImage(sx, sy)));
-      // Sent in flight rather than only on release, so the highlight keeps up
+      // Sent in flight rather than only on release, so the outline keeps up
       // with the hand. Each request carries the path since the last one.
       if (sweep.points.length - sweep.sent > 12) {
         const path = sweep.points.slice(Math.max(0, sweep.sent - 1));
@@ -1037,11 +2519,6 @@ stage.addEventListener("pointermove", (event) => {
         sweptZones(path);
       }
     }
-    return;
-  }
-
-  if (!visible(activeLayer())) {
-    stage.classList.remove("on-corner", "on-edge");
     return;
   }
 
@@ -1056,14 +2533,18 @@ stage.addEventListener("pointermove", (event) => {
     render();
     return;
   }
-  const corner = Boolean(hitCorner(sx, sy));
-  stage.classList.toggle("on-corner", corner);
+  const corner = hitCorner(sx, sy);
+  const moved = (corner && (!hover || hover.index !== corner.index || hover.corner !== corner.corner)) || (!corner && hover);
+  hover = corner;
+  stage.classList.toggle("on-corner", Boolean(corner));
   stage.classList.toggle("on-edge", !corner && Boolean(hitEdge(sx, sy)));
+  if (moved) render();
 });
 
 stage.addEventListener("pointerup", (event) => {
-  if (activeLayer() === "zones") {
-    if (stage.hasPointerCapture(event.pointerId)) stage.releasePointerCapture(event.pointerId);
+  const which = activeLayer();
+  if (stage.hasPointerCapture(event.pointerId)) stage.releasePointerCapture(event.pointerId);
+  if (which === "zones") {
     if (cutting && cutting.stroke.length) {
       applyCut();
       return;
@@ -1076,31 +2557,50 @@ stage.addEventListener("pointerup", (event) => {
     return;
   }
   if (!drag) return;
-  const dirty = drag.dirty;
-  const index = drag.index;
+  const { dirty, index } = drag;
   drag = null;
-  if (stage.hasPointerCapture(event.pointerId)) stage.releasePointerCapture(event.pointerId);
   if (dirty) saveShape(index);
 });
 
-// ---- the destructive half -------------------------------------------------
+stage.addEventListener("click", (event) => {
+  if (panned) {
+    panned = false;
+    return;
+  }
+  if (!picking()) return;
+  const [x, y] = view.toImage(...local(event));
+  if (x < 0 || y < 0 || x >= state.page.width || y >= state.page.height) return;
+  pickSegment(x, y);
+});
+
+// ---- the right-click menu ---------------------------------------------------
 
 function openMenu(event, items) {
   const menu = $("menu");
-  menu.innerHTML = "";
-  for (const item of items) {
-    const button = document.createElement("button");
-    button.textContent = item.label;
-    button.addEventListener("click", () => {
-      closeMenu();
-      item.action();
-    });
-    menu.append(button);
-  }
-  const rect = stage.getBoundingClientRect();
-  menu.style.left = event.clientX - rect.left + "px";
-  menu.style.top = event.clientY - rect.top + "px";
+  menu.replaceChildren(
+    ...items.map((item) =>
+      h(
+        "button",
+        {
+          type: "button",
+          role: "menuitem",
+          onclick: () => {
+            closeMenu();
+            item.action();
+          },
+        },
+        item.label,
+      ),
+    ),
+  );
+  const [x, y] = local(event);
   menu.hidden = false;
+  // Kept inside the canvas: a menu clipped by the inspector hides its items.
+  const maxX = stage.clientWidth - menu.offsetWidth - 4;
+  const maxY = stage.clientHeight - menu.offsetHeight - 4;
+  menu.style.left = `${Math.max(4, Math.min(x, maxX))}px`;
+  menu.style.top = `${Math.max(4, Math.min(y, maxY))}px`;
+  menu.querySelector("button")?.focus({ preventScroll: true });
 }
 
 function closeMenu() {
@@ -1108,47 +2608,42 @@ function closeMenu() {
 }
 
 stage.addEventListener("contextmenu", (event) => {
-  if (!activeLayer()) return;
+  const which = activeLayer();
+  if (!which) return;
   event.preventDefault();
   const [sx, sy] = local(event);
 
-  if (activeLayer() === "zones") {
-    if (cutting) {
-      openMenu(event, [{ label: "Stop cutting", action: stopCut }]);
-      return;
-    }
+  if (which === "zones") {
+    if (cutting) return openMenu(event, [{ label: t("menu.stop_cutting"), action: stopCut }]);
     const items = [];
-    if (picked.size >= 2) {
-      items.push({ label: `Merge these ${picked.size} zones`, action: mergePicked });
-    }
+    if (picked.size >= 2) items.push({ label: t("menu.merge", { count: picked.size }), action: mergePicked });
     // Cutting is one zone's business: with several selected there is no
     // saying which one the stroke belongs to.
-    if (picked.size === 1) items.push({ label: "Cut this zone", action: startCut });
-    if (picked.size) items.push({ label: "Clear selection", action: clearPicked });
+    if (picked.size === 1) items.push({ label: t("menu.cut"), action: startCut });
+    if (picked.size) items.push({ label: t("menu.clear"), action: clearPicked });
     if (items.length) openMenu(event, items);
     return;
   }
 
-  if (!visible(activeLayer())) return;
-
+  const panels = which === "panels";
   if (draft) {
-    openMenu(event, [{ label: "Stop drawing this " + noun(), action: discardDraft }]);
-    return;
+    return openMenu(event, [
+      { label: panels ? t("menu.stop_panel") : t("menu.stop_bubble"), action: discardDraft },
+    ]);
   }
   const corner = hitCorner(sx, sy);
   if (corner) {
-    // On a triangle the corner *is* the shape — say so, so the click that
-    // removes the whole detection never comes as a surprise.
+    // On a triangle the corner is the shape — say so, so the click that removes
+    // the whole detection never comes as a surprise.
     const last = shapes()[corner.index].length <= 3;
-    const label = last ? "Delete this " + noun() : "Delete this corner";
-    openMenu(event, [{ label, action: () => deleteCorner(corner) }]);
-    return;
+    const label = !last ? t("menu.delete_corner") : panels ? t("menu.delete_panel") : t("menu.delete_bubble");
+    return openMenu(event, [{ label, action: () => deleteCorner(corner) }]);
   }
   const index = shapeAt(sx, sy);
   if (index !== null) {
-    const label = noun();
+    selectShape(index);
     openMenu(event, [
-      { label: "Delete this " + label, action: () => deleteShape(index) },
+      { label: panels ? t("menu.delete_panel") : t("menu.delete_bubble"), action: () => deleteShape(index) },
     ]);
   }
 });
@@ -1157,358 +2652,63 @@ document.addEventListener("pointerdown", (event) => {
   if (!$("menu").hidden && !$("menu").contains(event.target)) closeMenu();
 });
 
-for (const which of ["panels", "bubbles", "zones"]) {
-  $("layer-" + which).addEventListener("change", () => {
-    layer = which;
-    draft = null;
-    drag = null;
-    apply();
-    say("Correcting " + which + ".");
-  });
-}
-
-// ---- step 6: one segment at a time ----------------------------------------
-
-function showInspector() {
-  const panel = $("inspector");
-  if (!selected || !state.done.flats) {
-    panel.hidden = true;
-    return;
-  }
-  panel.hidden = false;
-
-  const entries = paletteById();
-  const current = entries.get(selected.palette_entry_id);
-  const suggestion = selected.suggestion;
-
-  $("ins-title").textContent = `Panel ${selected.panel + 1} · zone ${selected.label}`;
-  $("ins-area").textContent =
-    `${selected.area.toLocaleString()} px · ` +
-    (selected.snapped ? "snapped by you" : "showing what the model proposed");
-
-  $("ins-current").style.background = current ? rgb(current.rgb) : "transparent";
-  $("ins-current-label").textContent = current
-    ? `${current.label}${current.source === "proposed" ? " (proposed)" : ""}`
-    : "no colour";
-
-  // The suggestion is measured against whatever the segment holds *now*, so
-  // after a snap it is that same colour at ΔE 0. Saying so is more use than
-  // offering the artist a zero.
-  const taken = suggestion && suggestion.palette_entry_id === selected.palette_entry_id;
-  if (suggestion) {
-    $("ins-suggestion-row").hidden = false;
-    $("ins-suggestion").style.background = rgb(suggestion.rgb);
-    $("ins-suggestion-label").textContent = taken
-      ? "the nearest reference colour, and the one it holds"
-      : `ΔE ${suggestion.delta} — ` +
-        (suggestion.within_threshold
-          ? "close enough that snap all would take it"
-          : "far from anything on the sheet");
-    $("ins-suggestion-row").classList.toggle(
-      "far",
-      !taken && !suggestion.within_threshold,
-    );
-  } else {
-    $("ins-suggestion-row").hidden = true;
-  }
-
-  $("ins-snap").disabled = !suggestion || taken;
-  $("ins-snap").textContent = suggestion
-    ? "Snap to suggestion"
-    : "Nothing to snap to";
-  $("ins-unsnap").disabled = !selected.snapped;
-
-  const references = chosen();
-  $("ins-pick-note").hidden = !references.length;
-  $("ins-palette").innerHTML = references
-    .map(
-      (e) => `<i data-entry="${e.id}" style="background: ${rgb(e.rgb)}" title="${e.label}"
-        class="${e.id === selected.palette_entry_id ? "on" : ""}"></i>`
-    )
-    .join("");
-}
-
-async function pickSegment(x, y) {
-  try {
-    selected = await call(`/api/segment?x=${Math.round(x)}&y=${Math.round(y)}`);
-    say(`Panel ${selected.panel + 1}, zone ${selected.label} — ${selected.area} px.`);
-  } catch {
-    selected = null;
-    say("No zone there — that pixel is line, gutter, or a protected balloon.");
-  }
-  showInspector();
-  render();
-}
-
-// A snap changes one row, but the flats raster and the counts are derived
-// from it, so both are re-read rather than patched locally.
-async function afterSegmentChange(message) {
-  state = await call("/api/state");
-  layers.flats = await loadImage("/api/flats.png");
-  layers.left = await loadImage("/api/unsnapped.png");
-  apply();
-  say(message);
-}
-
-async function snapSelected(entryId) {
-  if (!selected) return;
-  const { panel, label } = selected;
-  const query = entryId === undefined ? "" : `?entry_id=${entryId}`;
-  try {
-    selected = await call(`/api/segment/${panel}/${label}/snap${query}`, {
-      method: "POST",
-    });
-    await afterSegmentChange(`Zone ${label} snapped.`);
-  } catch (error) {
-    say(error.message, true);
-  }
-}
-
-async function unsnapSelected() {
-  if (!selected) return;
-  const { panel, label } = selected;
-  try {
-    selected = await call(`/api/segment/${panel}/${label}/unsnap`, { method: "POST" });
-    await afterSegmentChange(`Zone ${label} back to what the model proposed.`);
-  } catch (error) {
-    say(error.message, true);
-  }
-}
-
-stage.addEventListener("click", (event) => {
-  if (!state || !state.done.flats) return;
-  const rect = stage.getBoundingClientRect();
-  const [x, y] = view.toImage(event.clientX - rect.left, event.clientY - rect.top);
-  if (x < 0 || y < 0 || x >= state.page.width || y >= state.page.height) return;
-  pickSegment(x, y);
-});
-
-$("ins-close").addEventListener("click", () => {
-  selected = null;
-  showInspector();
-  render();
-});
-$("ins-snap").addEventListener("click", () => snapSelected());
-$("ins-unsnap").addEventListener("click", unsnapSelected);
-$("ins-palette").addEventListener("click", (event) => {
-  const entry = event.target.dataset.entry;
-  if (entry) snapSelected(entry);
-});
-
-document.addEventListener("keydown", (event) => {
-  if (event.key !== "Escape") return;
-  if (!$("menu").hidden) return closeMenu();
-  if (cutting) return stopCut();
-  if (picked.size) return clearPicked();
-  if (draft) return discardDraft();
-  if (selected) {
-    selected = null;
-    showInspector();
-    render();
-  }
-});
-
-$("snap-any").addEventListener("change", () => {
-  $("snap-threshold").disabled = $("snap-any").checked;
-});
-
-$("btn-snap-all").addEventListener("click", () => {
-  // `inf` is the artist overriding the guard deliberately — the same
-  // override `luikki flatten --threshold inf` takes.
-  const threshold = $("snap-any").checked ? "inf" : $("snap-threshold").value;
-  step("Snapping every segment", `/api/snap-all?threshold=${threshold}`, {
-    method: "POST",
-  });
-});
-
-function upload(input, path, label, extra) {
-  input.addEventListener("change", async () => {
-    if (!input.files.length) return;
-    const form = new FormData();
-    form.append("file", input.files[0]);
-    if (extra) for (const [k, v] of Object.entries(extra())) form.append(k, v);
-    await step(label, path, { method: "POST", body: form });
-    input.value = "";
-  });
-}
-
-upload($("page-file"), "/api/page", "Loading page");
-upload($("ref-file"), "/api/reference", "Reading colours", () => ({
-  kind: $("ref-kind").value,
-}));
-upload($("pal-file"), "/api/palette/image", "Taking the palette");
-
-// Deleting a reference deletes the image, not the colours taken from it: the
-// flats are stale all the same, because the proposal came from an image that
-// is no longer there.
-$("refs").addEventListener("click", (event) => {
-  const id = event.target.dataset.id;
-  if (!id || event.target.tagName !== "BUTTON") return;
-  step("Removing reference", `/api/reference/${id}`, { method: "DELETE" });
-});
-
-$("palettes").addEventListener("click", (event) => {
-  const id = event.target.dataset.id;
-  if (!id || event.target.tagName !== "BUTTON") return;
-  step("Removing palette", `/api/reference/${id}`, { method: "DELETE" });
-});
-
-const buttons = {
-  "btn-panels": ["/api/panels", "Detecting panels"],
-  "btn-bubbles": ["/api/bubbles", "Detecting bubbles"],
-  "btn-zones": ["/api/zones", "Segmenting zones"],
-  "btn-flats": ["/api/flats", "Generating flats"],
-};
-
-// Re-pressing a step replaces what it produced last time (rule 4) — and now
-// that panels and balloons are correctable, the artist's own work is part of
-// what gets replaced. These are the presses that destroy something, so these
-// are the presses that ask first. A step that has produced nothing yet asks
-// nothing: the guard is about losing work, not about clicking.
-const warnings = {
-  "btn-panels": () =>
-    state.done.panels &&
-    "Detect panels again?\n\nEvery corner you have moved and every panel you " +
-      "have drawn is replaced by what the detector finds.",
-  "btn-bubbles": () =>
-    state.done.bubbles &&
-    "Detect bubbles again?\n\nEvery balloon you have traced or corrected is " +
-      "replaced by what the detector finds.",
-  "btn-zones": () =>
-    state.done.zones &&
-    "Segment zones again?\n\nThe page is cut from scratch: every merge, every " +
-      "cut, the flats, and everything you have snapped on this page.",
-  "btn-flats": () =>
-    state.done.flats &&
-    "Generate flats again?\n\nEvery colour you have snapped on this page goes " +
-      "back to what the model proposes.",
-};
-
-for (const [id, [path, label]] of Object.entries(buttons)) {
-  $(id).addEventListener("click", () => {
-    const warning = warnings[id]();
-    if (warning && !window.confirm(warning)) return;
-    // Pressing a step is what moves the artist onto it, so it is also what
-    // aims the pointer at that step's geometry. The radio exists to go back.
-    if (id === "btn-panels") layer = "panels";
-    if (id === "btn-bubbles") layer = "bubbles";
-    // The gap allowance rides along with the press that uses it: turning the
-    // dial changes nothing on its own, because the zones on screen were cut
-    // with the old one and pretending otherwise would be a lie about the page.
-    const query =
-      id === "btn-zones" ? `?gap=${Number($("leak-gap").value) / 100}` : "";
-    step(label, path + query, { method: "POST" });
-  });
-}
-
-// The one warning that is about the file rather than about losing work: past
-// `warn_at` layers the artist is exporting the model's guesses, one private
-// entry per segment, and the fix is the button above this one. It names it.
-$("btn-export").addEventListener("click", async () => {
-  const granularity = $("export-layers").value;
-  const layers = state?.export?.layers?.[granularity] ?? 0;
-  if (layers > (state?.export?.warn_at ?? Infinity)) {
-    const ok = window.confirm(
-      `You are about to write ${layers} layers.
-
-` +
-        "Most of them are colours the model proposed, one per segment. Press " +
-        "Snap all first to bring them back to your palette."
-    );
-    if (!ok) return;
-  }
-  say("Writing PSD…");
-  document.body.classList.add("busy");
-  try {
-    const response = await fetch(`/api/export?granularity=${granularity}`, {
-      method: "POST",
-    });
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({}));
-      throw new Error(body.error || body.detail || response.statusText);
-    }
-    const blob = await response.blob();
-    const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob);
-    link.download = (state.page.name.replace(/\.[^.]+$/, "") || "page") + "_flats.psd";
-    link.click();
-    URL.revokeObjectURL(link.href);
-    say(
-      granularity === "colour"
-        ? `PSD exported — ${layers} layers, one per colour.`
-        : `PSD exported — ${layers} layers, one group per panel.`
-    );
-  } catch (error) {
-    say(error.message, true);
-  } finally {
-    document.body.classList.remove("busy");
-  }
-});
-
-$("btn-reset").addEventListener("click", () => step("Starting over", "/api/reset", { method: "POST" }));
-
-for (const box of document.querySelectorAll(".view input")) {
-  box.addEventListener("change", () => {
-    // A half-drawn polygon on a layer you just hid is a trap: the next click
-    // would land on a shape nobody can see.
-    if (!visible(activeLayer())) {
-      draft = null;
-      drag = null;
-      cursor = null;
-    }
-    if (state && state.page) applyEditMode();
-    render();
-  });
-}
-
-// ---- zoom and pan ---------------------------------------------------------
+// ---- zoom and pan -----------------------------------------------------------
 //
-// Two gestures and nothing else: the wheel zooms about the cursor, and the
-// middle button — or space with the left, for a pen that has no middle button
-// — drags the page. Both are registered in the capture phase so they can take
-// the pointer before the editing handlers below see it; without that, space
-// and drag would draw a panel instead of moving the page.
+// Two gestures: the wheel zooms about the cursor, and the middle button — or
+// space with the left, for a pen with no middle button — drags the page. Both
+// take the pointer in the capture phase, before the editing handlers above.
 
-stage.addEventListener("wheel", (event) => {
-  if (!state || !state.page) return;
-  event.preventDefault();
-  const [sx, sy] = local(event);
-  // Where the cursor is on the page *before* the zoom. Keeping this point
-  // still is what makes the gesture feel like moving a loupe over paper
-  // rather than reading a scrollbar.
-  const [ix, iy] = view.toImage(sx, sy);
-  // Some wheels report lines, not pixels; a line is about 16 px.
-  const delta = event.deltaY * (event.deltaMode === 1 ? 16 : 1);
-  zoom = Math.min(MAX_ZOOM, Math.max(1, zoom * Math.exp(-delta * 0.0015)));
-  const scale = fitScale() * zoom;
-  pan.x = sx - ix * scale - (stage.clientWidth - state.page.width * scale) / 2;
-  pan.y = sy - iy * scale - (stage.clientHeight - state.page.height * scale) / 2;
-  render();
-}, { passive: false });
+stage.addEventListener(
+  "wheel",
+  (event) => {
+    if (!state || !state.page) return;
+    event.preventDefault();
+    const [sx, sy] = local(event);
+    // The page point under the cursor stays under it: a loupe over paper.
+    const [ix, iy] = view.toImage(sx, sy);
+    const delta = event.deltaY * (event.deltaMode === 1 ? 16 : 1);
+    zoom = Math.min(MAX_ZOOM, Math.max(1, zoom * Math.exp(-delta * 0.0015)));
+    const scale = fitScale() * zoom;
+    pan.x = sx - ix * scale - (stage.clientWidth - state.page.width * scale) / 2;
+    pan.y = sy - iy * scale - (stage.clientHeight - state.page.height * scale) / 2;
+    render();
+  },
+  { passive: false },
+);
 
-stage.addEventListener("pointerdown", (event) => {
-  if (!state || !state.page) return;
-  if (event.button !== 1 && !(spaceHeld && event.button === 0)) return;
-  event.preventDefault();
-  event.stopPropagation();
-  panning = local(event);
-  stage.setPointerCapture(event.pointerId);
-  stage.classList.add("panning");
-}, true);
+stage.addEventListener(
+  "pointerdown",
+  (event) => {
+    panned = false;
+    if (!state || !state.page) return;
+    if (event.button !== 1 && !(spaceHeld && event.button === 0)) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    panning = local(event);
+    stage.setPointerCapture(event.pointerId);
+    stage.classList.add("panning");
+  },
+  true,
+);
 
-stage.addEventListener("pointermove", (event) => {
-  if (!panning) return;
-  event.stopPropagation();
-  const [sx, sy] = local(event);
-  pan.x += sx - panning[0];
-  pan.y += sy - panning[1];
-  panning = [sx, sy];
-  render();
-}, true);
+stage.addEventListener(
+  "pointermove",
+  (event) => {
+    if (!panning) return;
+    event.stopImmediatePropagation();
+    const [sx, sy] = local(event);
+    pan.x += sx - panning[0];
+    pan.y += sy - panning[1];
+    panning = [sx, sy];
+    panned = true;
+    render();
+  },
+  true,
+);
 
 const endPan = (event) => {
   if (!panning) return;
-  event.stopPropagation();
+  event.stopImmediatePropagation();
   panning = null;
   stage.classList.remove("panning");
 };
@@ -1519,14 +2719,34 @@ stage.addEventListener("auxclick", (event) => {
   if (event.button === 1) event.preventDefault();
 });
 
+// ---- keyboard ---------------------------------------------------------------
+
 document.addEventListener("keydown", (event) => {
-  if (event.target.matches("input, textarea, select")) return;
+  if (event.key === "Escape") {
+    if (!$("menu").hidden) return closeMenu();
+    if (asking) {
+      asking = null;
+      return renderRail();
+    }
+    if (cutting) return stopCut();
+    if (draft) return discardDraft();
+    if (picked.size) return clearPicked();
+    if (selected || shapeSelected !== null) {
+      selected = null;
+      shapeSelected = null;
+      choosing = false;
+      renderInspector();
+      render();
+    }
+    return;
+  }
+  // Space and 0 belong to a focused control when there is one.
+  if (event.target.matches("input, textarea, select, button")) return;
   if (event.code === "Space" && !event.repeat) {
     event.preventDefault();
     spaceHeld = true;
     stage.classList.add("grab");
   }
-  // Back to the whole page. The one key you need when you are lost.
   if (event.key === "0") fitPage();
 });
 
@@ -1540,14 +2760,80 @@ document.addEventListener("keyup", (event) => {
 // Alt-tabbing away with space down otherwise leaves the canvas stuck in pan.
 window.addEventListener("blur", releaseSpace);
 
-window.addEventListener("resize", resize);
+// ---- the header and footer toggles ------------------------------------------
+
+$("toggle-inspector").addEventListener("click", () => {
+  const hidden = $("shell").classList.toggle("no-inspector");
+  $("toggle-inspector").setAttribute("aria-pressed", String(!hidden));
+  remembered.set("inspector", hidden ? "hidden" : "shown");
+});
+
+$("v-lines").addEventListener("change", (event) => {
+  controls.lines = event.target.checked;
+  render();
+});
+
+// The escape hatch from the surround's faint hue (§10). Default off.
+$("v-neutral").addEventListener("change", (event) => {
+  controls.neutral = event.target.checked;
+  remembered.set("neutral", controls.neutral ? "on" : "off");
+  renderFooter();
+});
+
+$("v-left").addEventListener("change", (event) => {
+  controls.left = event.target.checked;
+  render();
+});
+
+function setupLanguages() {
+  const select = $("language");
+  select.hidden = LOCALES.length < 2;
+  if (select.hidden) return;
+  select.replaceChildren(
+    ...LOCALES.map((code) =>
+      h("option", { value: code, selected: code === words.locale }, new Intl.DisplayNames([code], { type: "language" }).of(code)),
+    ),
+  );
+  select.addEventListener("change", async () => {
+    remembered.set("lang", select.value);
+    await loadWords(select.value);
+    applyStaticStrings();
+    renderAll();
+  });
+}
+
+function restorePreferences() {
+  if (remembered.get("inspector") === "hidden") {
+    $("shell").classList.add("no-inspector");
+    $("toggle-inspector").setAttribute("aria-pressed", "false");
+  }
+  controls.neutral = remembered.get("neutral") === "on";
+  $("shell").classList.toggle("neutral", controls.neutral);
+}
+
+new ResizeObserver(resize).observe(stage);
 
 (async () => {
-  state = await call("/api/state");
-  $("snap-threshold").value = state.segments.threshold;
-  $("leak-gap").value = Math.round(state.leak_gap * 100);
+  await loadWords(chooseLocale());
+  applyStaticStrings();
+  setupLanguages();
+  restorePreferences();
+  try {
+    state = await call("/api/state");
+  } catch (error) {
+    say(error.message, true);
+    return;
+  }
+  controls.threshold = state.segments.threshold;
+  controls.gap = Math.round(state.leak_gap * 100);
+  controls.granularity = state.export.granularity || "colour";
+  edits = {
+    panels: state.done.panels ? null : 0,
+    bubbles: state.done.bubbles ? null : 0,
+    zones: state.done.zones ? null : { merges: 0, cuts: 0 },
+  };
+  current = furthest();
   await reloadLayers();
-  apply();
-  resize();
-  say("Drop in a page to start.");
+  renderAll();
+  say(state.page ? t("status.ready") : t("status.start"));
 })();

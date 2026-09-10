@@ -143,6 +143,13 @@ def create_app(
     def state():
         return session.state()
 
+    @app.get("/api/progress")
+    def progress():
+        """How far the step in flight has got. Never waits for it: the step
+        holds the session lock for its whole run, and this route answers
+        while it does."""
+        return session.progress.snapshot()
+
     @app.post("/api/reset")
     def reset():
         session.reset()
