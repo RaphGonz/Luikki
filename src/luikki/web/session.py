@@ -18,8 +18,11 @@ re-running a step replaces its output, so each step clears what depended on it.
 
 from __future__ import annotations
 
+import inspect
 import json
 import threading
+import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -58,6 +61,19 @@ from ..segmentation.preprocess import binarise_lines, load_line_art
 from ..segmentation.protected import rasterize_protected_for_panel
 from ..segmentation.segmenter import LineFillerSegmenter
 from ..segmentation.trappedball import expand_under_lines, inked_zones
+from .progress import Progress
+
+# Seconds per megapixel for each pass of Segment zones — what the progress bar
+# sizes its steps by. Measured on `test_pages/antoine_page.png` (1 MP, CPU):
+# LineFiller's ball passes are most of the wait, its merge most of the rest,
+# and the audit and the expansion barely register. `extract` is a guess until
+# the first run on this machine measures it: a few seconds per megapixel on a
+# GPU, tens on a CPU. Every run folds what it measured back in (`_learn`).
+_PASS_COST = {"extract": 20.0, "ball": 10.7, "merge": 11.0, "audit": 1.0, "expand": 0.2}
+
+
+def _megapixels(panel: "PanelState") -> float:
+    return panel.width * panel.height / 1e6
 
 
 @dataclass
@@ -158,6 +174,10 @@ class Session:
         # will double-click; two passes mutating the same panel list is the
         # one race worth spending a lock on.
         self.lock = threading.RLock()
+        # Read by `/api/progress` without that lock, while a step holds it.
+        self.progress = Progress()
+        # Machine-scoped rather than page-scoped: how long each pass takes here.
+        self._pass_cost = dict(_PASS_COST)
         # Loaded on the first press of Detect bubbles rather than here: it is
         # 161 MB off disk, and a page with no balloons never needs it.
         self.bubble_detector: BubbleDetector | None = None
@@ -450,83 +470,147 @@ class Session:
             if leak_gap is not None:
                 self.leak_gap = leak_gap
 
-            structural = self.structural_mask()
             segmenter = LineFillerSegmenter()
-            for panel in self.panels:
-                window = (
-                    slice(panel.y, panel.y + panel.height),
-                    slice(panel.x, panel.x + panel.width),
-                )
-                blocked = self._blocked_for(panel)
-                labels = segmenter.segment(structural[window], protected=blocked)
-                # The audit pass, §1.3. LineFiller merges hard enough to take a
-                # zone straight through a hole in a line; this puts back the
-                # splits whose border turns out to be a line rather than a
-                # tunnel. It only ever divides what came back, never re-draws
-                # it, so nothing downstream sees a zone move.
-                labels = split_open_borders(
-                    labels,
-                    structural[window],
-                    protected=blocked,
-                    params=LeakParams(max_open_share=self.leak_gap),
-                )
-                raw = self.line_mask[window]
-                # The crumbs, §1.4. Before expansion, or "80% of this border is
-                # one neighbour" would be measured on shapes already fused
-                # under the strokes. The panel's own area is the denominator:
-                # a crumb is a share of the panel, never a count of pixels.
-                labels = absorb_micro_zones(
-                    labels,
-                    structural[window],
-                    raw,
-                    panel.width * panel.height,
-                    protected=blocked,
-                )
-                # Which zones are the artist's own spot black, measured here
-                # and punched below. Measured on the labels the segmenter
-                # returned, because after expansion every sliver that grew
-                # under a stroke looks black too.
-                doomed = inked_zones(labels, raw)
-                # Flats must meet underneath the ink, or every line leaves a
-                # white seam in the export (§10, anti-aliased line art). This
-                # one takes the *raw* ink, not the structural lines: the layer
-                # the artist drops on top is their real ink, so that is what
-                # the flats have to reach under.
-                expanded = expand_under_lines(labels, raw, protected=blocked)
-                # Frozen now, in pixels. `doomed` is indexed by label, and the
-                # pass below moves labels: read through it afterwards and it
-                # would point at somewhere else entirely.
-                spot_black = doomed[expanded]
-                # The rest of the residue. Zones are cut on the *structural*
-                # lines but expansion above only reaches under *real* ink, so
-                # every pixel the extractor called line and the artist's ink
-                # does not cover was left with no zone at all — no segment to
-                # click, no colour, transparent in every PSD layer, white on
-                # the flattened page. Nothing covers those pixels, so they get
-                # the nearest label.
-                expanded = expand_under_lines(
-                    expanded, ~spot_black, protected=blocked
-                )
-                # Now the hole. Left in place through expansion the spot black
-                # was a wall the neighbours stopped against; taken out before
-                # it, they would have flooded it and met in its middle, which
-                # draws zones straight across the stroke separating them.
-                expanded[spot_black] = UNASSIGNED
-                panel.label_map = expanded
-                panel.assignments = {}
-                panel.flagged = set()
-                # §3's exhaustiveness invariant, with the two exceptions as
-                # the excluded set. Reported, never enforced: a panel that
-                # fails it still colours, and the number is what says so.
-                panel.orphans = int(
-                    check_coverage(expanded, spot_black, protected=blocked)[
-                        "uncovered_pixels"
-                    ]
-                )
+            # The bar's total is fixed before the first tick. Costs are copied
+            # so what this run learns cannot move the total under it.
+            cost = dict(self._pass_cost)
+            ball_passes = len(segmenter.radii) + 1
+            per_megapixel = (
+                ball_passes * cost["ball"] + cost["merge"] + cost["audit"] + cost["expand"]
+            )
+            page_megapixels = self.width * self.height / 1e6
+            extracting = self._structural_lines is None
+            total = (page_megapixels * cost["extract"] if extracting else 0.0) + sum(
+                _megapixels(panel) * per_megapixel for panel in self.panels
+            )
+            # pass -> [seconds, megapixels], what this run actually took.
+            measured = {name: [0.0, 0.0] for name in cost}
 
+            def spent(name: str, seconds: float, megapixels: float) -> None:
+                measured[name][0] += seconds
+                measured[name][1] += megapixels
+
+            with self.progress.run(total) as progress:
+                if extracting:
+                    progress.at("extract")
+                    started = time.perf_counter()
+                    structural = self.structural_mask(
+                        progress=lambda done, count: progress.tick(
+                            page_megapixels * cost["extract"] / count
+                        )
+                    )
+                    spent("extract", time.perf_counter() - started, page_megapixels)
+                else:
+                    structural = self.structural_mask()
+
+                for number, panel in enumerate(self.panels, start=1):
+                    progress.at("segment", number, len(self.panels))
+                    megapixels = _megapixels(panel)
+                    window = (
+                        slice(panel.y, panel.y + panel.height),
+                        slice(panel.x, panel.x + panel.width),
+                    )
+                    blocked = self._blocked_for(panel)
+                    labels = segmenter.segment(
+                        structural[window],
+                        protected=blocked,
+                        # LineFiller's last pass is its merge; the others are balls.
+                        progress=lambda done, passes, megapixels=megapixels: progress.tick(
+                            megapixels * cost["merge" if done == passes else "ball"]
+                        ),
+                    )
+                    timing = segmenter.last_timing
+                    spent("ball", timing["ball_seconds"] / ball_passes, megapixels)
+                    spent("merge", timing["merge_seconds"], megapixels)
+
+                    started = time.perf_counter()
+                    # The audit pass, §1.3. LineFiller merges hard enough to take a
+                    # zone straight through a hole in a line; this puts back the
+                    # splits whose border turns out to be a line rather than a
+                    # tunnel. It only ever divides what came back, never re-draws
+                    # it, so nothing downstream sees a zone move.
+                    labels = split_open_borders(
+                        labels,
+                        structural[window],
+                        protected=blocked,
+                        params=LeakParams(max_open_share=self.leak_gap),
+                    )
+                    raw = self.line_mask[window]
+                    # The crumbs, §1.4. Before expansion, or "80% of this border is
+                    # one neighbour" would be measured on shapes already fused
+                    # under the strokes. The panel's own area is the denominator:
+                    # a crumb is a share of the panel, never a count of pixels.
+                    labels = absorb_micro_zones(
+                        labels,
+                        structural[window],
+                        raw,
+                        panel.width * panel.height,
+                        protected=blocked,
+                    )
+                    # Which zones are the artist's own spot black, measured here
+                    # and punched below. Measured on the labels the segmenter
+                    # returned, because after expansion every sliver that grew
+                    # under a stroke looks black too.
+                    doomed = inked_zones(labels, raw)
+                    spent("audit", time.perf_counter() - started, megapixels)
+                    progress.tick(megapixels * cost["audit"])
+
+                    started = time.perf_counter()
+                    # Flats must meet underneath the ink, or every line leaves a
+                    # white seam in the export (§10, anti-aliased line art). This
+                    # one takes the *raw* ink, not the structural lines: the layer
+                    # the artist drops on top is their real ink, so that is what
+                    # the flats have to reach under.
+                    expanded = expand_under_lines(labels, raw, protected=blocked)
+                    # Frozen now, in pixels. `doomed` is indexed by label, and the
+                    # pass below moves labels: read through it afterwards and it
+                    # would point at somewhere else entirely.
+                    spot_black = doomed[expanded]
+                    # The rest of the residue. Zones are cut on the *structural*
+                    # lines but expansion above only reaches under *real* ink, so
+                    # every pixel the extractor called line and the artist's ink
+                    # does not cover was left with no zone at all — no segment to
+                    # click, no colour, transparent in every PSD layer, white on
+                    # the flattened page. Nothing covers those pixels, so they get
+                    # the nearest label.
+                    expanded = expand_under_lines(
+                        expanded, ~spot_black, protected=blocked
+                    )
+                    # Now the hole. Left in place through expansion the spot black
+                    # was a wall the neighbours stopped against; taken out before
+                    # it, they would have flooded it and met in its middle, which
+                    # draws zones straight across the stroke separating them.
+                    expanded[spot_black] = UNASSIGNED
+                    panel.label_map = expanded
+                    panel.assignments = {}
+                    panel.flagged = set()
+                    # §3's exhaustiveness invariant, with the two exceptions as
+                    # the excluded set. Reported, never enforced: a panel that
+                    # fails it still colours, and the number is what says so.
+                    panel.orphans = int(
+                        check_coverage(expanded, spot_black, protected=blocked)[
+                            "uncovered_pixels"
+                        ]
+                    )
+                    spent("expand", time.perf_counter() - started, megapixels)
+                    progress.tick(megapixels * cost["expand"])
+
+            self._learn(measured)
             self._zones_done = True
             self._flats_done = False
             return self.panels
+
+    def _learn(self, measured: dict[str, list[float]]) -> None:
+        """Fold what a run took into the pass costs, half old and half new.
+
+        So the next bar's steps are sized for this machine — a GPU makes
+        extraction nearly free — without one odd page deciding them alone.
+        """
+        for name, (seconds, megapixels) in measured.items():
+            if megapixels > 0:
+                self._pass_cost[name] = (
+                    0.5 * self._pass_cost[name] + 0.5 * seconds / megapixels
+                )
 
     # -- 4b. the artist's corrections to the zones -----------------------
     #
@@ -760,7 +844,9 @@ class Session:
                 bottom + panel.y,
             )
 
-    def structural_mask(self) -> np.ndarray:
+    def structural_mask(
+        self, progress: Callable[[int, int], None] | None = None
+    ) -> np.ndarray:
         """The line mask zones are segmented from. §7's swappable extractor.
 
         Not the same array as `self.line_mask`, and the difference is the
@@ -783,10 +869,12 @@ class Session:
         a CPU, and it does not change until a new page is loaded.
         """
         if self._structural is None:
-            self._structural = binarise_lines(self.structural_lines())
+            self._structural = binarise_lines(self.structural_lines(progress))
         return self._structural
 
-    def structural_lines(self) -> np.ndarray:
+    def structural_lines(
+        self, progress: Callable[[int, int], None] | None = None
+    ) -> np.ndarray:
         """The extractor's own output, greyscale, before any threshold.
 
         `structural_mask` binarises this for trapped-ball; the proposer wants
@@ -801,7 +889,14 @@ class Session:
         """
         self._require_page()
         if self._structural_lines is None:
-            self._structural_lines = self.extractor.extract(self.grey).lines
+            # An extractor written before the progress bar takes no
+            # `progress`. It still works; the bar just learns nothing from it.
+            takes_progress = "progress" in inspect.signature(self.extractor.extract).parameters
+            if progress is not None and takes_progress:
+                result = self.extractor.extract(self.grey, progress=progress)
+            else:
+                result = self.extractor.extract(self.grey)
+            self._structural_lines = result.lines
         return self._structural_lines
 
     def reference_images(self) -> list[ReferenceImage]:
@@ -1220,30 +1315,35 @@ class Session:
             threshold = None
 
             assigned = 0
-            for panel in self.panels:
-                if panel.label_map is None:
-                    continue
-                request = PanelRequest(
-                    line_art=self._line_art_for(panel),
-                    label_map=panel.label_map,
-                    references=self.reference_images(),
-                )
-                proposal = self.proposer.propose(request)
+            colouring = [panel for panel in self.panels if panel.label_map is not None]
+            # One tick per panel, sized by its pixels: the proposer's cost
+            # grows with the panel, and nothing inside it reports.
+            total = sum(_megapixels(panel) for panel in colouring)
+            with self.progress.run(total) as progress:
+                for number, panel in enumerate(colouring, start=1):
+                    progress.at("colour", number, len(colouring))
+                    request = PanelRequest(
+                        line_art=self._line_art_for(panel),
+                        label_map=panel.label_map,
+                        references=self.reference_images(),
+                    )
+                    proposal = self.proposer.propose(request)
 
-                assignments, created = assign_zones(
-                    proposal,
-                    panel.label_map,
-                    self.palette,
-                    threshold=threshold,
-                    next_id=self._next_entry_id,
-                    label_prefix=f"p{panel.order + 1}",
-                )
-                self._created_palette.extend(created)
-                self._next_entry_id += len(created)
+                    assignments, created = assign_zones(
+                        proposal,
+                        panel.label_map,
+                        self.palette,
+                        threshold=threshold,
+                        next_id=self._next_entry_id,
+                        label_prefix=f"p{panel.order + 1}",
+                    )
+                    self._created_palette.extend(created)
+                    self._next_entry_id += len(created)
 
-                panel.assignments = {a.label: a.palette_entry_id for a in assignments}
-                panel.flagged = set()
-                assigned += len(assignments)
+                    panel.assignments = {a.label: a.palette_entry_id for a in assignments}
+                    panel.flagged = set()
+                    assigned += len(assignments)
+                    progress.tick(_megapixels(panel))
 
             self.segments = []
             for panel in self.panels:

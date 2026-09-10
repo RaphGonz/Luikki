@@ -9,6 +9,8 @@ worth measuring against.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import numpy as np
 
 from .base import ExtractionResult
@@ -21,5 +23,12 @@ class PassthroughExtractor:
     def name(self) -> str:
         return "passthrough"
 
-    def extract(self, grey: np.ndarray) -> ExtractionResult:
-        return ExtractionResult(lines=grey.copy(), meta={"extractor": self.name})
+    def extract(
+        self,
+        grey: np.ndarray,
+        progress: Callable[[int, int], None] | None = None,
+    ) -> ExtractionResult:
+        result = ExtractionResult(lines=grey.copy(), meta={"extractor": self.name})
+        if progress is not None:
+            progress(1, 1)
+        return result

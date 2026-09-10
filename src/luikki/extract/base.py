@@ -15,6 +15,7 @@ another one.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
@@ -39,6 +40,14 @@ class LineExtractor(Protocol):
     @property
     def name(self) -> str: ...
 
-    def extract(self, grey: np.ndarray) -> ExtractionResult:
-        """``grey`` is uint8 greyscale, dark = ink. Returns a line image."""
+    def extract(
+        self,
+        grey: np.ndarray,
+        progress: Callable[[int, int], None] | None = None,
+    ) -> ExtractionResult:
+        """``grey`` is uint8 greyscale, dark = ink. Returns a line image.
+
+        ``progress(done, total)`` is called as the work finishes, in whatever
+        units the extractor naturally has — tiles, for a tiled model.
+        """
         ...
