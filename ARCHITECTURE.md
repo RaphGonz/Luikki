@@ -537,6 +537,7 @@ No colour is in `app.js`. Each colour is a token in the `:root` block of
       web/app.py              the HTTP routes
       web/progress.py         how far a long step is, for the progress bar
       web/static/index.html   the shell: header, rail, canvas, inspector, footer
+      web/project.py          the project folder: every page saved as it is edited
       web/static/app.js       the rail, the canvas, the corrections, one transform
       web/static/app.css      the tokens of UI.md, then the styles
       web/static/locales/     every word of the interface, one file a language

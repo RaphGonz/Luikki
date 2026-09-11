@@ -758,15 +758,13 @@ function askLabel(id) {
     case "bubbles": return t("ask.bubbles");
     case "zones": return t("ask.zones");
     case "flats": return t("ask.flats");
-    case "upload": return t("ask.upload");
-    default: return t("ask.reset");
+    default: return t("ask.delete_page");
   }
 }
 
 function confirmAsked(id) {
   asking = null;
-  if (id === "upload") return choosePage();
-  if (id === "reset") return startOver();
+  if (id === "delete") return deletePage();
   runStep(id);
 }
 
@@ -819,13 +817,10 @@ async function runStep(id) {
   }
 }
 
+// Uploading adds a page: the one on screen stays in the project as it was
+// left, so there is nothing to confirm.
 function choosePage() {
   $("page-file").click();
-}
-
-function requestUpload() {
-  if (state.done.panels) return askFor("upload", t("confirm.upload"));
-  choosePage();
 }
 
 async function uploadFile(input, path, label, extra = {}) {
@@ -842,34 +837,51 @@ async function uploadFile(input, path, label, extra = {}) {
   }
 }
 
-$("page-file").addEventListener("change", async () => {
-  const next = await uploadFile($("page-file"), "/api/page", t("work.page"));
-  if (!next) return;
+// Another page on screen: nothing selected, drawn or zoomed carries over. The
+// corrections a reopened page already holds were made in another sitting, so
+// they are unknown here and a re-run asks in general terms instead of counting.
+async function enterPage(next) {
   forgetCanvasSelection();
   traces.clear();
-  edits = freshEdits();
   state = next;
+  edits = {
+    panels: state.done.panels ? null : 0,
+    bubbles: state.done.bubbles ? null : 0,
+    zones: state.done.zones ? null : { merges: 0, cuts: 0 },
+  };
   current = furthest();
   shelf = null;
   zoom = 1;
   pan = { x: 0, y: 0 };
   await reloadLayers();
   renderAll();
+}
+
+$("page-file").addEventListener("change", async () => {
+  const next = await uploadFile($("page-file"), "/api/page", t("work.page"));
+  if (!next) return;
+  await enterPage(next);
   say(t("done.page", { name: next.page.name }));
 });
 
-async function startOver() {
+async function openPage(id) {
   try {
-    const next = await working(t("work.reset"), false, () => call("/api/reset", { method: "POST" }));
-    forgetCanvasSelection();
-    traces.clear();
-    edits = freshEdits();
-    state = next;
-    current = furthest();
-    shelf = null;
-    await reloadLayers();
+    const next = await working(t("work.open_page"), false, () =>
+      call(`/api/pages/${id}/open`, { method: "POST" }),
+    );
+    await enterPage(next);
+    say(t("done.page_opened", { name: next.page.name }));
+  } catch (error) {
     renderAll();
-    say(t("done.reset"));
+    say(error.message, true);
+  }
+}
+
+async function deletePage() {
+  try {
+    const next = await working(t("work.delete_page"), false, () => call("/api/page", { method: "DELETE" }));
+    await enterPage(next);
+    say(t("done.page_deleted"));
   } catch (error) {
     renderAll();
     say(error.message, true);
@@ -936,7 +948,7 @@ function renderHeader() {
 function renderRail() {
   keepFocus(() => {
     $("steps").replaceChildren(...STEPS.map(stepRow));
-    $("books").replaceChildren(bookRow("references"), bookRow("palette"));
+    $("books").replaceChildren(bookRow("pages"), bookRow("references"), bookRow("palette"));
   });
 }
 
@@ -990,21 +1002,20 @@ function stepBody(id) {
           ? note(t("upload.page", { name: state.page.name, width: String(state.page.width), height: String(state.page.height) }))
           : note(t("upload.hint")),
         note(t("upload.engine", { extractor: state.extractor, proposer: state.proposer })),
-        askBlock("upload"),
-        askBlock("reset"),
+        askBlock("delete"),
         h(
           "div",
           { class: "row" },
           button(state.page ? t("upload.again") : t("upload.run"), {
             kind: "primary",
             key: "run-upload",
-            onclick: requestUpload,
+            onclick: choosePage,
           }),
           state.page
-            ? button(t("upload.reset"), {
+            ? button(t("upload.delete"), {
                 kind: "destructive",
-                key: "reset",
-                onclick: () => askFor("reset", t("confirm.reset")),
+                key: "delete-page",
+                onclick: () => askFor("delete", t("confirm.delete_page")),
               })
             : null,
         ),
@@ -1046,6 +1057,7 @@ function stepBody(id) {
     case "flats":
       return [
         askBlock("flats"),
+        state.flats_stale ? note(t("flats.stale"), true) : null,
         note(done.flats ? t("flats.done", { count: state.segments.count }) : t("about.flats")),
         runButton("flats", t("run.flats"), t("run.flats.again")),
       ];
@@ -1133,9 +1145,24 @@ function stepBody(id) {
   }
 }
 
+function bookName(which) {
+  switch (which) {
+    case "pages": return t("book.pages");
+    case "references": return t("book.references");
+    default: return t("book.palette");
+  }
+}
+
+function bookMeta(which) {
+  switch (which) {
+    case "pages": return t("meta.pages", { count: state.pages.length });
+    case "references": return t("meta.references", { count: state.references.length });
+    default: return t("meta.colours", { count: paletteColours().length });
+  }
+}
+
 function bookRow(which) {
   const pressed = shelf === which;
-  const references = which === "references";
   return h(
     "li",
     {},
@@ -1152,14 +1179,8 @@ function bookRow(which) {
           renderInspector();
         },
       },
-      h("span", {}, references ? t("book.references") : t("book.palette")),
-      h(
-        "span",
-        { class: "step-meta" },
-        references
-          ? t("meta.references", { count: state.references.length })
-          : t("meta.colours", { count: paletteColours().length }),
-      ),
+      h("span", {}, bookName(which)),
+      h("span", { class: "step-meta" }, bookMeta(which)),
     ),
   );
 }
@@ -1204,6 +1225,7 @@ const paletteColours = () => state.palette.filter((entry) => entry.source === "p
 
 function inspectorContent() {
   if (!state) return [[], []];
+  if (shelf === "pages") return pagesView();
   if (shelf === "references") return referencesView();
   if (shelf === "palette") return paletteView();
   switch (current) {
@@ -1230,6 +1252,45 @@ function uploadView() {
       ),
     ],
     [],
+  ];
+}
+
+function stageName(stage) {
+  switch (stage) {
+    case "page": return t("pages.stage.page");
+    case "panels": return t("pages.stage.panels");
+    case "bubbles": return t("pages.stage.bubbles");
+    case "zones": return t("pages.stage.zones");
+    default: return t("pages.stage.flats");
+  }
+}
+
+// Every page of the project. The open one is marked and does nothing; any
+// other opens as it was left.
+function pagesView() {
+  const add = button(t("upload.again"), { kind: "primary", key: "pages-add", onclick: choosePage });
+  if (!state.pages.length) return [[heading(t("book.pages")), note(t("pages.empty"))], [add]];
+  return [
+    [
+      heading(t("book.pages")),
+      note(t("pages.about")),
+      ...state.pages.map((page) => {
+        const isOpen = page.id === state.page_id;
+        return h(
+          "button",
+          {
+            type: "button",
+            class: "book",
+            "data-key": `page-${page.id}`,
+            "aria-pressed": String(isOpen),
+            onclick: isOpen ? null : () => openPage(page.id),
+          },
+          h("span", {}, page.name),
+          h("span", { class: "step-meta" }, isOpen ? t("state.current") : stageName(page.stage)),
+        );
+      }),
+    ],
+    [add],
   ];
 }
 

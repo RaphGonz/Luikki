@@ -156,23 +156,35 @@ def create_app(
         while it does."""
         return session.progress.snapshot()
 
-    @app.post("/api/reset")
-    def reset():
-        session.reset()
-        return session.state()
-
-    # -- 1. upload -------------------------------------------------------
+    # -- 1. pages --------------------------------------------------------
 
     @app.post("/api/page")
     def upload_page(file: UploadFile):
-        target = session.workdir / f"page{Path(file.filename or 'page.png').suffix}"
-        target.parent.mkdir(parents=True, exist_ok=True)
-        with target.open("wb") as handle:
+        """Adds a page to the project and opens it."""
+        name = file.filename or "page.png"
+        with tempfile.NamedTemporaryFile(
+            delete=False, suffix=Path(name).suffix, dir=session.workdir
+        ) as handle:
             shutil.copyfileobj(file.file, handle)
+            staged = Path(handle.name)
         try:
-            session.load_page(target, original_name=file.filename or target.name)
+            session.load_page(staged, original_name=name)
         except (FileNotFoundError, ValueError) as exc:
             raise HTTPException(400, f"could not read that image: {exc}") from exc
+        finally:
+            # The page folder keeps its own copy.
+            staged.unlink(missing_ok=True)
+        return session.state()
+
+    @app.post("/api/pages/{page_id}/open")
+    def open_page(page_id: int):
+        session.open_page(page_id)
+        return session.state()
+
+    @app.delete("/api/page")
+    def delete_page():
+        """Deletes the open page and opens the newest one left."""
+        session.delete_page()
         return session.state()
 
     @app.get("/api/page.png")

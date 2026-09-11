@@ -1,11 +1,11 @@
-"""One page, five buttons, in memory.
+"""One project, seven buttons, one page open at a time.
 
-This is the barebone version of the app (`SPEC.md`): no projects, no volumes,
-no page list, no reopening. One page is in flight at a time, its state lives
-in this object, and uploading another one replaces it. The SQLite store in
-`luikki.model` is the persistent version of the same shape and is
-deliberately not used here — persistence is not what the barebone app is for,
-and half-wiring it would cost more than adding it later.
+The project is the working folder, and every page in it is saved as the
+artist works (`project.py`): each method that changes something writes it
+before returning. One page is open at a time and its state lives in this
+object; adding or opening another leaves this one on disk as it was left. The
+SQLite store in `luikki.model` is not used — a page is a handful of JSON and
+image files, which is simpler to read and to debug.
 
 What *is* carried over from the store's design, because it is non-negotiable
 (rule 1): a zone holds a `palette_entry_id` and there is nowhere in this module
@@ -61,6 +61,7 @@ from ..segmentation.preprocess import binarise_lines, load_line_art
 from ..segmentation.protected import rasterize_protected_for_panel
 from ..segmentation.segmenter import LineFillerSegmenter
 from ..segmentation.trappedball import expand_under_lines, inked_zones
+from . import project
 from .progress import Progress
 
 # Seconds per megapixel for each pass of Segment zones — what the progress bar
@@ -189,7 +190,26 @@ class Session:
         self._candidates: dict[int, list[tuple[int, int, int]]] = {}
         self._taken: dict[tuple[int, tuple[int, int, int]], int] = {}
         self._load_palette()
+        # How open a border may be before the leak audit calls it a passage
+        # rather than a hole in a line (§1.3). Held on the session, not passed
+        # and forgotten, because it is the one segmentation knob the artist
+        # turns: they change it, press Segment zones again, and look. Book-
+        # scoped like the palette — an artist's ink does not change per page —
+        # and so is how they stack a PSD.
+        self.leak_gap = LeakParams().max_open_share
+        self.granularity = "colour"
         self.reset()
+        # page id -> name and stage, for the page list. Kept here rather than
+        # read off disk by `state()`, which runs after every press.
+        self._pages = project.summaries(self.workdir)
+        current = project.load_project(self)
+        if current in self._pages:
+            try:
+                project.open_page(self, current)
+            except (OSError, ValueError):
+                # A page that cannot be read opens nothing. It stays in the
+                # list, and the app starts rather than dying on it.
+                pass
 
     # -- state -----------------------------------------------------------
 
@@ -225,13 +245,11 @@ class Session:
         self._bubbles_done = False
         self._zones_done = False
         self._flats_done = False
-        # How open a border may be before the leak audit calls it a passage
-        # rather than a hole in a line (§1.3). Held on the session, not passed
-        # and forgotten, because it is the one segmentation knob the artist
-        # turns: they change it, press Segment zones again, and look. Book-
-        # scoped like the palette — an artist's ink does not change per page.
-        self.leak_gap = LeakParams().max_open_share
-        self.granularity = "colour"
+        # Which page of the project is open, and which references its flats
+        # were proposed from: one deleted since is a warning, never a reason
+        # to throw the flats away — the artist's snaps are built on them.
+        self.page_id: int | None = None
+        self._flats_references: list[int] = []
 
     def _require_page(self) -> None:
         if self.line_mask is None:
@@ -240,15 +258,64 @@ class Session:
     # -- 1. upload -------------------------------------------------------
 
     def load_page(self, path: str | Path, original_name: str = "") -> None:
-        """Replaces everything. A new page is a new session."""
+        """Add a page to the project and open it.
+
+        The page that was open stays in the project as it was left.
+        """
         with self.lock:
+            # Read before a folder exists for it: a file that is not an image
+            # must not leave an empty page in the list.
             line_mask, grey = load_line_art(path)
+            page_id, source = project.new_page(self.workdir, Path(path))
             self.reset()
-            self.source = Path(path)
+            self.page_id = page_id
+            self.source = source
             self.original_name = original_name or Path(path).name
             self.line_mask = line_mask
             self.grey = grey
             self.height, self.width = line_mask.shape
+            self._save()
+
+    def open_page(self, page_id: int) -> None:
+        """Open another page of the project, exactly as it was left."""
+        with self.lock:
+            if page_id not in self._pages:
+                raise StepError(f"No page {page_id}.")
+            try:
+                project.open_page(self, page_id)
+            except (OSError, ValueError) as exc:
+                raise StepError(f"Page {page_id} could not be read: {exc}") from exc
+            project.save_project(self)
+
+    def delete_page(self) -> None:
+        """Delete the open page, then open the newest one left.
+
+        Only the page goes. The palette, the references and every other page
+        stay, because they belong to the book.
+        """
+        with self.lock:
+            self._require_page()
+            project.delete_page(self.workdir, self.page_id)
+            del self._pages[self.page_id]
+            self.reset()
+            for page_id in sorted(self._pages, reverse=True):
+                try:
+                    project.open_page(self, page_id)
+                    break
+                except (OSError, ValueError):
+                    continue
+            project.save_project(self)
+
+    def _save(self, maps=()) -> None:
+        """Write the open page and the project settings (SPEC 4).
+
+        Called by every method that changes either, before it returns.
+        `maps` names the panels whose zone maps changed, or "all".
+        """
+        if self.page_id is not None:
+            record = project.save_page(self, maps)
+            self._pages[self.page_id] = {"name": record["name"], "stage": project.stage(record)}
+        project.save_project(self)
 
     # -- 2. detect panels ------------------------------------------------
 
@@ -268,6 +335,7 @@ class Session:
                 for order, panel in enumerate(found)
             ]
             self._invalidate_from_panels()
+            self._save()
             return self.panels
 
     # -- 3. detect bubbles -----------------------------------------------
@@ -293,6 +361,7 @@ class Session:
             # stale (rule 4).
             self._invalidate_from_panels()
             self._bubbles_done = True
+            self._save()
             return self.protected
 
     # -- 2b/3b. the artist's corrections ---------------------------------
@@ -379,6 +448,7 @@ class Session:
             self._fit_box(panel)
             self._reorder_panels()
             self._invalidate_from_panels()
+            self._save()
             return panel
 
     def add_panel(self, polygon) -> PanelState:
@@ -396,6 +466,7 @@ class Session:
             self.panels.append(panel)
             self._reorder_panels()
             self._invalidate_from_panels()
+            self._save()
             return panel
 
     def delete_panel(self, order: int) -> None:
@@ -410,6 +481,7 @@ class Session:
             self.panels.remove(panel)
             self._reorder_panels()
             self._invalidate_from_panels()
+            self._save()
 
     @staticmethod
     def _fit_box(panel: PanelState) -> None:
@@ -428,6 +500,7 @@ class Session:
             self._require_bubble_index(index)
             self.protected[index] = self._clean_polygon(polygon, "bubble")
             self._invalidate_from_panels()
+            self._save()
             return self.protected[index]
 
     def add_bubble(self, polygon) -> int:
@@ -435,6 +508,7 @@ class Session:
             self._require_bubble_stage()
             self.protected.append(self._clean_polygon(polygon, "bubble"))
             self._invalidate_from_panels()
+            self._save()
             return len(self.protected) - 1
 
     def delete_bubble(self, index: int) -> None:
@@ -443,6 +517,7 @@ class Session:
             self._require_bubble_index(index)
             del self.protected[index]
             self._invalidate_from_panels()
+            self._save()
 
     def _require_bubble_index(self, index: int) -> None:
         if not 0 <= index < len(self.protected):
@@ -598,6 +673,7 @@ class Session:
             self._learn(measured)
             self._zones_done = True
             self._flats_done = False
+            self._save(maps="all")
             return self.panels
 
     def _learn(self, measured: dict[str, list[float]]) -> None:
@@ -739,6 +815,7 @@ class Session:
             survivor = max(present, key=lambda label: present[label])
             others = [label for label in present if label != survivor]
             panel.label_map[np.isin(panel.label_map, others)] = survivor
+            self._save(maps=[panel.order])
             return {
                 "panel": panel_order,
                 "label": int(survivor),
@@ -807,6 +884,7 @@ class Session:
                 )
                 panel.label_map[seam] = panel.label_map[rows[seam], cols[seam]]
 
+            self._save(maps=[panel.order])
             return {"panel": panel_order, "labels": made, "pieces": len(made)}
 
     def zone_mask_rgba(self, panel_order: int, label: int) -> tuple[np.ndarray, tuple[int, int, int, int]]:
@@ -1105,9 +1183,11 @@ class Session:
         snapped to them — that is a page-wide change made by a click that said
         nothing about colour.
 
-        Only a reference invalidates the flats, and for a different reason
-        again: the proposal came from an image that is no longer there
-        (rule 4). A palette image was never shown to the proposer.
+        Neither kind throws the flats away. A reference's flats were proposed
+        from an image that is no longer there, but the artist's snaps are
+        built on them and a saved page may be finished: the page says so
+        instead (`flats_stale` in `state()`), and generating again is the
+        artist's call.
         """
         with self.lock:
             reference = self.reference_store.get(reference_id)
@@ -1119,8 +1199,6 @@ class Session:
                 for (owner, _), entry_id in list(self._taken.items()):
                     if owner == reference_id:
                         self.delete_palette_entry(entry_id)
-            else:
-                self._flats_done = False
             return True
 
     def palette_images(self) -> list[Reference]:
@@ -1214,6 +1292,9 @@ class Session:
                 segment.snapped = False
                 self.panels[segment.panel].assignments[segment.label] = original
             self._save_palette()
+            # A closed page holding this id catches up when it is opened
+            # (`project.open_page`).
+            self._save()
 
     def _entry(self, entry_id: int) -> PaletteEntry:
         for entry in self._palette:
@@ -1359,6 +1440,13 @@ class Session:
             }
 
             self._flats_done = True
+            self._flats_references = [
+                reference.id for reference in self.reference_store if reference.kind != PALETTE_KIND
+            ]
+            # The ids just handed to this page's proposed colours come off the
+            # book's counter: saved now, or another page could be given them.
+            self._save_palette()
+            self._save()
             return {
                 "assigned": assigned,
                 "segments": len(self.segments),
@@ -1422,24 +1510,31 @@ class Session:
         """
         with self.lock:
             self._require_flats()
-            segment = self.segment(panel, label)
-            if segment is None:
-                raise StepError(f"No segment {label} in panel {panel + 1}.")
-
-            if entry_id is None:
-                entry, _ = self.snap_suggestion(segment)
-                if entry is None:
-                    raise StepError(
-                        "No reference colours to snap to — upload a character sheet."
-                    )
-                entry_id = int(entry.id or 0)
-            elif entry_id not in self.palette_by_id:
-                raise StepError(f"No palette entry {entry_id}.")
-
-            segment.palette_entry_id = entry_id
-            segment.snapped = entry_id != self._auto_entry.get(segment.key)
-            self.panels[panel].assignments[label] = entry_id
+            segment = self._snap(panel, label, entry_id)
+            self._save()
             return segment
+
+    def _snap(self, panel: int, label: int, entry_id: int | None) -> Segment:
+        """`snap_segment` without the lock or the save, so `snap_all` writes
+        the page once rather than once per segment."""
+        segment = self.segment(panel, label)
+        if segment is None:
+            raise StepError(f"No segment {label} in panel {panel + 1}.")
+
+        if entry_id is None:
+            entry, _ = self.snap_suggestion(segment)
+            if entry is None:
+                raise StepError(
+                    "No reference colours to snap to — upload a character sheet."
+                )
+            entry_id = int(entry.id or 0)
+        elif entry_id not in self.palette_by_id:
+            raise StepError(f"No palette entry {entry_id}.")
+
+        segment.palette_entry_id = entry_id
+        segment.snapped = entry_id != self._auto_entry.get(segment.key)
+        self.panels[panel].assignments[label] = entry_id
+        return segment
 
     def unsnap_segment(self, panel: int, label: int) -> Segment:
         """Put back what the proposer said. A snap the artist cannot undo is a
@@ -1456,6 +1551,7 @@ class Session:
             segment.palette_entry_id = original
             segment.snapped = False
             self.panels[panel].assignments[label] = original
+            self._save()
             return segment
 
     def snap_all(self, threshold: float | None = None) -> dict[str, int]:
@@ -1478,8 +1574,9 @@ class Session:
                 if entry is None or (threshold is not None and distance > threshold):
                     skipped += 1
                     continue
-                self.snap_segment(segment.panel, segment.label, int(entry.id or 0))
+                self._snap(segment.panel, segment.label, int(entry.id or 0))
                 snapped += 1
+            self._save()
             return {
                 "snapped": snapped,
                 "skipped": skipped,
@@ -1514,6 +1611,7 @@ class Session:
                         f"expected one of {', '.join(GRANULARITIES)}."
                     )
                 self.granularity = granularity
+                project.save_project(self)
             target = Path(path) if path else self.workdir / f"{Path(self.original_name).stem}_flats.psd"
             return write_psd(
                 target,
@@ -1594,6 +1692,11 @@ class Session:
         with self.lock:
             chosen = {e.id for e in self._palette}
             return {
+                "page_id": self.page_id,
+                # Every page of the project, oldest first: the page list.
+                "pages": [
+                    {"id": page_id, **summary} for page_id, summary in sorted(self._pages.items())
+                ],
                 "page": None
                 if self.line_mask is None
                 else {
@@ -1676,6 +1779,10 @@ class Session:
                     "snappable": bool(self._palette),
                     "threshold": SNAP_MAX_DELTA,
                 },
+                # A reference these flats were proposed from has been deleted
+                # since. Said, never acted on (`remove_reference`).
+                "flats_stale": self._flats_done
+                and any(self.reference_store.get(ref) is None for ref in self._flats_references),
                 "proposer": self.proposer.name,
                 "extractor": self.extractor.name,
                 "leak_gap": self.leak_gap,

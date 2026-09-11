@@ -5,13 +5,13 @@
   "about.zones": "Découpe chaque case en zones, une couleur d'aplat chacune.",
 
   "ask.bubbles": "Détecter les bulles",
+  "ask.delete_page": "Supprimer la planche",
   "ask.flats": "Relancer",
   "ask.keep": "Garder",
   "ask.panels": "Relancer",
-  "ask.reset": "Tout recommencer",
-  "ask.upload": "Choisir une autre planche",
   "ask.zones": "Relancer",
 
+  "book.pages": "Planches",
   "book.palette": "Palette",
   "book.references": "Références",
 
@@ -28,6 +28,7 @@
     "other": "Détecter à nouveau les bulles ? Cela remplace {count} corrections de bulles."
   },
   "confirm.bubbles.unknown": "Détecter à nouveau les bulles ? Chaque bulle tracée ou corrigée sera remplacée.",
+  "confirm.delete_page": "Supprimer cette planche ? Elle et toutes ses corrections sont supprimées. La palette, les références et les autres planches restent.",
   "confirm.flats.counted": {
     "one": "Générer à nouveau les aplats ? La zone calée reprend une couleur proposée.",
     "other": "Générer à nouveau les aplats ? Les {count} zones calées reprennent des couleurs proposées."
@@ -41,8 +42,6 @@
     "other": "Détecter à nouveau les cases ? Cela remplace {count} corrections de cases."
   },
   "confirm.panels.unknown": "Détecter à nouveau les cases ? Chaque coin déplacé et chaque case dessinée seront remplacés.",
-  "confirm.reset": "Tout recommencer ? La planche et toutes ses corrections sont supprimées. La palette et les références restent.",
-  "confirm.upload": "Charger une autre planche ? Celle-ci et toutes ses corrections sont remplacées. La palette et les références restent.",
   "confirm.with_later": "{first} {later}",
   "confirm.zones.ask": "Segmenter à nouveau les zones ?",
   "confirm.zones.counted": "Segmenter à nouveau les zones ? Cela supprime {merges} et {cuts}.",
@@ -58,6 +57,8 @@
     "other": "{count} segments ont une couleur proposée. Calez-les ensuite sur votre palette."
   },
   "done.page": "{name} chargée. Détectez ensuite ses cases.",
+  "done.page_deleted": "Planche supprimée. La palette, les références et les autres planches sont toujours là.",
+  "done.page_opened": "{name} est ouverte, telle que vous l'avez laissée.",
   "done.palette": "Image de palette ajoutée. Toutes ses couleurs sont dans la palette.",
   "done.palette_removed": "Image de palette retirée, avec ses couleurs.",
   "done.panels": {
@@ -70,7 +71,6 @@
     "other": "Planche ajoutée entière, plus {count} cases découpées dedans."
   },
   "done.reference_removed": "Référence retirée. Les couleurs que vous y avez prises restent dans la palette.",
-  "done.reset": "Tout est recommencé. La palette et les références sont toujours là.",
   "done.snap_all": "Calées : {snapped}. Laissées telles que proposées : {skipped}.",
   "done.zones": {
     "one": "{count} zone. Fusionnez et coupez avant de générer les aplats.",
@@ -95,6 +95,7 @@
     "one": "{count} segment, avec une couleur proposée.",
     "other": "{count} segments, chacun avec une couleur proposée."
   },
+  "flats.stale": "Une référence ayant servi à ces aplats a été retirée depuis. Ils restent utilisables : générez-les à nouveau pour profiter des références actuelles.",
 
   "footer.language": "Langue",
   "footer.progress": "Progression",
@@ -180,11 +181,20 @@
 
   "meta.bubbles": { "one": "{count} bulle", "other": "{count} bulles" },
   "meta.colours": { "one": "{count} couleur", "other": "{count} couleurs" },
+  "meta.pages": { "one": "{count} planche", "other": "{count} planches" },
   "meta.panels": { "one": "{count} case", "other": "{count} cases" },
   "meta.references": { "one": "{count} référence", "other": "{count} références" },
   "meta.segments": { "one": "{count} segment", "other": "{count} segments" },
   "meta.snapped": "{snapped} / {count}",
   "meta.zones": { "one": "{count} zone", "other": "{count} zones" },
+
+  "pages.about": "Toutes les planches du projet, enregistrées au fil du travail. Cliquez sur une planche pour l'ouvrir.",
+  "pages.empty": "Pas encore de planche. Chargez-en une pour commencer.",
+  "pages.stage.bubbles": "Bulles détectées",
+  "pages.stage.flats": "Aplats générés",
+  "pages.stage.page": "Chargée",
+  "pages.stage.panels": "Cases détectées",
+  "pages.stage.zones": "Zones segmentées",
 
   "palette.about": "Cliquez une couleur pour la changer sur toutes les zones qui la portent. Son numéro ne change jamais.",
   "palette.add_image": "Ajouter une image de palette",
@@ -271,21 +281,22 @@
   "toggle.neutral": "Fond neutre",
 
   "upload.again": "Charger une autre planche",
+  "upload.delete": "Supprimer cette planche",
   "upload.engine": "Traits : {extractor}. Couleurs : {proposer}.",
   "upload.hint": "Une planche de trait, en fichier image.",
   "upload.page": "{name}, {width} × {height} pixels",
-  "upload.reset": "Tout recommencer",
   "upload.run": "Charger la planche",
 
   "work.bubbles": "Détection des bulles",
+  "work.delete_page": "Suppression de la planche",
   "work.export": "Écriture du PSD",
   "work.flats": "Génération des aplats",
+  "work.open_page": "Ouverture de la planche",
   "work.page": "Envoi de la planche",
   "work.palette": "Envoi de l'image de palette",
   "work.panels": "Détection des cases",
   "work.reading": "Lecture de l'image",
   "work.reference": "Envoi de la référence",
-  "work.reset": "Remise à zéro",
   "work.snap_all": "Calage de toutes les zones",
   "work.zones": "Segmentation des zones",
 

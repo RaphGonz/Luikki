@@ -108,7 +108,7 @@ wrong is one click to fix.
 
 - `<workdir>/references/` - the reference and palette images, plus `index.json`. Book-scoped: they survive a new page and a restart.
 - `<workdir>/palette.json` - the artist's palette. Held, not derived, since ids must never be reused and a colour must survive its reference being deleted.
-- The page itself is not persisted. One page is in flight at a time, in memory.
+- `<workdir>/project.json` and `<workdir>/pages/NNNN/` - every page, saved on each edit (`web/project.py`): `page.json`, the source image, one `panelN.npy` zone map per panel, the extractor's lines. Files, not SQLite. One page is open at a time; the app reopens the last one.
 
 ## Database
 

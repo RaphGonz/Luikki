@@ -34,7 +34,13 @@ Cloud = endpoint GPU authentifié, pas une SaaS. Projet, pages, refs, palette, m
 - [x] Sous-couche grise : hors sujet ici, c'est un autre procédé. La convention
       est tranchée et déjà en place — la couleur du flat passe **sous l'encre**
       (`expand_under_lines`), pas un gris dédié.
-- [ ] Brancher `model/store.py` → SPEC 1–4 (dossier projet, SQLite, ajout de pages, save à chaque édition).
+- [x] SPEC 1–4 : dossier projet, ajout de pages, sauvegarde à chaque édition.
+      **Fichiers, pas SQLite** (`web/project.py`) : JSON + zones en `.npy`,
+      lisible et facile à déboguer. `model/store.py` reste débranché.
+      Liste des planches dans le rail. Une référence supprimée **avertit**
+      (`flats_stale`), elle n'invalide plus les aplats.
+- [ ] Sélecteur de dossier projet dans l'app — indispensable, attend l'app
+      installée (B3/B4) ; aujourd'hui le projet = `--workdir`.
 - [x] Interface refaite d'après `UI.md` (rail · canvas · inspecteur), barre de
       progression réelle (`GET /api/progress`), tout le texte dans
       `static/locales/` — une langue = un fichier (`tests/test_locales.py`).
@@ -249,9 +255,8 @@ Azure Artifact Signing.
       (`segmentation/bubbles.py:109`).
 - [ ] `platformdirs` : `%APPDATA%\Luikki`, `~/Library/Application Support/Luikki`
       comme dossier de travail par défaut.
-- [ ] **Persistance du projet** (c'est l'item de A : `model/store.py` → SPEC
-      1–4). Aujourd'hui fermer la fenêtre perd la page — bloquant pour un
-      artiste seul.
+- [x] **Persistance du projet** (fait dans A, en fichiers). Fermer la
+      fenêtre ne perd plus la page.
 - Fait quand : pipeline complet dans un venv sans torch, et une page survit à
   la fermeture de l'app.
 
