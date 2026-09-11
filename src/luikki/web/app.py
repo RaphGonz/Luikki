@@ -84,12 +84,18 @@ class _Fresh(StaticFiles):
 def _build_proposer():
     """`LUIKKI_PROPOSER=cobra` swaps the model in without a code edit.
 
+    `remote` is the same model on a GPU elsewhere (`colour/remote.py`).
     Anything else — including unset — is the deterministic distinct-colour
     proposer, which needs no GPU and no weights. Read at call time, not import
     time, so `luikki serve --proposer cobra` works whatever the import
     order turns out to be.
     """
-    if os.environ.get("LUIKKI_PROPOSER", "distinct") != "cobra":
+    choice = os.environ.get("LUIKKI_PROPOSER", "distinct")
+    if choice == "remote":
+        from ..colour.remote import RemoteProposer
+
+        return RemoteProposer()
+    if choice != "cobra":
         from ..colour.proposer import DistinctColourProposer
 
         return DistinctColourProposer()

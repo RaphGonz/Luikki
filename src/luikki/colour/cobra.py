@@ -86,6 +86,23 @@ _DIT_CONFIG_KEYS = (
 )
 
 
+# Pinned to the diffusers repo — see the licence note in the module docstring.
+# Do not repoint.
+PIXART_REPO = "PixArt-alpha/PixArt-XL-2-1024-MS"
+COBRA_REPO = "JunhaoZhuang/Cobra"
+
+# The only files `load` reads, per repo. Anything else is gigabytes for
+# nothing: PixArt's `text_encoder` is T5-XXL (~9 GB) and Cobra never runs it —
+# the prompt is a constant tensor in `prompt_tensor/`. Cobra's `shadow_*` and
+# `*_GSRP` folders belong to the refinement pass removed above, and `LE` is the
+# line extractor we already vendor. Shared with the Modal download so the
+# Volume holds exactly what loading needs.
+WEIGHT_FILES = {
+    PIXART_REPO: ["transformer/*", "vae/*", "scheduler/*"],
+    COBRA_REPO: ["line_ckpt/*", "image_encoder/*"],
+}
+
+
 @contextmanager
 def _vendored_prompt_tensors(repo_dir: Path):
     """Resolve Cobra's hardcoded `./prompt_tensor/` loads against `repo_dir`.
@@ -459,6 +476,8 @@ class CobraProposer:
     top_k: int = 4
     seed: int = 0
     device: str = "cuda"
+    # The Cobra weights' commit, known once `load` has run.
+    revision: str = ""
 
     _loaded: bool = False
 
@@ -495,9 +514,11 @@ class CobraProposer:
 
         import torch
         from diffusers import (
+            AutoencoderKL,
             CausalSparseDiTControlModel,
             CausalSparseDiTModel,
             CobraPixArtAlphaPipeline,
+            DPMSolverMultistepScheduler,
             PixArtTransformer2DModel,
         )
         from huggingface_hub import snapshot_download
@@ -510,13 +531,16 @@ class CobraProposer:
             raise CobraUnavailable("Cobra requires an NVIDIA GPU; there is no CPU path.")
 
         weights = Path(
-            snapshot_download(repo_id="JunhaoZhuang/Cobra", repo_type="model")
+            snapshot_download(
+                repo_id=COBRA_REPO, repo_type="model", allow_patterns=WEIGHT_FILES[COBRA_REPO]
+            )
         )
+        # The snapshot folder is named by the weights' commit, which is what a
+        # proposal has to be traced back to.
+        self.revision = weights.name
         dtype = torch.float16
 
-        # Pinned to the diffusers repo — see the licence note in the module
-        # docstring. Do not repoint.
-        base = "PixArt-alpha/PixArt-XL-2-1024-MS"
+        base = PIXART_REPO
         # `get_pixart_config` carries diffusers bookkeeping keys the model
         # constructors reject, so take only the ones upstream passes through.
         raw = get_pixart_config()
@@ -551,12 +575,16 @@ class CobraProposer:
         causal_dit.to(self.device, dtype=dtype)
         controlnet.to(self.device, dtype=dtype)
 
-        self._pipeline = CobraPixArtAlphaPipeline.from_pretrained(
-            base,
+        # Built by hand rather than `CobraPixArtAlphaPipeline.from_pretrained(
+        # base, …)`, which is what upstream does: that downloads every folder
+        # in `base`'s index, T5 included, and only skips *loading* the
+        # components passed in (`pipeline_utils.py:1417` of the fork). The
+        # pipeline registers exactly these four.
+        self._pipeline = CobraPixArtAlphaPipeline(
+            vae=AutoencoderKL.from_pretrained(base, subfolder="vae", torch_dtype=dtype),
             transformer=causal_dit,
             controlnet=controlnet,
-            safety_checker=None,
-            torch_dtype=dtype,
+            scheduler=DPMSolverMultistepScheduler.from_pretrained(base, subfolder="scheduler"),
         ).to(self.device)
 
         self._image_processor = CLIPImageProcessor()
