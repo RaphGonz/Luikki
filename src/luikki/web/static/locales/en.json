@@ -5,13 +5,13 @@
   "about.zones": "Cuts every panel into zones, one flat colour each.",
 
   "ask.bubbles": "Detect bubbles",
+  "ask.delete_page": "Delete the page",
   "ask.flats": "Generate again",
   "ask.keep": "Keep",
   "ask.panels": "Detect again",
-  "ask.reset": "Start over",
-  "ask.upload": "Choose a new page",
   "ask.zones": "Segment again",
 
+  "book.pages": "Pages",
   "book.palette": "Palette",
   "book.references": "References",
 
@@ -28,6 +28,7 @@
     "other": "Detect bubbles again? This replaces {count} corrections to the balloons."
   },
   "confirm.bubbles.unknown": "Detect bubbles again? Every balloon you traced or corrected is replaced.",
+  "confirm.delete_page": "Delete this page? It and every correction on it are deleted. The palette, the references and the other pages stay.",
   "confirm.flats.counted": {
     "one": "Generate flats again? The zone you snapped goes back to a proposed colour.",
     "other": "Generate flats again? The {count} zones you snapped go back to proposed colours."
@@ -41,8 +42,6 @@
     "other": "Detect panels again? This replaces {count} corrections to the panels."
   },
   "confirm.panels.unknown": "Detect panels again? Every corner you moved and every panel you drew is replaced.",
-  "confirm.reset": "Start over? The page and every correction on it are deleted. The palette and the references stay.",
-  "confirm.upload": "Load a new page? This page and every correction on it are replaced. The palette and the references stay.",
   "confirm.with_later": "{first} {later}",
   "confirm.zones.ask": "Segment zones again?",
   "confirm.zones.counted": "Segment zones again? This deletes {merges} and {cuts}.",
@@ -61,6 +60,8 @@
     "other": "{count} segments have a proposed colour. Snap them to your palette next."
   },
   "done.page": "{name} loaded. Detect its panels next.",
+  "done.page_deleted": "Page deleted. The palette, the references and the other pages are still here.",
+  "done.page_opened": "{name} is open, as you left it.",
   "done.palette": "Palette image added. Every colour in it is now in the palette.",
   "done.palette_removed": "Palette image removed, with its colours.",
   "done.panels": {
@@ -73,7 +74,6 @@
     "other": "Page added whole, plus {count} panels cut from it."
   },
   "done.reference_removed": "Reference removed. The colours you took from it stay in the palette.",
-  "done.reset": "Started over. The palette and the references are still here.",
   "done.snap_all": "Snapped: {snapped}. Left as proposed: {skipped}.",
   "done.zones": {
     "one": "{count} zone. Merge and cut it before you generate flats.",
@@ -98,6 +98,7 @@
     "one": "{count} segment, with a proposed colour.",
     "other": "{count} segments, each with a proposed colour."
   },
+  "flats.stale": "A reference these flats were proposed from has been removed since. They still work: generate them again to use the references you have now.",
 
   "footer.language": "Language",
   "footer.progress": "Progress",
@@ -183,11 +184,20 @@
 
   "meta.bubbles": { "one": "{count} balloon", "other": "{count} balloons" },
   "meta.colours": { "one": "{count} colour", "other": "{count} colours" },
+  "meta.pages": { "one": "{count} page", "other": "{count} pages" },
   "meta.panels": { "one": "{count} panel", "other": "{count} panels" },
   "meta.references": { "one": "{count} reference", "other": "{count} references" },
   "meta.segments": { "one": "{count} segment", "other": "{count} segments" },
   "meta.snapped": "{snapped} / {count}",
   "meta.zones": { "one": "{count} zone", "other": "{count} zones" },
+
+  "pages.about": "Every page of this project, saved as you work. Click one to open it.",
+  "pages.empty": "No pages yet. Upload one to begin.",
+  "pages.stage.bubbles": "Bubbles detected",
+  "pages.stage.flats": "Flats generated",
+  "pages.stage.page": "Uploaded",
+  "pages.stage.panels": "Panels detected",
+  "pages.stage.zones": "Zones segmented",
 
   "palette.about": "Click a colour to change it on every zone that holds it. Its number never changes.",
   "palette.add_image": "Add palette image",
@@ -274,21 +284,22 @@
   "toggle.neutral": "Neutral surround",
 
   "upload.again": "Upload another page",
+  "upload.delete": "Delete this page",
   "upload.engine": "Lines: {extractor}. Colours: {proposer}.",
   "upload.hint": "One page of line art, as an image file.",
   "upload.page": "{name}, {width} × {height} pixels",
-  "upload.reset": "Start over",
   "upload.run": "Upload page",
 
   "work.bubbles": "Detecting bubbles",
+  "work.delete_page": "Deleting the page",
   "work.export": "Writing the PSD",
   "work.flats": "Generating flats",
+  "work.open_page": "Opening the page",
   "work.page": "Uploading the page",
   "work.palette": "Uploading the palette image",
   "work.panels": "Detecting panels",
   "work.reading": "Reading the image",
   "work.reference": "Uploading the reference",
-  "work.reset": "Starting over",
   "work.snap_all": "Snapping every zone",
   "work.zones": "Segmenting zones",
 

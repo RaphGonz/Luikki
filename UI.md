@@ -305,9 +305,11 @@ A locked step gives the reason in plain words: `Detect panels first`. A closed
 stage gives the way back: `Segment zones again to change the panels. This deletes
 your merges and cuts.`
 
-Below the seven steps, and after a `--separator` line, put **References** and
-**Palette**. They are not steps. Give each one a summary: `4 references`,
-`11 colours`.
+Below the seven steps, and after a `--separator` line, put **Pages**,
+**References** and **Palette**. They are not steps. Give each one a summary:
+`3 pages`, `4 references`, `11 colours`. Pages lists every page of the project
+in the inspector, with how far each has got; clicking one opens it as it was
+left.
 
 ## 9. The inspector
 

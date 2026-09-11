@@ -34,7 +34,13 @@ Cloud = endpoint GPU authentifié, pas une SaaS. Projet, pages, refs, palette, m
 - [x] Sous-couche grise : hors sujet ici, c'est un autre procédé. La convention
       est tranchée et déjà en place — la couleur du flat passe **sous l'encre**
       (`expand_under_lines`), pas un gris dédié.
-- [ ] Brancher `model/store.py` → SPEC 1–4 (dossier projet, SQLite, ajout de pages, save à chaque édition).
+- [x] SPEC 1–4 : dossier projet, ajout de pages, sauvegarde à chaque édition.
+      **Fichiers, pas SQLite** (`web/project.py`) : JSON + zones en `.npy`,
+      lisible et facile à déboguer. `model/store.py` reste débranché.
+      Liste des planches dans le rail. Une référence supprimée **avertit**
+      (`flats_stale`), elle n'invalide plus les aplats.
+- [ ] Sélecteur de dossier projet dans l'app — indispensable, attend l'app
+      installée (B3/B4) ; aujourd'hui le projet = `--workdir`.
 - [x] Interface refaite d'après `UI.md` (rail · canvas · inspecteur), barre de
       progression réelle (`GET /api/progress`), tout le texte dans
       `static/locales/` — une langue = un fichier (`tests/test_locales.py`).
@@ -87,35 +93,255 @@ tant que les entrées sont des couleurs *proposées* il y en a une par segment.
       de calques annoncé = le compte de calques écrit, dans les deux
       granularités.
 
-## B — Installable + vendable
+## B — App installable + cloud (plan fixé le 2026-09-10)
 
-- [ ] MangaLineExtraction → ONNX (MIT, version transformers dispo). Client sans torch/CUDA.
-- [ ] Ligne nette : client = onnxruntime CPU. Serveur = torch/diffusers/CUDA.
-- [ ] Packaging PyInstaller/Briefcase + fenêtre pywebview. Poids téléchargés au 1er lancement.
-- [ ] **[€]** Certif signature code Windows (OV, token/HSM). Sans = alerte SmartScreen rouge.
-- [ ] **[€]** Apple Developer Program si build macOS (notarisation).
-- [ ] Projet d'exemple embarqué : 1 page + character sheet + palette → PSD au 1er lancement.
-- [ ] **[€]** Statut juridique + facturation (comptable).
-- [ ] **[€]** Paddle ou Lemon Squeezy (merchant of record = TVA gérée) plutôt que Stripe seul.
-- [ ] Serveur de licences : `POST /activate` → JWT signé (features + expiration), revalidation hebdo.
-- [ ] Grâce hors ligne 14–30 j.
-- [ ] **[€]** VPS licences (Hetzner, ~5 €/mois).
-- [ ] Licences « fondateur » vendues **avant** le cloud → teste paiement/facturation/activation.
+Décidé : **pas de mesure avant de construire**, perte sèche acceptée. Raph
+teste lui-même, puis fait tester des artistes ; on mesure après (section C).
+Micro-entreprise existante : Stripe live est possible dès que l'app l'est.
 
-## C — Endpoint GPU
+**Principe de sécurité.** Le client est open source : on ne le protège pas.
+Tout ce qui coûte — le GPU — se décide côté serveur, à chaque requête : token,
+abonnement, quota, concurrence. Donc **pas** de clé de licence, pas de JWT hors
+ligne, pas d'obfuscation, pas de VPS de licences. Faire tourner Cobra sur son
+propre GPU depuis les sources est permis et n'est pas le client visé.
 
-- [ ] Supprimer T5 : Cobra tourne sur prompt vide. Cacher le tenseur, ne jamais charger l'encodeur.
-- [ ] Poids cuits dans l'image ou volume réseau, pas de pull au démarrage. Cible : <30 s à froid, <2 s à chaud.
-- [ ] Protocole client→serveur, 1 requête = 1 case. In : crop masqué + tuiles refs + hint + top_k + steps. Out : raster. Versionné dès v1.
-- [ ] Retrieval CLIP côté client (onnxruntime CPU) → pool jamais uploadé.
-- [ ] **[€]** Serverless 16–24 Go (9,3 Go mesurés @12 refs). ~0,58 $/h 16 Go, ~0,68 $/h L4/A5000. Scale-to-zero. Pas de dédié sous ~50% d'usage.
-- [ ] Secure Cloud ou hébergeur UE. **Jamais Community Cloud** (hôtes tiers, kill à 5 s).
-- [ ] File d'attente + retries + quota mensuel en pages, affiché avant lancement du job.
-- [ ] Dégradation propre : quota/serveur/réseau KO → fallback proposer `distinct`, jamais de blocage.
-- [ ] **[€]** Stockage objet (R2 / Scaleway) pour installeurs + updates.
-- [ ] **[€]** Sentry client + serveur.
-- [ ] CGU/CGV : répercuter Attachment A OpenRAIL++-M (hérité PixArt) + non-rétention + non-entraînement.
-- [ ] Mesurer coût réel/page sur 10 abonnés avant de figer le quota.
+```
+App installée (Win/Mac)                    Modal (GPU)                      Supabase (UE)
+étapes 1-4, 6, 7 en local ─ HTTPS+token ─► FastAPI : token, abo, quota,  ─► comptes, abo,
+(CPU, onnxruntime)                         1 job/compte → CobraProposer     usage, appareils
+étape 5 : RemoteProposer                                                    ◄── webhook Stripe
+```
+
+### Pile retenue
+
+- **GPU : Modal.** La FastAPI tourne dans Modal (`@modal.asgi_app`) : l'auth
+  vit dans le serveur, aucune clé fournisseur dans le client, pas de passerelle
+  à héberger. L4 24 Go (0,80 $/h ; 9,3 Go mesurés @12 refs), A10 en repli
+  (1,10 $/h). Offre Starter = 30 $ de crédits/mois. Région par défaut (US) :
+  épingler l'UE coûte ×1,5, voir C. Rejeté : RunPod — une clé d'endpoint
+  partagée par tous les clients reste extractible, il faudrait une passerelle.
+- **Comptes : Supabase, région UE, plan Pro 25 $/mois** (le gratuit se met en
+  pause après 7 j sans activité). Aucun mot de passe : code OTP reçu par email,
+  tapé dans l'app. Python parle à l'API Auth, tokens rangés dans le trousseau
+  OS (`keyring`) — pas de redirection navigateur dans pywebview. SMTP perso
+  (Resend) : l'envoi intégré de Supabase est bridé.
+  **RLS activé sur toutes les tables** ; la clé `service_role` n'existe que dans
+  les secrets Modal. Le client ne porte que la clé publique.
+- **Paiement : Stripe.** Checkout hébergé ouvert dans le navigateur système,
+  Customer Portal pour résilier et changer de carte, webhooks → Supabase. Le
+  serveur ne croit jamais le client sur l'état d'un abonnement.
+- **Packaging : PyInstaller `onedir` + pywebview.** Inno Setup (Windows), DMG
+  notarisé (Mac arm64), GitHub Actions sur tag → GitHub Releases.
+- **Pas de CLIP en ONNX.** La sélection des tuiles reste sur le serveur
+  (`cobra.py:606`, déjà sur GPU). Les deux raisons de l'ancien plan (ne pas
+  envoyer le pool, client sans torch) tombent. **C'est MangaLineExtraction qui
+  passe en ONNX** : c'est le dernier torch du client.
+
+### Données (Supabase)
+
+- `subscriptions` : `user_id`, `status`, `plan` (`tester` | `paid`), `period_end`, `stripe_customer_id`
+- `usage` : `user_id`, `page_id`, `panels`, `created_at`
+- `devices` : `user_id`, `device_id`, `last_seen`
+- `jobs` : `user_id`, `started_at`, `ip` — le verrou « un job à la fois »
+
+Quota compté en `page_id` distincts par mois ; relancer la même page ne
+recompte pas, jusqu'à un plafond de générations par page (sinon l'artiste
+hésite à corriger, ce qui tue la valeur centrale). Valeurs provisoires :
+100 pages/mois, 10 générations/page. Fixées pour de bon en C.
+
+### API serveur v1
+
+Toutes sous `Authorization: Bearer <token Supabase>`, sauf le webhook. Chaque
+requête porte `protocol` ; un client trop vieux reçoit un code, l'app le traduit.
+
+- `GET /v1/version` — dernière version client, protocole minimal.
+- `GET /v1/me` — plan, quota restant.
+- `POST /v1/panel` — in : `page_id`, `device_id`, case masquée (PNG), références
+  (PNG), indices (masque + couleurs), `steps`, `seed`. Out : raster PNG +
+  `model_version`. `label_map` ne quitte jamais le client. Rien n'est écrit sur
+  disque côté serveur.
+- `POST /v1/checkout` — Checkout Session : `client_reference_id=user_id`,
+  `allow_promotion_codes=true`, `payment_method_collection="if_required"`.
+- `POST /v1/portal` — URL du Customer Portal.
+- `POST /v1/stripe/webhook` — signature vérifiée. `checkout.session.completed`,
+  `customer.subscription.updated`, `customer.subscription.deleted`,
+  `invoice.payment_failed` → `subscriptions`.
+
+Contrôles à chaque `POST /v1/panel`, dans cet ordre, avant de toucher au GPU :
+signature du token · abonnement actif (`tester` ou `paid` non expiré) · quota ·
+≤ 2 `device_id` par compte · un seul job en cours (deux IP simultanées = refus
++ log) · entrées PNG uniquement, plafond en px et en Mo · timeout.
+
+### Estimation
+
+Jours de travail concentré, Raph + Claude Code. **Total : 27–42 j, soit 6 à 9
+semaines à plein temps**, plus les délais de validation externes (Apple,
+Microsoft, Stripe) qui ne sont pas du travail mais du calendrier.
+
+| Phase | Jours | Débloque |
+|---|---|---|
+| B1 Cobra sur Modal | 3–5 | tests artistes en visio, GPU cloud |
+| B2 Comptes et quota | 5–7 | un artiste identifié peut générer |
+| B3 Client autonome | 7–12 | l'app tient seule, sans torch, sans perte |
+| B4 Installeurs | 5–8 | un artiste installe et lance chez lui |
+| B5 Stripe (test) | 3–4 | abonnement, codes testeurs |
+| B6 Production | 4–6 | un inconnu paie |
+
+Risques qui font sortir de la fourchette : le fork diffusers de Cobra (versions
+torch/CUDA figées) en B1 ; la persistance du projet en B3, qui touche chaque
+correction ; les imports cachés PyInstaller et l'absence de Mac pour tester en
+B4. B5 peut se faire en parallèle de B3.
+
+**À lancer le jour 1, parce que ça attend** : inscription Apple Developer,
+rendez-vous comptable, activation du compte Stripe, demande de validation
+Azure Artifact Signing.
+
+### B1 — Cobra sur Modal (fait, 2026-09-11)
+
+- [x] App Modal : image avec le fork diffusers de Cobra
+      (`pip install -e third_party/Cobra/diffusers`), poids HF dans un Volume
+      Modal (pas de téléchargement par requête), `CobraProposer` inchangé.
+      `cloud/modal_app.py`, Volume `luikki-weights`, `HF_HUB_OFFLINE=1` au
+      service, `max_containers=1` tant qu'il n'y a pas de quota.
+- [x] Charger `vae` et `scheduler` par sous-dossier et construire
+      `CobraPixArtAlphaPipeline` à la main. `from_pretrained(base)`
+      (`cobra.py:554`) télécharge le dossier `text_encoder` (T5) pour rien :
+      seuls les composants passés en argument sont sautés
+      (`pipeline_utils.py:1417` du fork). T5 n'est déjà pas en VRAM — le
+      pipeline n'enregistre que vae/transformer/controlnet/scheduler et lit le
+      prompt dans `prompt_tensor/*.pt`.
+- [x] `POST /v1/panel` derrière un token codé en dur (secret Modal
+      `luikki-api`). `cloud/server.py`, erreurs en `{code, params}`.
+- [x] `colour/remote.py` : `RemoteProposer` implémente `ColourProposer`.
+      `LUIKKI_PROPOSER=remote`, `luikki serve --proposer remote`. 3 essais avec
+      backoff, puis erreur. `tests/test_remote.py`.
+- [x] `scaledown_window` de quelques minutes : une séance en visio ne paie
+      qu'un démarrage à froid. 120 s : à 300 s, `teddy_page` (3 cases) a
+      tenu le conteneur 6 min — ~1 min de démarrage à froid + génération,
+      5 min à vide — soit ~0,08 $, dont cinq sixièmes d'attente.
+- Fait quand : `luikki serve --proposer remote` sort des flats sur la machine
+  de dev (1660 Ti). **Premier jalon utile** : tests artistes en visio, app sur
+  la machine de Raph, GPU sur Modal.
+  Vérifié le 2026-09-11 par `luikki flatten --proposer remote` sur
+  `teddy_page` : 3 cases, 438 segments, PSD écrit, couleurs de la référence.
+  Puis validé dans l'app par Raph le même jour (`luikki.bat`, qui lance
+  désormais `--proposer remote`) : rapide, sans accroc.
+
+### B2 — Comptes et quota (5–7 j)
+
+- [ ] Projet Supabase UE, tables ci-dessus, RLS sur toutes.
+- [ ] Écran de connexion dans l'app (email → code), `keyring`, refresh du token.
+- [ ] Vérification du token dans la FastAPI Modal, contrôles ci-dessus,
+      écriture de `usage`, `devices`, `jobs`.
+- [ ] `GET /v1/me` → quota affiché dans l'étape 5, **avant** le clic.
+- [ ] Erreurs réseau / quota / abonnement / version en `StepError`
+      `{code, params}` (c'est l'item de A), mots dans `locales/en.json` et `fr.json`.
+- [ ] Hors ligne ou sans abonnement : étapes 1–4, 6, 7 marchent ; l'étape 5 dit
+      pourquoi elle ne peut pas. Le proposer `distinct` reste un choix explicite
+      de l'artiste, jamais un repli silencieux — ses couleurs ne portent aucun
+      sens et le snap derrière serait arbitraire.
+- [ ] Testeurs : `plan='tester'` posé à la main dans Supabase (pas de Stripe).
+- Fait quand : un compte testeur génère ; un compte sans plan est refusé avec
+  un message traduit.
+
+### B3 — Client autonome (7–12 j)
+
+- [ ] MangaLineExtraction → ONNX : `torch.onnx.export` une fois, `.onnx`
+      versionné, `extract/manga_line.py` sur onnxruntime. Test de parité
+      torch/ONNX sur 2 planches réelles (lu sur les rendus).
+- [ ] Plus de torch dans le client : `_best_device` (`web/session.py`) passe aux
+      providers onnxruntime. `CobraProposer` reste utilisable depuis les sources.
+- [ ] Détecteur de bulles embarqué : plus de téléchargement au lancement
+      (`segmentation/bubbles.py:109`).
+- [ ] `platformdirs` : `%APPDATA%\Luikki`, `~/Library/Application Support/Luikki`
+      comme dossier de travail par défaut.
+- [x] **Persistance du projet** (fait dans A, en fichiers). Fermer la
+      fenêtre ne perd plus la page.
+- Fait quand : pipeline complet dans un venv sans torch, et une page survit à
+  la fermeture de l'app.
+
+### B4 — Installeurs (5–8 j)
+
+- [ ] Point d'entrée : uvicorn sur `127.0.0.1`, port libre, dans un thread ;
+      fenêtre pywebview dessus.
+- [ ] PyInstaller `onedir` ; imports cachés à régler (scipy, scikit-image,
+      opencv, onnxruntime, psd-tools).
+- [ ] Projet d'exemple embarqué : 1 page + character sheet + palette → PSD au
+      premier lancement.
+- [ ] Windows : Inno Setup. Non signé pendant les tests (« Informations
+      complémentaires → Exécuter quand même »).
+- [ ] Mac : build sur runner macOS GitHub Actions (PyInstaller ne compile pas
+      en croisé). `codesign` hardened runtime → `xcrun notarytool submit --wait`
+      → `xcrun stapler staple` → DMG. arm64.
+- [ ] **[€]** Apple Developer Program, 99 $/an, inscription en individuel (une
+      micro-entreprise n'est pas une personne morale). Sans notarisation,
+      l'artiste doit passer par Réglages → Confidentialité pour ouvrir l'app.
+- [ ] Secrets de signature dans GitHub. CI : tag `v*` → build Win + Mac →
+      GitHub Releases (gratuit, dépôt public).
+- [ ] Mise à jour : `GET /v1/version` au lancement → bandeau avec le lien.
+- [ ] Un Mac pour tester : un testeur, ou un Mac loué à l'heure.
+- Fait quand : installation sur une VM Windows vierge et sur un vrai Mac, une
+  page va jusqu'au PSD.
+
+### B5 — Stripe, mode test (3–4 j)
+
+- [ ] Produit « Luikki Cloud », prix mensuel.
+- [ ] Bouton « S'abonner » → `POST /v1/checkout` → `webbrowser.open(url)`,
+      jamais dans pywebview.
+- [ ] Customer Portal activé : résiliation, carte, factures.
+- [ ] Webhooks → `subscriptions` ; tester résiliation et paiement refusé.
+- [ ] Codes testeurs : coupon 100 %, `duration=repeating` (3 mois) ; Promotion
+      Codes `TESTEUR-XXXX` avec `max_redemptions` et `expires_at`. Pas de carte
+      demandée grâce à `payment_method_collection="if_required"`.
+- [ ] Offre fondateur : un autre coupon, même mécanique (remplace les
+      « licences fondateur »).
+- Fait quand : un testeur s'abonne avec un code sans carte, résilie via le
+  portail, et perd l'accès.
+
+### B6 — Production (4–6 j + délais externes)
+
+- [ ] Stripe live sur la micro-entreprise (SIREN, IBAN).
+- [ ] TVA : Stripe Managed Payments (Stripe marchand officiel, gère TVA,
+      fraude, litiges ; logiciels et SaaS admissibles) **si** la France est dans
+      les pays éligibles — la liste ne s'affiche qu'au navigateur, vérifier dans
+      le dashboard. Sinon Stripe Tax.
+- [ ] **[€]** Comptable : franchise en base de TVA ; seuil de 10 000 € de
+      ventes B2C à des particuliers UE hors France, au-delà duquel la TVA du pays
+      client s'applique (guichet OSS) ; activité déclarée qui couvre la vente
+      d'abonnements logiciels.
+- [ ] CGU/CGV : restrictions d'usage OpenRAIL++-M (Attachment A, héritées de
+      PixArt), images supprimées après le job, aucun entraînement. Case à cocher
+      à l'inscription.
+- [ ] **[€]** Sentry client + serveur, **aucune image** dans les événements.
+- [ ] **[€]** Signature Windows : Azure Artifact Signing (~10 $/mois). Les
+      particuliers doivent être aux États-Unis ou au Canada ; les organisations
+      UE sont admises — vérifier qu'une micro-entreprise passe la validation.
+      Repli : Certum Open Source Code Signing (conditions à vérifier). Même
+      signé, SmartScreen avertit tant que la réputation n'est pas construite
+      (EV ne la donne plus d'office).
+- [ ] Toutes les clés (Stripe live, `service_role`, signature) uniquement dans
+      les secrets Modal et GitHub.
+- Fait quand : un inconnu télécharge, s'abonne avec une vraie carte, génère
+  une page et reçoit sa facture.
+
+## C — Après les tests : mesurer, durcir
+
+- [ ] Mesurer : s/case, cases/page, pic VRAM, démarrage à froid, coût réel par
+      page, relances par page → figer quota et prix.
+- [ ] Région UE (Modal ×1,5, ou hébergeur UE) quand de vrais clients paient.
+      Jamais d'hôtes tiers (type Community Cloud).
+- [ ] Non-rétention vérifiée chez Modal (entrées, sorties, logs) + DPA signé.
+- [ ] Références envoyées une fois par hash, plus à chaque case.
+- [ ] Cases d'une page en parallèle : latence ÷ N mais N démarrages à froid →
+      plafond de workers par page.
+- [ ] Annulation : relancer l'étape 5 pendant un job annule les cases restantes
+      (sinon elles sont payées).
+- [ ] `model_version` gardé dans le projet : une page régénérée après une mise
+      à jour du modèle doit pouvoir dire pourquoi elle a changé.
+- [ ] Retrieval CLIP côté client (ONNX) seulement si « vos références ne
+      quittent pas votre machine » devient un argument de vente.
+- [ ] Mise à jour automatique à la place du bandeau.
+- [ ] **[€]** Stockage objet (R2 / Scaleway) si GitHub Releases ne suffit plus.
 
 ## D — Site + vidéos (parallèle, dès maintenant)
 
@@ -126,8 +352,8 @@ tant que les entrées sont des couleurs *proposées* il y en a une par segment.
 - [ ] Bloc « vos couleurs, vos références » sur page tarifs : refs de l'artiste uniquement / sortie brute jamais montrée ni exportée / aucun trait dans l'export / aucun entraînement.
 - [ ] Page tarifs 2 colonnes (mini gratuit installé / abonnement cloud), même avant le cloud.
 - [ ] **[€]** Hébergement vidéo : YouTube non répertorié au début, Bunny/Mux ensuite.
-- [ ] **[€]** Email transactionnel (Resend/Postmark).
-- [ ] 3 emails liste d'attente : démo vidéo → licences fondateur → ouverture cloud.
+- [ ] **[€]** Email transactionnel : Resend, le même compte que le SMTP Supabase (B2).
+- [ ] 3 emails liste d'attente : démo vidéo → codes fondateur → ouverture cloud.
 
 ## E — Lignes ouvertes (recherche, transverse)
 

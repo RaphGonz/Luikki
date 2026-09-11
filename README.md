@@ -289,6 +289,22 @@ proposer produced it, so swapping them changes one constructor call. The
 raster itself is never shown and never exported: it exists only to be reduced
 to one modal colour per zone.
 
+### Cobra on Modal
+
+The same proposer on a rented L4, for a machine without the VRAM
+(`cloud/modal_app.py`). The token is shared by the server and the app; the
+weights live in the `luikki-weights` Volume, T5 excluded.
+
+    pip install -e ".[cloud]"
+    modal secret create luikki-api LUIKKI_API_TOKEN=<token>
+    modal run -m luikki.cloud.modal_app::download    # once
+    modal deploy -m luikki.cloud.modal_app           # prints the URL
+
+    LUIKKI_REMOTE_URL=<url> LUIKKI_REMOTE_TOKEN=<token> luikki serve --proposer remote
+
+The image uses Cobra's pins (numpy 1.26, torch 2.5.1) — they are isolated in
+the container, so the warning above does not apply there.
+
 ## Layer counts, and what a page costs
 
 With no palette uploaded, every zone becomes its own palette entry and its own

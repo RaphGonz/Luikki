@@ -34,7 +34,7 @@ stage uses its result. Section 4 gives the rule for each one.
     luikki serve
 
 The command starts a local web server. Open the address that the command
-prints. Options: `--proposer cobra`, `--extractor raw`, `--port`.
+prints. Options: `--proposer cobra|remote`, `--extractor raw`, `--port`.
 
 Run the tests with `pytest`.
 
@@ -368,6 +368,10 @@ There are two proposers:
   colour to each zone. It needs no GPU. This is classical flatting output.
 - `CobraProposer` (`cobra`) needs an NVIDIA GPU with much VRAM. It runs on the
   machine of the artist. `README.md` has the numbers of the first real runs.
+- `RemoteProposer` (`remote`) is Cobra on a GPU somewhere else. It sends the
+  line art, the references and the hints of one panel to `POST /v1/panel`
+  (`cloud/server.py`) and reads back the raster. The zone map does not leave
+  the machine. It needs `LUIKKI_REMOTE_URL` and `LUIKKI_REMOTE_TOKEN`.
 
 Everything after this step reads the proposal raster only. To change the
 proposer, change one constructor call.
@@ -533,6 +537,7 @@ No colour is in `app.js`. Each colour is a token in the `:root` block of
       web/app.py              the HTTP routes
       web/progress.py         how far a long step is, for the progress bar
       web/static/index.html   the shell: header, rail, canvas, inspector, footer
+      web/project.py          the project folder: every page saved as it is edited
       web/static/app.js       the rail, the canvas, the corrections, one transform
       web/static/app.css      the tokens of UI.md, then the styles
       web/static/locales/     every word of the interface, one file a language
@@ -553,10 +558,15 @@ No colour is in `app.js`. Each colour is a token in the `:root` block of
         references.py         the reference images on disk + index.json
         proposer.py           the ColourProposer protocol, `distinct`
         cobra.py              the Cobra proposer
+        remote.py             the `remote` proposer: Cobra over HTTP
         segments.py           one zone as a thing the artist can click
         snap.py               zone mode -> nearest palette entry (CIELAB)
         extract.py            image -> palette colours
       export/psd.py           panels -> a layered PSD
+      cloud/
+        protocol.py           what client and server agree on: fields, PNG
+        server.py             POST /v1/panel: token, then the proposer
+        modal_app.py          the server on a Modal L4, weights in a Volume
       model/                  the SQLite store. Not used by the web app.
       spike/                  the A/B experiments. Reports are in `reports/`.
 

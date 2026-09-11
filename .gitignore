@@ -53,3 +53,4 @@ AGENTS.md
 
 # tokenade keeps a pre-injection backup of CLAUDE.md next to it. Local tooling.
 CLAUDE.md.tokenade-original
+AGENTS.md.tokenade-original

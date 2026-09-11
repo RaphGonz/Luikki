@@ -143,8 +143,11 @@ def main(argv: list[str] | None = None) -> int:
     serve.add_argument(
         "--proposer",
         default=None,
-        choices=["distinct", "cobra"],
-        help="colour proposer; cobra needs an NVIDIA GPU and its weights",
+        choices=["distinct", "cobra", "remote"],
+        help=(
+            "colour proposer; cobra needs an NVIDIA GPU and its weights, remote "
+            "needs LUIKKI_REMOTE_URL and LUIKKI_REMOTE_TOKEN"
+        ),
     )
     serve.add_argument(
         "--extractor",
@@ -167,7 +170,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     flatten.add_argument("-o", "--out", default=None, help="where the PSD lands")
     flatten.add_argument(
-        "--proposer", default="distinct", choices=["distinct", "cobra"]
+        "--proposer", default="distinct", choices=["distinct", "cobra", "remote"]
     )
     flatten.add_argument(
         "--threshold",
@@ -225,6 +228,10 @@ def main(argv: list[str] | None = None) -> int:
             from .colour.cobra import CobraProposer
 
             proposer = CobraProposer()
+        elif args.proposer == "remote":
+            from .colour.remote import RemoteProposer
+
+            proposer = RemoteProposer()
 
         workdir = Path(args.out or ".luikki-work/flatten")
         session = Session(workdir=workdir, proposer=proposer)

@@ -359,10 +359,15 @@ Built and reachable from a button: 5–16a, 17–27. Every stage proposes, and t
 artist can refuse it — panel and balloon corners, zone merges and cuts, the
 palette, and the colour of each zone.
 
-Not built: 1–4 (the project folder and the SQLite store; `model/store.py`
-exists and the web app does not use it), the named character behind a sheet
-in 19, and creating or renaming a palette colour by hand in 17 — a colour
-arrives from an image today.
+Built differently: 1–4. The project is the working folder (`luikki serve
+--workdir`), and it holds JSON and image files rather than a SQLite database —
+simpler to read and to debug (`web/project.py`). Every edit saves before it
+returns, and the app reopens the page that was open. Not built yet: picking
+the folder from inside the app, which waits for the installed app (ROADMAP B).
+`model/store.py` stays unused.
+
+Not built: the named character behind a sheet in 19, and creating or renaming
+a palette colour by hand in 17 — a colour arrives from an image today.
 
 ---
 

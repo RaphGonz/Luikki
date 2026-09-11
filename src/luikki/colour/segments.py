@@ -78,8 +78,10 @@ def build_segments(
 
         rows, cols = np.nonzero(label_map == label)
         # Pick the anchor off the zone's median row, so a crescent or a ring
-        # still anchors on its own pixels.
-        median_row = int(np.median(rows))
+        # still anchors on its own pixels. Taken from `rows` itself, which
+        # `nonzero` returns sorted: `np.median` averages the two middle rows,
+        # and for a zone in two pieces that average is a row it has no pixel on.
+        median_row = int(rows[len(rows) // 2])
         row_cols = cols[rows == median_row]
         anchor = (int(np.median(row_cols)) + offset_x, median_row + offset_y)
 
