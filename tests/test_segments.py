@@ -216,3 +216,20 @@ def test_build_segments_anchors_inside_the_zone(tmp_path):
 
     assert label_map[y, x] == 7
     assert segment.area == int((label_map == 7).sum())
+
+
+def test_build_segments_anchors_a_zone_in_two_pieces():
+    """The mean of the two middle rows can be a row the zone is not on.
+
+    Zones come out of absorption and the orphan pass in several pieces; this
+    one's pixel rows are 0, 0, 3, 3 and `np.median` put the anchor on row 1,
+    which crashed `Generate flats` on `teddy_page`.
+    """
+    label_map = np.full((5, 5), UNASSIGNED, np.int32)
+    label_map[0, 0:2] = 7
+    label_map[3, 0:2] = 7
+
+    segment = build_segments(0, label_map, {7: 3}, (0, 0))[0]
+    x, y = segment.anchor
+
+    assert label_map[y, x] == 7
