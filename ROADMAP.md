@@ -218,7 +218,8 @@ Azure Artifact Signing.
   la machine de Raph, GPU sur Modal.
   Vérifié le 2026-09-11 par `luikki flatten --proposer remote` sur
   `teddy_page` : 3 cases, 438 segments, PSD écrit, couleurs de la référence.
-  Même proposer que `serve` ; le clic dans l'app reste à faire.
+  Puis validé dans l'app par Raph le même jour (`luikki.bat`, qui lance
+  désormais `--proposer remote`) : rapide, sans accroc.
 
 ### B2 — Comptes et quota (5–7 j)
 
