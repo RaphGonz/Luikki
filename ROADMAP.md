@@ -242,7 +242,7 @@ fin : ce sont elles qui attendent.
   Puis validé dans l'app par Raph le même jour (`luikki.bat`, qui lance
   désormais `--proposer remote`) : rapide, sans accroc.
 
-### B2 — Comptes et quota (5–7 j)
+### B2 — Comptes et quota (fait, 2026-09-12)
 
 - [x] Compte Supabase (2026-09-12).
 - [x] Projet Supabase UE (2026-09-12).
@@ -261,15 +261,15 @@ fin : ce sont elles qui attendent.
       Fait (2026-09-12), connexion validée avec un vrai code : `luikki/account.py`,
       entrée **Compte** du rail. Connecté, l'étape 5 part avec la session et
       l'uuid de l'appareil ; sinon avec le token partagé.
-- [ ] Vérification du token dans la FastAPI Modal, contrôles ci-dessus,
+- [x] Vérification du token dans la FastAPI Modal, contrôles ci-dessus,
       écriture de `usage`, `devices`, `jobs`. Déployé (2026-09-12) ; la clé
       publique est refusée sur les tables et les deux fonctions (vérifié).
       `cloud/accounts.py`, `start_panel` / `finish_panel` dans
       `schema.sql`. Token vérifié sur place (ES256, clé publique du projet),
       tout le reste en une transaction. Écarts : `usage` écrit seulement si
       la case est peinte ; un appareil absent 30 j libère sa place ; les PNG
-      sont décodés avant le quota. Reste : retirer le token partagé une fois
-      la connexion faite (plafond des images : B6). Validé de bout en bout
+      sont décodés avant le quota. Le token partagé est retiré en B4, et le
+      plafond des images est en B6. Validé de bout en bout
       (2026-09-12) : étape 5 connectée, `usage` et `devices` écrits,
       `jobs` vidé à la fin.
 - [x] Quota affiché dans l'étape 5, **avant** le clic (2026-09-12). Pas par
@@ -308,6 +308,9 @@ fin : ce sont elles qui attendent.
 
 ### B4 — Installeurs (5–8 j)
 
+- [ ] Retirer le token partagé de B1 : serveur Modal, `luikki.bat`, et
+      `luikki flatten --proposer remote` passe par `Account`. Gardé jusque-là
+      comme filet si Supabase tombe pendant une séance en visio.
 - [ ] Point d'entrée : uvicorn sur `127.0.0.1`, port libre, dans un thread ;
       fenêtre pywebview dessus.
 - [ ] PyInstaller `onedir` ; imports cachés à régler (scipy, scikit-image,
