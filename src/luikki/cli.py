@@ -105,6 +105,43 @@ def _dump_psd(psd_path, out: Path, name: str) -> Path | None:
     return path
 
 
+def _app_options(parser: argparse.ArgumentParser, proposer: str | None = None) -> None:
+    """What `serve` and `app` share. `proposer` is the default when neither the
+    flag nor `LUIKKI_PROPOSER` names one."""
+    parser.add_argument(
+        "--workdir",
+        default=None,
+        help="the project folder (default: Luikki in the user's data folder)",
+    )
+    parser.add_argument(
+        "--proposer",
+        default=None,
+        choices=["distinct", "cobra", "remote"],
+        help=(
+            "colour proposer; cobra needs an NVIDIA GPU and its weights, remote "
+            "needs LUIKKI_REMOTE_URL and a signed-in account"
+            + (f" (default: {proposer})" if proposer else "")
+        ),
+    )
+    parser.add_argument(
+        "--extractor",
+        default=None,
+        choices=["manga", "raw"],
+        help="line extractor before segmentation; raw skips it (§2.2 chose manga)",
+    )
+    parser.set_defaults(default_proposer=proposer)
+
+
+def _apply_app_options(args: argparse.Namespace) -> None:
+    import os
+
+    proposer = args.proposer or os.environ.get("LUIKKI_PROPOSER") or args.default_proposer
+    if proposer:
+        os.environ["LUIKKI_PROPOSER"] = proposer
+    if args.extractor:
+        os.environ["LUIKKI_EXTRACTOR"] = args.extractor
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="luikki")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -139,28 +176,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     ab.add_argument("--no-debug", action="store_true", help="skip debug renders")
 
-    serve = sub.add_parser("serve", help="run the flatting app")
+    serve = sub.add_parser("serve", help="run the flatting app, for a browser")
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8000)
-    serve.add_argument(
-        "--workdir",
-        default=None,
-        help="the project folder (default: Luikki in the user's data folder)",
+    _app_options(serve)
+
+    window = sub.add_parser(
+        "app", help="run the flatting app in its own window, as the installed app does"
     )
-    serve.add_argument(
-        "--proposer",
-        default=None,
-        choices=["distinct", "cobra", "remote"],
-        help=(
-            "colour proposer; cobra needs an NVIDIA GPU and its weights, remote "
-            "needs LUIKKI_REMOTE_URL and a signed-in account"
-        ),
-    )
-    serve.add_argument(
-        "--extractor",
-        default=None,
-        choices=["manga", "raw"],
-        help="line extractor before segmentation; raw skips it (§2.2 chose manga)",
+    _app_options(window, proposer="remote")
+    window.add_argument(
+        "--debug", action="store_true", help="open the web inspector with the window"
     )
 
     flatten = sub.add_parser(
@@ -314,19 +340,21 @@ def main(argv: list[str] | None = None) -> int:
 
 
     if args.command == "serve":
-        import os
-
         import uvicorn
 
-        if args.proposer:
-            os.environ["LUIKKI_PROPOSER"] = args.proposer
-        if args.extractor:
-            os.environ["LUIKKI_EXTRACTOR"] = args.extractor
-
+        _apply_app_options(args)
         from .web.app import create_app
 
         print(f"Luikki on http://{args.host}:{args.port}")
         uvicorn.run(create_app(args.workdir), host=args.host, port=args.port)
+        return 0
+
+    if args.command == "app":
+        _apply_app_options(args)
+        from .desktop import run
+        from .web.app import create_app
+
+        run(create_app(args.workdir), debug=args.debug)
         return 0
 
     if args.command == "models":

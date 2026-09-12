@@ -332,8 +332,19 @@ fin : ce sont elles qui attendent.
       `not_signed_in` (pas de session) ; `flatten` lit la session que l'app a
       rangée dans le trousseau. Reste `LUIKKI_REMOTE_URL` : l'app installée
       devra porter l'URL elle-même.
-- [ ] Point d'entrée : uvicorn sur `127.0.0.1`, port libre, dans un thread ;
+- [x] Point d'entrée : uvicorn sur `127.0.0.1`, port libre, dans un thread ;
       fenêtre pywebview dessus.
+      Fait (2026-09-12) : `luikki app` (`desktop.py`, extra `[desktop]`,
+      pywebview 6.2). Le socket est lié avant d'être donné à uvicorn : pas de
+      course sur le port. Fenêtre maximisée, WebView2 non privé (la langue
+      survit), stockage dans `<données>/Luikki/webview`. L'export PSD passe
+      par la boîte « Enregistrer sous » du système (`ALLOW_DOWNLOADS`, sinon
+      pywebview annule le téléchargement). Vérifié sur la vraie planche :
+      la page rouvre, port 52134, fermer la fenêtre arrête le serveur.
+      `--proposer` vaut `remote` par défaut. Pas encore essayés à la main dans
+      la fenêtre : la boîte d'export et l'envoi de fichiers (WebView2 les gère
+      nativement). Pour PyInstaller : en mode fenêtré `sys.stderr` est `None`,
+      la config de logs d'uvicorn devra écrire dans un fichier.
 - [ ] PyInstaller `onedir` ; imports cachés à régler (scipy, scikit-image,
       opencv, onnxruntime, psd-tools).
 - [ ] Projet d'exemple embarqué : 1 page + character sheet + palette → PSD au

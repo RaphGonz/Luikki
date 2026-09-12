@@ -100,7 +100,8 @@ wrong is one click to fix.
 - `pyproject.toml` - Standard Python project configuration, defines dependencies, entry point, test paths
 - CLI: `luikki = "luikki.cli:main"` - Command-line entry point in `src/luikki/cli.py`
 - Subcommands:
-  - `serve` - the local app. `--port`, `--workdir`, `--proposer`, `--extractor`
+  - `serve` - the local app, for a browser. `--port`, `--workdir`, `--proposer`, `--extractor`
+  - `app` - the same app in its own window (`desktop.py`: uvicorn on a free port of 127.0.0.1 in a thread, pywebview on it; the `[desktop]` extra). `--proposer` defaults to `remote`; `--debug` opens the inspector
   - `flatten` - one page headlessly, then snap-all, then the PSD. `--reference`, `--threshold` (`inf` snaps everything), `--no-snap`, `--leak-gap` (§1.3's gap allowance, 0-1), `--steps` (one image per stage boundary)
   - `p3` / `ab` - the segmentation experiments; reports land in `reports/`
   - `models` - fill `models/` once: download the bubble detector (sha256-pinned), export `manga_line.onnx`

@@ -36,6 +36,13 @@ stage uses its result. Section 4 gives the rule for each one.
 The command starts a local web server. Open the address that the command
 prints. Options: `--proposer cobra|remote`, `--extractor raw`, `--port`.
 
+    pip install -e ".[desktop]"
+    luikki app
+
+The same app in its own window, as the installed app runs it (`desktop.py`).
+The server takes a free port of 127.0.0.1, and closing the window stops it.
+`--proposer` defaults to `remote`; `--debug` opens the web inspector.
+
 Run the tests with `pytest`.
 
 ## 3. The words this project uses
@@ -534,6 +541,7 @@ No colour is in `app.js`. Each colour is a token in the `:root` block of
 
     src/luikki/
       cli.py                  the `luikki` command
+      desktop.py              `luikki app`: the server in a thread, a window on it
       web/session.py          all state, the seven buttons      <- start here
       web/app.py              the HTTP routes
       web/progress.py         how far a long step is, for the progress bar
