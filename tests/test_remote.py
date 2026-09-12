@@ -94,6 +94,16 @@ def test_the_zone_map_stays_on_the_artists_machine():
     assert (received.label_map == UNASSIGNED).all()
 
 
+def test_the_page_and_the_press_travel_with_the_panel():
+    painter = Painter()
+    request = _request()
+    request.page_id, request.generation_id = "page-uuid", "press-uuid"
+    _remote(painter).propose(request)
+
+    received = painter.seen[0][0]
+    assert (received.page_id, received.generation_id) == ("page-uuid", "press-uuid")
+
+
 def test_the_model_version_is_kept():
     remote = _remote(Painter())
     remote.propose(_request())

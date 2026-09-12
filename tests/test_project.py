@@ -7,10 +7,14 @@ back exactly: the same state, the same pixels.
 
 from __future__ import annotations
 
+import json
+import uuid
+
 import cv2
 import numpy as np
 import pytest
 
+from luikki.colour.proposer import DistinctColourProposer
 from luikki.extract.passthrough import PassthroughExtractor
 from luikki.model.masks import UNASSIGNED
 from luikki.web import project
@@ -105,6 +109,56 @@ def test_two_pages_keep_their_own_work(tmp_path):
     assert session.original_name == "a.png"
     assert len(session.panels) == 2
     assert _start(tmp_path / "work").page_id == first, "the app reopens the page left open"
+
+
+def test_a_page_keeps_one_uuid_for_life(tmp_path):
+    """The GPU quota counts pages by it. Folder numbers are reused after a
+    deletion and repeat from project to project, so they cannot."""
+    session = _start(tmp_path / "work")
+    session.load_page(_page(tmp_path / "a.png"))
+    first_id, first_uid = session.page_id, session.page_uid
+    session.load_page(_page(tmp_path / "b.png"))
+
+    assert uuid.UUID(first_uid) and session.page_uid != first_uid
+    restarted = _start(tmp_path / "work")
+    restarted.open_page(first_id)
+    assert restarted.page_uid == first_uid
+
+
+def test_a_page_saved_before_uuids_gets_one_and_keeps_it(tmp_path):
+    session = _start(tmp_path / "work")
+    session.load_page(_page(tmp_path / "a.png"))
+    path = project.page_folder(session.workdir, session.page_id) / project.PAGE_FILE
+    record = json.loads(path.read_text(encoding="utf-8"))
+    del record["uid"]
+    path.write_text(json.dumps(record), encoding="utf-8")
+
+    given = _start(tmp_path / "work").page_uid
+    assert given
+    assert _start(tmp_path / "work").page_uid == given
+
+
+class _Recorder(DistinctColourProposer):
+    def __init__(self):
+        self.requests = []
+
+    def propose(self, request):
+        self.requests.append(request)
+        return super().propose(request)
+
+
+def test_every_panel_of_one_press_shares_its_generation(tmp_path):
+    recorder = _Recorder()
+    session = Session(tmp_path / "work", proposer=recorder, extractor=PassthroughExtractor())
+    _through_flats(session, _page(tmp_path / "page.png"))
+    session.generate_flats()
+
+    first, second = recorder.requests[:2], recorder.requests[2:]
+    assert len(first) == len(second) == 2
+    assert {request.page_id for request in recorder.requests} == {session.page_uid}
+    assert len({request.generation_id for request in first}) == 1
+    assert len({request.generation_id for request in second}) == 1
+    assert first[0].generation_id != second[0].generation_id
 
 
 def test_rerunning_a_step_leaves_no_stale_zone_files(tmp_path):

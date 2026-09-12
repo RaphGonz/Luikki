@@ -82,6 +82,8 @@ class RemoteProposer:
             "steps": str(self.num_inference_steps),
             "seed": str(self.seed),
             "kinds": [reference.kind for reference in request.references],
+            "page_id": request.page_id,
+            "generation_id": request.generation_id,
         }
 
         # A cold start loads gigabytes onto the GPU. Modal answers a request

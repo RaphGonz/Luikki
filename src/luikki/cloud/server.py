@@ -65,6 +65,9 @@ def create_server(proposer: ColourProposer, token: str, model_version: str) -> F
         kinds: list[str] = Form(default=[]),
         hint_colours: UploadFile | None = File(None),
         hint_mask: UploadFile | None = File(None),
+        # Received, not yet checked: B2 counts the quota by them.
+        page_id: str = Form(""),
+        generation_id: str = Form(""),
     ):
         if protocol != PROTOCOL:
             return _refuse(426, "protocol_unsupported", supported=PROTOCOL)
@@ -95,6 +98,8 @@ def create_server(proposer: ColourProposer, token: str, model_version: str) -> F
             references=refs,
             hint_colours=colours,
             hint_mask=mask,
+            page_id=page_id,
+            generation_id=generation_id,
         )
         with gpu:
             proposer.num_inference_steps = steps

@@ -249,9 +249,12 @@ fin : ce sont elles qui attendent.
 - [ ] Tables ci-dessus, RLS sur toutes : `src/luikki/cloud/schema.sql`, collé
       dans l'éditeur SQL. Aucune policy : seul le serveur (`service_role`) lit
       et écrit.
-- [ ] Un uuid par page dans `page.json` (et un par appui sur l'étape 5) :
+- [x] Un uuid par page dans `page.json` (et un par appui sur l'étape 5) :
       les numéros locaux sont réutilisés après suppression et se répètent
       d'un projet à l'autre, ils ne peuvent pas compter un quota.
+      Fait (2026-09-12) : `uid` dans `page.json` (donné à l'ouverture aux
+      planches d'avant), les deux ids partent dans `POST /v1/panel` ; le
+      serveur les reçoit sans les contrôler encore.
 - [ ] Écran de connexion dans l'app (email → code), `keyring`, refresh du token.
 - [ ] Vérification du token dans la FastAPI Modal, contrôles ci-dessus,
       écriture de `usage`, `devices`, `jobs`.

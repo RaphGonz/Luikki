@@ -28,6 +28,7 @@ import json
 import os
 import shutil
 import tempfile
+import uuid
 from pathlib import Path
 
 import cv2
@@ -198,6 +199,7 @@ def save_page(session, maps="all") -> dict:
 
     record = {
         "format": FORMAT,
+        "uid": session.page_uid,
         "name": session.original_name,
         "source": session.source.name,
         "protected": [[list(point) for point in polygon] for polygon in session.protected],
@@ -285,7 +287,14 @@ def open_page(session, page_id: int) -> None:
         session.reset()
         raise
 
+    if not record.get("uid"):
+        # A page saved before pages had one. Written at once, so it keeps the
+        # same id however often it is opened before its next edit.
+        record["uid"] = str(uuid.uuid4())
+        _write_json(folder / PAGE_FILE, record)
+
     session.page_id = page_id
+    session.page_uid = record["uid"]
     session.source = source
     session.original_name = record["name"]
     session.line_mask, session.grey = line_mask, grey

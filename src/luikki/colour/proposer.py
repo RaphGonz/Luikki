@@ -75,6 +75,11 @@ class PanelRequest:
     # both fields.
     hint_colours: np.ndarray | None = None
     hint_mask: np.ndarray | None = None
+    # Who pays for the panel, never what is painted: a uuid for the page and
+    # one for the press of step 5 it belongs to. The GPU server counts its
+    # quota by them (ROADMAP §B); a local proposer ignores both.
+    page_id: str = ""
+    generation_id: str = ""
 
     @property
     def size(self) -> tuple[int, int]:

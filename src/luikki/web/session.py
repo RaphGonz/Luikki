@@ -22,6 +22,7 @@ import inspect
 import json
 import threading
 import time
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -261,6 +262,9 @@ class Session:
         # were proposed from: one deleted since is a warning, never a reason
         # to throw the flats away — the artist's snaps are built on them.
         self.page_id: int | None = None
+        # What the GPU server counts the page by. `page_id` is a folder
+        # number, reused after a deletion and repeated in every project.
+        self.page_uid = ""
         self._flats_references: list[int] = []
 
     def _require_page(self) -> None:
@@ -281,6 +285,7 @@ class Session:
             page_id, source = project.new_page(self.workdir, Path(path))
             self.reset()
             self.page_id = page_id
+            self.page_uid = str(uuid.uuid4())
             self.source = source
             self.original_name = original_name or Path(path).name
             self.line_mask = line_mask
@@ -1397,6 +1402,8 @@ class Session:
             # One tick per panel, sized by its pixels: the proposer's cost
             # grows with the panel, and nothing inside it reports.
             total = sum(_megapixels(panel) for panel in colouring)
+            # One press, one generation: every panel of it carries the same id.
+            generation_id = str(uuid.uuid4())
             with self.progress.run(total) as progress:
                 for number, panel in enumerate(colouring, start=1):
                     progress.at("colour", number, len(colouring))
@@ -1404,6 +1411,8 @@ class Session:
                         line_art=self._line_art_for(panel),
                         label_map=panel.label_map,
                         references=self.reference_images(),
+                        page_id=self.page_uid,
+                        generation_id=generation_id,
                     )
                     proposal = self.proposer.propose(request)
 
