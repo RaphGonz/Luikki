@@ -131,6 +131,7 @@ wrong is one click to fix.
 - pip and setuptools
 - MangaLineExtraction: CPU or GPU through onnxruntime providers (`best_providers` in `extract/manga_line.py`: CUDA with `onnxruntime-gpu`, DirectML with `onnxruntime-directml`, else CPU). It degrades to CPU rather than refusing.
 - Model files live in `models/` (`luikki/models.py`; `LUIKKI_MODELS` overrides, a frozen app reads its bundle). Nothing downloads at launch: `luikki models` fetches the bubble detector and exports the line extractor, once per checkout.
+- The installed app: `packaging/luikki.spec` (PyInstaller onedir, built from `.venv-build`, which never has torch) → `dist/Luikki`. `packaging/smoke.py <page>` checks a build end to end; the windowed exe logs to `%LOCALAPPDATA%\Luikki\Logs\luikki.log`.
 - For GUI/visualization: OpenCV with headless mode (cv2 works without display server)
 - Python 3.11+ runtime
 - No torch at runtime: the whole local pipeline runs on numpy, OpenCV and onnxruntime

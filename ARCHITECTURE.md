@@ -43,6 +43,17 @@ The same app in its own window, as the installed app runs it (`desktop.py`).
 The server takes a free port of 127.0.0.1, and closing the window stops it.
 `--proposer` defaults to `remote`; `--debug` opens the web inspector.
 
+    python -m venv .venv-build
+    .venv-build\Scripts\pip install -e ".[desktop]" pyinstaller
+    .venv-build\Scripts\pyinstaller packaging\luikki.spec --noconfirm
+    .venv-build\Scripts\python packaging\smoke.py <page>
+
+The installed app, in `dist\Luikki`. Build it from a venv without torch, after
+`luikki models` and with `third_party/LineFiller` present. `Luikki.exe` alone
+opens the window; `Luikki.exe <command>` runs any `luikki` command, which is
+what `smoke.py` uses to take one page through the build. The app has no
+console: its output goes to `luikki.log` in the user's log folder.
+
 Run the tests with `pytest`.
 
 ## 3. The words this project uses

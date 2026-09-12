@@ -1,4 +1,6 @@
 .venv/
+# The build venv: the app's dependencies and PyInstaller, never torch.
+.venv-build/
 __pycache__/
 *.pyc
 *.egg-info/

@@ -11,7 +11,9 @@ Windows, WebKit on the Mac), so the page is the one `static/` serves, unchanged.
 
 from __future__ import annotations
 
+import faulthandler
 import socket
+import sys
 import threading
 import time
 from pathlib import Path
@@ -21,6 +23,35 @@ import uvicorn
 # Long enough for a slow first start, short enough that a server that cannot
 # start says so instead of leaving a blank window.
 START_SECONDS = 30.0
+# The log is started over past this size, keeping one previous file.
+LOG_BYTES = 5_000_000
+
+
+def log_to_file(folder: Path | None = None) -> Path | None:
+    """Give an app built without a console somewhere to write.
+
+    Such an app starts with `sys.stdout` and `sys.stderr` set to None, and the
+    first thing that writes takes it down before the window opens — uvicorn's
+    log setup asks `sys.stdout.isatty()`. Both go to one file instead, which is
+    also the file a tester sends when something breaks. None when there is a
+    console, and nothing changes.
+    """
+    if sys.stdout is not None and sys.stderr is not None:
+        return None
+    if folder is None:
+        from platformdirs import user_log_dir
+
+        folder = Path(user_log_dir("Luikki", appauthor=False))
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / "luikki.log"
+    if path.exists() and path.stat().st_size > LOG_BYTES:
+        path.replace(path.with_name(path.name + ".1"))
+    stream = path.open("a", encoding="utf-8", buffering=1)
+    sys.stdout = sys.stdout or stream
+    sys.stderr = sys.stderr or stream
+    # A crash inside the web engine or onnxruntime leaves a trace here too.
+    faulthandler.enable(stream)
+    return path
 
 
 class LocalServer:

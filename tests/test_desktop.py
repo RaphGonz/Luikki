@@ -24,6 +24,23 @@ def _app(tmp_path):
     return create_app(tmp_path / "work", extractor=PassthroughExtractor())
 
 
+def test_an_app_without_a_console_writes_to_a_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys, "stdout", None)
+    monkeypatch.setattr(sys, "stderr", None)
+    monkeypatch.setattr(desktop.faulthandler, "enable", lambda stream: None)
+
+    path = desktop.log_to_file(tmp_path)
+    print("hello")
+    sys.stdout.close()
+
+    assert path.read_text(encoding="utf-8") == "hello\n"
+
+
+def test_with_a_console_nothing_moves(tmp_path):
+    assert desktop.log_to_file(tmp_path) is None
+    assert not (tmp_path / "luikki.log").exists()
+
+
 def test_two_servers_each_take_a_free_port_and_stop(tmp_path):
     servers = [LocalServer(_app(tmp_path)), LocalServer(_app(tmp_path))]
     assert servers[0].port != servers[1].port

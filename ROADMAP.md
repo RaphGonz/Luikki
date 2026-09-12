@@ -345,8 +345,22 @@ fin : ce sont elles qui attendent.
       la fenêtre : la boîte d'export et l'envoi de fichiers (WebView2 les gère
       nativement). Pour PyInstaller : en mode fenêtré `sys.stderr` est `None`,
       la config de logs d'uvicorn devra écrire dans un fichier.
-- [ ] PyInstaller `onedir` ; imports cachés à régler (scipy, scikit-image,
+- [x] PyInstaller `onedir` ; imports cachés à régler (scipy, scikit-image,
       opencv, onnxruntime, psd-tools).
+      Fait (2026-09-12) : `packaging/luikki.spec`, construit depuis
+      `.venv-build` (sans torch). Les hooks de PyInstaller 6.22 et de
+      hooks-contrib suffisent pour scipy, scikit-image, opencv 5, onnxruntime,
+      psd-tools, pywebview/pythonnet et keyring ; seuls imports ajoutés :
+      `linefiller` (dossier vendu, pas un paquet) et les sous-modules
+      d'uvicorn. `dist/Luikki` = 638 Mo, dont 340 Mo de modèles. Écarts :
+      l'exécutable sans console écrit sa sortie dans
+      `%LOCALAPPDATA%\Luikki\Logs\luikki.log` (`desktop.log_to_file`), et
+      `Luikki.exe <commande>` lance n'importe quelle commande `luikki`, d'où
+      `packaging/smoke.py` : une planche de bout en bout dans l'exécutable,
+      sans fenêtre. Vérifié : teddy (3 cases, 438 segments, PSD, 297 s sur
+      CPU) et tintin (12 cases, 12 bulles, 659 segments, 15 s) ; la fenêtre
+      s'ouvre, lit le compte dans le trousseau, se ferme proprement. Reste
+      l'icône : l'exécutable a celle de PyInstaller.
 - [ ] Projet d'exemple embarqué : 1 page + character sheet + palette → PSD au
       premier lancement.
 - [ ] Windows : Inno Setup. Non signé pendant les tests (« Informations

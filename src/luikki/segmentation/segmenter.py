@@ -128,17 +128,20 @@ class LineFillerSegmenter:
 
     @staticmethod
     def _load():
-        if not _VENDOR_DIR.exists():
-            raise FileNotFoundError(
-                f"LineFiller not vendored at {_VENDOR_DIR}. "
-                "git clone https://github.com/hepesu/LineFiller.git"
-            )
-        if str(_VENDOR_DIR) not in sys.path:
+        # A checkout reads the vendored folder; the installed app carries
+        # `linefiller` inside its bundle, where there is no folder to add.
+        if _VENDOR_DIR.exists() and str(_VENDOR_DIR) not in sys.path:
             sys.path.insert(0, str(_VENDOR_DIR))
 
         _install_quiet_logger()
 
-        from linefiller import trappedball_fill  # type: ignore[import-not-found]
+        try:
+            from linefiller import trappedball_fill  # type: ignore[import-not-found]
+        except ImportError as exc:
+            raise FileNotFoundError(
+                f"LineFiller not vendored at {_VENDOR_DIR}. "
+                "git clone https://github.com/hepesu/LineFiller.git"
+            ) from exc
 
         return trappedball_fill
 
