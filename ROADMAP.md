@@ -38,7 +38,8 @@ Cloud = endpoint GPU authentifié, pas une SaaS. Projet, pages, refs, palette, m
       **Fichiers, pas SQLite** (`web/project.py`) : JSON + zones en `.npy`,
       lisible et facile à déboguer. `model/store.py` reste débranché.
       Liste des planches dans le rail. Une référence supprimée **avertit**
-      (`flats_stale`), elle n'invalide plus les aplats.
+      (`flats_stale`), elle n'invalide plus les aplats. Validé dans l'app par
+      Raph le 2026-09-11.
 - [ ] Sélecteur de dossier projet dans l'app — indispensable, attend l'app
       installée (B3/B4) ; aujourd'hui le projet = `--workdir`.
 - [x] Interface refaite d'après `UI.md` (rail · canvas · inspecteur), barre de
@@ -193,8 +194,7 @@ correction ; les imports cachés PyInstaller et l'absence de Mac pour tester en
 B4. B5 peut se faire en parallèle de B3.
 
 **À lancer le jour 1, parce que ça attend** : inscription Apple Developer,
-rendez-vous comptable, activation du compte Stripe, demande de validation
-Azure Artifact Signing.
+activation du compte Stripe, demande de validation Azure Artifact Signing.
 
 ### B1 — Cobra sur Modal (fait, 2026-09-11)
 
@@ -305,7 +305,7 @@ Azure Artifact Signing.
       fraude, litiges ; logiciels et SaaS admissibles) **si** la France est dans
       les pays éligibles — la liste ne s'affiche qu'au navigateur, vérifier dans
       le dashboard. Sinon Stripe Tax.
-- [ ] **[€]** Comptable : franchise en base de TVA ; seuil de 10 000 € de
+- [x] ~~**[€]** Comptable~~ — pas besoin, vérifié par Raph (2026-09-11) : franchise en base de TVA ; seuil de 10 000 € de
       ventes B2C à des particuliers UE hors France, au-delà duquel la TVA du pays
       client s'applique (guichet OSS) ; activité déclarée qui couvre la vente
       d'abonnements logiciels.
@@ -355,7 +355,10 @@ Azure Artifact Signing.
 - [ ] **[€]** Email transactionnel : Resend, le même compte que le SMTP Supabase (B2).
 - [ ] 3 emails liste d'attente : démo vidéo → codes fondateur → ouverture cloud.
 
-## E — Lignes ouvertes (recherche, transverse)
+## ~~E — Lignes ouvertes (recherche, transverse)~~ — résolu (2026-09-11)
+
+**Section close.** Raph considère les lignes ouvertes résolues : les cases non
+cochées ci-dessous ne sont plus à faire. Gardé pour l'historique.
 
 Le trait ouvert reste LE défaut du produit : une zone qui fuit = une correction
 manuelle par fuite. Deux mécanismes en place (`segmentation/closure.py`) :
@@ -443,5 +446,5 @@ Rien à réinventer côté segmentation — c'est de l'UI et de la persistance.
   trait, la couleur du flat passe déjà, et c'est la bonne convention.
 - **Calques par objet** : faisable = problème de **nommage**, pas de vision. Zone fusionnée = objet. Nomme l'entrée palette, groupe l'export par nom.
 - **Calques par objet inter-cases** : non faisable. Cobra échoue dès que les refs montrent des persos différents. Ne pas construire.
-- **Lignes ouvertes** : premier poste, avant tout le reste de A. C'est la seule étape dont l'échec se paie en corrections manuelles à chaque page. Recherche d'abord, code ensuite.
+- ~~**Lignes ouvertes** : premier poste, avant tout le reste de A. C'est la seule étape dont l'échec se paie en corrections manuelles à chaque page. Recherche d'abord, code ensuite.~~ Résolu (2026-09-11).
 - **Animation** : même moteur, deux retraits (cases, bulles) et un ajout (l'image comme unité). Le risque n'est pas la segmentation, c'est la cohérence d'une zone d'une image à la suivante — à prototyper avant de promettre la variante.
