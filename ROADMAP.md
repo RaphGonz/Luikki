@@ -46,7 +46,11 @@ Cloud = endpoint GPU authentifié, pas une SaaS. Projet, pages, refs, palette, m
       progression réelle (`GET /api/progress`), tout le texte dans
       `static/locales/` — une langue = un fichier (`tests/test_locales.py`).
 - [x] Français : `locales/fr.json`, sélecteur de langue en bas à droite.
-- [ ] Messages d'erreur du serveur traduisibles : les `StepError` Python en `{code, params}`.
+- [x] Messages d'erreur du serveur traduisibles : les `StepError` Python en `{code, params}`.
+      Fait (2026-09-12) : le code est la clé `error.<code>` des locales,
+      écrit en toutes lettres au `raise` ; `tests/test_locales.py` vérifie
+      que chaque code a sa phrase. Restent en anglais : le 503 d'un proposer
+      qui ne répond pas (c'est l'item réseau de B2).
 
 ### Export final — granularité, compte de calques, garde ΔE (fait)
 
@@ -100,6 +104,11 @@ Décidé : **pas de mesure avant de construire**, perte sèche acceptée. Raph
 teste lui-même, puis fait tester des artistes ; on mesure après (section C).
 Micro-entreprise existante : Stripe live est possible dès que l'app l'est.
 
+**Comptes ouverts (2026-09-12)** : Supabase, Resend (domaine du site vérifié),
+Stripe en mode test. **Pas de signature de code pendant les tests** : ni Apple
+Developer ni Azure Artifact Signing, trop chers avant d'avoir fait tester
+l'app. Le testeur passe l'avertissement de l'OS. Les deux passent en B6.
+
 **Principe de sécurité.** Le client est open source : on ne le protège pas.
 Tout ce qui coûte — le GPU — se décide côté serveur, à chaque requête : token,
 abonnement, quota, concurrence. Donc **pas** de clé de licence, pas de JWT hors
@@ -132,7 +141,7 @@ App installée (Win/Mac)                    Modal (GPU)                      Sup
   Customer Portal pour résilier et changer de carte, webhooks → Supabase. Le
   serveur ne croit jamais le client sur l'état d'un abonnement.
 - **Packaging : PyInstaller `onedir` + pywebview.** Inno Setup (Windows), DMG
-  notarisé (Mac arm64), GitHub Actions sur tag → GitHub Releases.
+  (Mac arm64), non signés jusqu'à B6, GitHub Actions sur tag → GitHub Releases.
 - **Pas de CLIP en ONNX.** La sélection des tuiles reste sur le serveur
   (`cobra.py:606`, déjà sur GPU). Les deux raisons de l'ancien plan (ne pas
   envoyer le pool, client sans torch) tombent. **C'est MangaLineExtraction qui
@@ -141,12 +150,13 @@ App installée (Win/Mac)                    Modal (GPU)                      Sup
 ### Données (Supabase)
 
 - `subscriptions` : `user_id`, `status`, `plan` (`tester` | `paid`), `period_end`, `stripe_customer_id`
-- `usage` : `user_id`, `page_id`, `panels`, `created_at`
+- `usage` : une ligne par `POST /v1/panel` — `user_id`, `page_id`, `generation_id`, `created_at`
 - `devices` : `user_id`, `device_id`, `last_seen`
 - `jobs` : `user_id`, `started_at`, `ip` — le verrou « un job à la fois »
 
 Quota compté en `page_id` distincts par mois ; relancer la même page ne
-recompte pas, jusqu'à un plafond de générations par page (sinon l'artiste
+recompte pas, jusqu'à un plafond de générations par page (`generation_id`
+distincts : un appui sur l'étape 5) (sinon l'artiste
 hésite à corriger, ce qui tue la valeur centrale). Valeurs provisoires :
 100 pages/mois, 10 générations/page. Fixées pour de bon en C.
 
@@ -157,7 +167,8 @@ requête porte `protocol` ; un client trop vieux reçoit un code, l'app le tradu
 
 - `GET /v1/version` — dernière version client, protocole minimal.
 - `GET /v1/me` — plan, quota restant.
-- `POST /v1/panel` — in : `page_id`, `device_id`, case masquée (PNG), références
+- `POST /v1/panel` — in : `page_id`, `generation_id`, `device_id` (uuid tous
+  les trois), case masquée (PNG), références
   (PNG), indices (masque + couleurs), `steps`, `seed`. Out : raster PNG +
   `model_version`. `label_map` ne quitte jamais le client. Rien n'est écrit sur
   disque côté serveur.
@@ -193,8 +204,10 @@ torch/CUDA figées) en B1 ; la persistance du projet en B3, qui touche chaque
 correction ; les imports cachés PyInstaller et l'absence de Mac pour tester en
 B4. B5 peut se faire en parallèle de B3.
 
-**À lancer le jour 1, parce que ça attend** : inscription Apple Developer,
-activation du compte Stripe, demande de validation Azure Artifact Signing.
+**À lancer le jour 1, parce que ça attend** : compte Stripe (ouvert en mode
+test, 2026-09-12). Inscription Apple Developer et validation Azure Artifact
+Signing reportées en B6 (2026-09-12) — les lancer au **début** de B6, pas à la
+fin : ce sont elles qui attendent.
 
 ### B1 — Cobra sur Modal (fait, 2026-09-11)
 
@@ -229,13 +242,22 @@ activation du compte Stripe, demande de validation Azure Artifact Signing.
 
 ### B2 — Comptes et quota (5–7 j)
 
-- [ ] Projet Supabase UE, tables ci-dessus, RLS sur toutes.
+- [x] Compte Supabase (2026-09-12).
+- [x] Projet Supabase UE (2026-09-12).
+- [x] SMTP Supabase → Resend (2026-09-12) : l'envoi intégré de Supabase
+      bride les codes OTP.
+- [ ] Tables ci-dessus, RLS sur toutes : `src/luikki/cloud/schema.sql`, collé
+      dans l'éditeur SQL. Aucune policy : seul le serveur (`service_role`) lit
+      et écrit.
+- [ ] Un uuid par page dans `page.json` (et un par appui sur l'étape 5) :
+      les numéros locaux sont réutilisés après suppression et se répètent
+      d'un projet à l'autre, ils ne peuvent pas compter un quota.
 - [ ] Écran de connexion dans l'app (email → code), `keyring`, refresh du token.
 - [ ] Vérification du token dans la FastAPI Modal, contrôles ci-dessus,
       écriture de `usage`, `devices`, `jobs`.
 - [ ] `GET /v1/me` → quota affiché dans l'étape 5, **avant** le clic.
 - [ ] Erreurs réseau / quota / abonnement / version en `StepError`
-      `{code, params}` (c'est l'item de A), mots dans `locales/en.json` et `fr.json`.
+      `{code, params}` (mécanisme fait dans A, restent ces codes), mots dans `locales/en.json` et `fr.json`.
 - [ ] Hors ligne ou sans abonnement : étapes 1–4, 6, 7 marchent ; l'étape 5 dit
       pourquoi elle ne peut pas. Le proposer `distinct` reste un choix explicite
       de l'artiste, jamais un repli silencieux — ses couleurs ne portent aucun
@@ -253,8 +275,11 @@ activation du compte Stripe, demande de validation Azure Artifact Signing.
       providers onnxruntime. `CobraProposer` reste utilisable depuis les sources.
 - [ ] Détecteur de bulles embarqué : plus de téléchargement au lancement
       (`segmentation/bubbles.py:109`).
-- [ ] `platformdirs` : `%APPDATA%\Luikki`, `~/Library/Application Support/Luikki`
-      comme dossier de travail par défaut.
+- [x] `platformdirs` : `%LOCALAPPDATA%\Luikki` (local, pas roaming : les
+      cartes de zones ne se synchronisent pas), `~/Library/Application
+      Support/Luikki`, comme dossier de travail par défaut (2026-09-12).
+      Avant : le dossier temp, que le nettoyage de disque vide. Un projet
+      resté dans `%TEMP%\luikki` est copié une fois au premier lancement.
 - [x] **Persistance du projet** (fait dans A, en fichiers). Fermer la
       fenêtre ne perd plus la page.
 - Fait quand : pipeline complet dans un venv sans torch, et une page survit à
@@ -271,13 +296,15 @@ activation du compte Stripe, demande de validation Azure Artifact Signing.
 - [ ] Windows : Inno Setup. Non signé pendant les tests (« Informations
       complémentaires → Exécuter quand même »).
 - [ ] Mac : build sur runner macOS GitHub Actions (PyInstaller ne compile pas
-      en croisé). `codesign` hardened runtime → `xcrun notarytool submit --wait`
-      → `xcrun stapler staple` → DMG. arm64.
-- [ ] **[€]** Apple Developer Program, 99 $/an, inscription en individuel (une
-      micro-entreprise n'est pas une personne morale). Sans notarisation,
-      l'artiste doit passer par Réglages → Confidentialité pour ouvrir l'app.
-- [ ] Secrets de signature dans GitHub. CI : tag `v*` → build Win + Mac →
-      GitHub Releases (gratuit, dépôt public).
+      en croisé). Signature ad hoc seulement (`codesign -s -`, que PyInstaller
+      pose par défaut ; vérifier `codesign -dv` sur le `.app`) : sans aucune
+      signature, un binaire arm64 ne se lance pas. DMG. arm64. Notarisation : B6.
+- [ ] Mode d'emploi testeur, une ligne par OS. Windows : « Informations
+      complémentaires → Exécuter quand même ». Mac : ouvrir une fois, puis
+      Réglages → Confidentialité et sécurité → « Ouvrir quand même » (depuis
+      macOS 15, clic droit → Ouvrir ne suffit plus).
+- [ ] CI : tag `v*` → build Win + Mac → GitHub Releases (gratuit, dépôt
+      public). Secrets de signature : B6.
 - [ ] Mise à jour : `GET /v1/version` au lancement → bandeau avec le lien.
 - [ ] Un Mac pour tester : un testeur, ou un Mac loué à l'heure.
 - Fait quand : installation sur une VM Windows vierge et sur un vrai Mac, une
@@ -285,6 +312,7 @@ activation du compte Stripe, demande de validation Azure Artifact Signing.
 
 ### B5 — Stripe, mode test (3–4 j)
 
+- [x] Compte Stripe en mode test (2026-09-12).
 - [ ] Produit « Luikki Cloud », prix mensuel.
 - [ ] Bouton « S'abonner » → `POST /v1/checkout` → `webbrowser.open(url)`,
       jamais dans pywebview.
@@ -313,7 +341,12 @@ activation du compte Stripe, demande de validation Azure Artifact Signing.
       PixArt), images supprimées après le job, aucun entraînement. Case à cocher
       à l'inscription.
 - [ ] **[€]** Sentry client + serveur, **aucune image** dans les événements.
-- [ ] **[€]** Signature Windows : Azure Artifact Signing (~10 $/mois). Les
+- [ ] **[€]** Apple Developer Program, 99 $/an, inscription en individuel (une
+      micro-entreprise n'est pas une personne morale). Puis `codesign`
+      hardened runtime → `xcrun notarytool submit --wait` → `xcrun stapler
+      staple` → DMG. Reporté de B4 (2026-09-12).
+- [ ] **[€]** Signature Windows : Azure Artifact Signing (~10 $/mois), reportée
+      des tests (2026-09-12). Les
       particuliers doivent être aux États-Unis ou au Canada ; les organisations
       UE sont admises — vérifier qu'une micro-entreprise passe la validation.
       Repli : Certum Open Source Code Signing (conditions à vérifier). Même
@@ -352,7 +385,7 @@ activation du compte Stripe, demande de validation Azure Artifact Signing.
 - [ ] Bloc « vos couleurs, vos références » sur page tarifs : refs de l'artiste uniquement / sortie brute jamais montrée ni exportée / aucun trait dans l'export / aucun entraînement.
 - [ ] Page tarifs 2 colonnes (mini gratuit installé / abonnement cloud), même avant le cloud.
 - [ ] **[€]** Hébergement vidéo : YouTube non répertorié au début, Bunny/Mux ensuite.
-- [ ] **[€]** Email transactionnel : Resend, le même compte que le SMTP Supabase (B2).
+- [x] **[€]** Email transactionnel : Resend, le même compte que le SMTP Supabase (B2). Compte et domaine du site faits (2026-09-12).
 - [ ] 3 emails liste d'attente : démo vidéo → codes fondateur → ouverture cloud.
 
 ## ~~E — Lignes ouvertes (recherche, transverse)~~ — résolu (2026-09-11)
