@@ -1,13 +1,15 @@
 """The remote proposer and the GPU endpoint, talking to each other.
 
 Cobra does not run here, so the server holds a stand-in proposer that paints
-something checkable. What is under test is the wire: every pixel that goes up
+something checkable, and the account gate is a stand-in too (`test_accounts.py`
+tests the real one). What is under test is the wire: every pixel that goes up
 comes back exact, the zone map never goes up, and the server refuses before
 the proposer is touched.
 """
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -18,13 +20,15 @@ httpx = pytest.importorskip("httpx")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+from luikki.cloud.accounts import Refused  # noqa: E402
 from luikki.cloud.protocol import MODEL_VERSION_HEADER, PANEL_ROUTE, encode_png  # noqa: E402
 from luikki.cloud.server import create_server  # noqa: E402
 from luikki.colour.proposer import PanelRequest, ReferenceImage  # noqa: E402
 from luikki.colour.remote import RemoteProposer, RemoteUnavailable  # noqa: E402
 from luikki.model.masks import UNASSIGNED  # noqa: E402
 
-TOKEN = "secret"
+TOKEN = "session"
+PAGE, GENERATION, DEVICE = (str(uuid.uuid4()) for _ in range(3))
 
 
 @dataclass
@@ -47,6 +51,40 @@ class Painter:
         return out
 
 
+class _Door:
+    """Lets `TOKEN` in and nothing else."""
+
+    def user(self, token: str) -> str:
+        if token != TOKEN:
+            raise Refused(401, "unauthorized")
+        return "artist"
+
+
+class _Ledger:
+    def start(self, *args) -> None:
+        pass
+
+    def finish(self, *args) -> None:
+        pass
+
+
+@dataclass
+class _Session:
+    """Stands in for `luikki.account.Account`."""
+
+    token: str | None = TOKEN
+
+    def access_token(self) -> str | None:
+        return self.token
+
+    def device_id(self) -> str:
+        return DEVICE
+
+
+def _server(painter: Painter) -> TestClient:
+    return TestClient(create_server(painter, model_version="painter@1", verifier=_Door(), ledger=_Ledger()))
+
+
 def _request() -> PanelRequest:
     rng = np.random.default_rng(0)
     # Not square, so a swapped axis anywhere shows.
@@ -62,13 +100,23 @@ def _request() -> PanelRequest:
         ],
         hint_colours=np.full((37, 53, 3), (200, 30, 90), dtype=np.uint8),
         hint_mask=mask,
+        page_id=PAGE,
+        generation_id=GENERATION,
     )
 
 
 def _remote(painter: Painter, **kwargs) -> RemoteProposer:
-    client = TestClient(create_server(painter, token=TOKEN, model_version="painter@1"))
-    options = dict(url="http://testserver", token=TOKEN, client=client, backoff=0)
+    options = dict(url="http://testserver", account=_Session(), client=_server(painter), backoff=0)
     return RemoteProposer(**(options | kwargs))
+
+
+def _post(client: TestClient, protocol: str, line_art: tuple, token: str = TOKEN):
+    return client.post(
+        PANEL_ROUTE,
+        headers={"authorization": f"Bearer {token}"},
+        data={"protocol": protocol, "page_id": PAGE, "generation_id": GENERATION, "device_id": DEVICE},
+        files={"line_art": line_art},
+    )
 
 
 def test_a_panel_goes_up_and_comes_back_exact():
@@ -96,12 +144,10 @@ def test_the_zone_map_stays_on_the_artists_machine():
 
 def test_the_page_and_the_press_travel_with_the_panel():
     painter = Painter()
-    request = _request()
-    request.page_id, request.generation_id = "page-uuid", "press-uuid"
-    _remote(painter).propose(request)
+    _remote(painter).propose(_request())
 
     received = painter.seen[0][0]
-    assert (received.page_id, received.generation_id) == ("page-uuid", "press-uuid")
+    assert (received.page_id, received.generation_id) == (PAGE, GENERATION)
 
 
 def test_the_model_version_is_kept():
@@ -110,51 +156,43 @@ def test_the_model_version_is_kept():
     assert remote.model_version == "painter@1"
 
 
-@pytest.mark.parametrize("token", ["wrong", ""])
-def test_a_bad_token_never_reaches_the_proposer(token, monkeypatch):
-    # No token means none at all: the real one in the machine's environment
-    # would otherwise stand in for it.
-    monkeypatch.delenv("LUIKKI_REMOTE_TOKEN", raising=False)
+@pytest.mark.parametrize("token, code", [("wrong", "unauthorized"), (None, "not_signed_in")])
+def test_no_session_never_reaches_the_proposer(token, code):
     painter = Painter()
     with pytest.raises(RemoteUnavailable) as caught:
-        _remote(painter, token=token or None).propose(_request())
-    assert caught.value.code == ("unauthorized" if token else "not_configured")
+        _remote(painter, account=_Session(token)).propose(_request())
+    assert caught.value.code == code
     assert painter.seen == []
 
 
-def test_a_server_without_a_token_refuses_everyone():
+def test_no_account_at_all_is_no_session():
+    with pytest.raises(RemoteUnavailable) as caught:
+        _remote(Painter(), account=None).propose(_request())
+    assert caught.value.code == "not_signed_in"
+
+
+def test_without_a_server_address_nothing_is_sent(monkeypatch):
+    monkeypatch.delenv("LUIKKI_REMOTE_URL", raising=False)
+    with pytest.raises(RemoteUnavailable) as caught:
+        _remote(Painter(), url=None).propose(_request())
+    assert caught.value.code == "no_server"
+
+
+def test_a_request_with_no_bearer_is_refused():
     painter = Painter()
-    client = TestClient(create_server(painter, token="", model_version="x"))
-    response = client.post(
-        PANEL_ROUTE,
-        headers={"authorization": "Bearer "},
-        data={"protocol": "1"},
-        files={"line_art": ("a.png", encode_png(np.zeros((4, 4, 3), np.uint8)), "image/png")},
-    )
+    response = _server(painter).post(PANEL_ROUTE, data={"protocol": "1"})
     assert response.status_code == 401
     assert painter.seen == []
 
 
 def test_an_old_client_is_told_so():
-    client = TestClient(create_server(Painter(), token=TOKEN, model_version="x"))
-    response = client.post(
-        PANEL_ROUTE,
-        headers={"authorization": f"Bearer {TOKEN}"},
-        data={"protocol": "0"},
-        files={"line_art": ("a.png", encode_png(np.zeros((4, 4, 3), np.uint8)), "image/png")},
-    )
+    response = _post(_server(Painter()), "0", ("a.png", encode_png(np.zeros((4, 4, 3), np.uint8)), "image/png"))
     assert response.status_code == 426
     assert response.json()["code"] == "protocol_unsupported"
 
 
 def test_only_png_is_accepted():
-    client = TestClient(create_server(Painter(), token=TOKEN, model_version="x"))
-    response = client.post(
-        PANEL_ROUTE,
-        headers={"authorization": f"Bearer {TOKEN}"},
-        data={"protocol": "1"},
-        files={"line_art": ("a.jpg", b"\xff\xd8\xff\xe0 not a png", "image/jpeg")},
-    )
+    response = _post(_server(Painter()), "1", ("a.jpg", b"\xff\xd8\xff\xe0 not a png", "image/jpeg"))
     assert response.status_code == 400
     assert response.json()["code"] == "bad_image"
 
@@ -172,7 +210,10 @@ def test_a_5xx_is_retried_and_a_4xx_is_not():
         return httpx.Response(200, content=encode_png(request.line_art))
 
     remote = RemoteProposer(
-        url="http://gpu", token=TOKEN, backoff=0, client=httpx.Client(transport=httpx.MockTransport(handler))
+        url="http://gpu",
+        account=_Session(),
+        backoff=0,
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
     )
     np.testing.assert_array_equal(remote.propose(request), request.line_art)
     assert len(calls) == 3
@@ -193,7 +234,10 @@ def test_no_answer_at_all_gives_up_after_the_attempts():
         raise httpx.ConnectError("down", request=request)
 
     remote = RemoteProposer(
-        url="http://gpu", token=TOKEN, backoff=0, client=httpx.Client(transport=httpx.MockTransport(handler))
+        url="http://gpu",
+        account=_Session(),
+        backoff=0,
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
     )
     with pytest.raises(RemoteUnavailable) as caught:
         remote.propose(_request())

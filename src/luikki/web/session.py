@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import inspect
 import json
-import os
 import threading
 import time
 import uuid
@@ -1696,11 +1695,10 @@ class Session:
                 # Unreachable, or the session ended — which `email` now says.
                 quota = None
         signed_in = bool(account is not None and account.email)
-        shared = bool(getattr(self.proposer, "token", None) or os.environ.get("LUIKKI_REMOTE_TOKEN"))
         return {
             "remote": remote,
             "signed_in": signed_in,
-            "needs_sign_in": remote and not signed_in and not shared,
+            "needs_sign_in": remote and not signed_in,
             "quota": quota,
         }
 

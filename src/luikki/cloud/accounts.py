@@ -11,8 +11,8 @@ Two halves, both on the server:
   transaction each, with the secret key. That key lives in the Modal secret
   `luikki-supabase` and nowhere else.
 
-`jwt` and `httpx` are imported where they are used, so `server.py` still
-imports without them for B1's shared token.
+`jwt` and `httpx` are imported where they are used, so `server.py` imports
+without them and a test can stand its own verifier in.
 """
 
 from __future__ import annotations

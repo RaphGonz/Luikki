@@ -5,8 +5,8 @@ art, the references and any hints go up as PNG, the proposal raster comes
 back. The zone map does not travel — Cobra never reads it, and the artist's
 segmentation has no business on a server.
 
-`LUIKKI_REMOTE_URL` and `LUIKKI_REMOTE_TOKEN` say where and as whom, read at
-call time like the other `LUIKKI_*` switches.
+`LUIKKI_REMOTE_URL` says where, read at call time like the other `LUIKKI_*`
+switches. The artist's own session says as whom: there is no other way in.
 """
 
 from __future__ import annotations
@@ -38,7 +38,6 @@ class RemoteUnavailable(RuntimeError):
 @dataclass
 class RemoteProposer:
     url: str | None = None
-    token: str | None = None
     # Sent with every panel; the server mirrors `CobraProposer`'s defaults.
     num_inference_steps: int = 10
     seed: int = 0
@@ -53,8 +52,7 @@ class RemoteProposer:
     # This installation's uuid; an account may use two. Taken from `account`
     # when this is left empty.
     device_id: str = ""
-    # `luikki.account.Account`: when signed in, its session replaces the
-    # shared token.
+    # `luikki.account.Account`, whose session every panel goes up with.
     account: Any = None
 
     @property
@@ -65,19 +63,14 @@ class RemoteProposer:
         import httpx
 
         url = self.url or os.environ.get("LUIKKI_REMOTE_URL", "")
-        # A signed-in artist goes up as themselves, and the server holds them
-        # to their quota. The shared token is B1's, until every copy signs in.
-        token, device = self.token, self.device_id
-        if not token and self.account is not None:
-            session = self.account.access_token()
-            if session:
-                token, device = session, device or self.account.device_id()
-        token = token or os.environ.get("LUIKKI_REMOTE_TOKEN", "")
-        if not url or not token:
-            raise RemoteUnavailable(
-                "The remote proposer needs LUIKKI_REMOTE_URL and LUIKKI_REMOTE_TOKEN.",
-                code="not_configured",
-            )
+        if not url:
+            raise RemoteUnavailable("The remote proposer needs LUIKKI_REMOTE_URL.", code="no_server")
+        # The artist goes up as themselves, and the server holds them to their
+        # quota.
+        token = self.account.access_token() if self.account is not None else None
+        if not token:
+            raise RemoteUnavailable("The GPU server needs a signed-in account.", code="not_signed_in")
+        device = self.device_id or self.account.device_id()
 
         files = [("line_art", ("line_art.png", encode_png(request.line_art), "image/png"))]
         files += [

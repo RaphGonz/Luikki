@@ -1,12 +1,11 @@
 """Cobra on Modal: `cloud/server.py` on an L4, the weights in a Volume.
 
-    modal secret create luikki-api LUIKKI_API_TOKEN=<token>
-    # and, in the dashboard: luikki-supabase, SUPABASE_URL + SUPABASE_SECRET_KEY
+    # in the dashboard: luikki-supabase, SUPABASE_URL + SUPABASE_SECRET_KEY
     modal run -m luikki.cloud.modal_app::download    # once: weights into the Volume
     modal deploy -m luikki.cloud.modal_app           # prints the endpoint URL
 
-Then, on the artist's side, `LUIKKI_REMOTE_URL=<url> LUIKKI_REMOTE_TOKEN=<token>
-luikki serve --proposer remote`.
+Then, on the artist's side, `LUIKKI_REMOTE_URL=<url> luikki serve --proposer
+remote`, and sign in from Account.
 
 Only the standard library and `modal` at module level: Modal imports this file
 again inside the container, before anything is known about what it holds.
@@ -76,10 +75,7 @@ def download() -> None:
     image=image,
     gpu="L4",
     volumes={WEIGHTS_DIR: weights},
-    secrets=[
-        modal.Secret.from_name("luikki-api", required_keys=["LUIKKI_API_TOKEN"]),
-        modal.Secret.from_name("luikki-supabase", required_keys=["SUPABASE_URL", "SUPABASE_SECRET_KEY"]),
-    ],
+    secrets=[modal.Secret.from_name("luikki-supabase", required_keys=["SUPABASE_URL", "SUPABASE_SECRET_KEY"])],
     # Serving reads the Volume and nothing else: a missing file fails the
     # load instead of quietly downloading on a paid GPU.
     env={"HF_HUB_OFFLINE": "1"},
@@ -88,7 +84,7 @@ def download() -> None:
     # (teddy, 3 panels) held the container 6 min: ~1 min of cold start and
     # generation, 5 min idle — ~$0.08 on an L4, five sixths of it waiting.
     scaledown_window=120,
-    # One shared token and no quota until B2: one GPU is the spend ceiling.
+    # The quota caps each account; one GPU caps the whole bill.
     max_containers=1,
     timeout=600,
     startup_timeout=900,
@@ -109,7 +105,6 @@ class Cobra:
         project = os.environ["SUPABASE_URL"]
         return create_server(
             self.proposer,
-            token=os.environ["LUIKKI_API_TOKEN"],
             model_version=f"cobra-line@{self.proposer.revision[:12]}",
             verifier=TokenVerifier(project),
             ledger=Ledger(project, os.environ["SUPABASE_SECRET_KEY"]),

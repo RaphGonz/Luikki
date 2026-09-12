@@ -179,8 +179,7 @@ def test_an_auth_server_that_does_not_answer_is_named():
     assert caught.value.code == "accounts_unreachable"
 
 
-def test_step_five_goes_up_as_the_signed_in_artist(monkeypatch):
-    monkeypatch.delenv("LUIKKI_REMOTE_TOKEN", raising=False)
+def test_step_five_goes_up_as_the_signed_in_artist():
     account = _signed_in(_Auth())
     sent = []
 

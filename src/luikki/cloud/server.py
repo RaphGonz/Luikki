@@ -6,10 +6,9 @@ goes back. Everything that decides whether a request may cost GPU time is
 checked here, before the proposer is touched — the client is open source and
 is not trusted with any of it.
 
-Two ways in. An artist's session token (B2): verified here, then the account's
+One way in: an artist's session token, verified here. Then the account's
 subscription, quota, devices and one-job lock are settled in one database call
-(`accounts.py`), and the panel is charged only once it is painted. Or B1's
-shared token, which skips all of that and stays until the app can sign in.
+(`accounts.py`), and the panel is charged only once it is painted.
 
 Errors are `{"code", "params"}`, never sentences: the words belong to the
 artist's locale, on the artist's machine.
@@ -17,7 +16,6 @@ artist's locale, on the artist's machine.
 
 from __future__ import annotations
 
-import hmac
 import threading
 import uuid
 
@@ -42,20 +40,15 @@ def _refuse(status: int, code: str, **params) -> JSONResponse:
 
 def create_server(
     proposer: ColourProposer,
-    token: str,
     model_version: str,
-    verifier: TokenVerifier | None = None,
-    ledger: Ledger | None = None,
+    verifier: TokenVerifier,
+    ledger: Ledger,
 ) -> FastAPI:
     """The endpoint around one loaded proposer.
 
     `proposer` must expose `num_inference_steps` and `seed`, which each request
-    sets. An empty `token` turns the shared token off rather than letting
-    everyone in. Accounts need both `verifier` and `ledger`.
+    sets.
     """
-    if (verifier is None) != (ledger is None):
-        raise ValueError("accounts need both a verifier and a ledger")
-
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     # One panel on the GPU at a time. The steps and seed are set on the shared
     # proposer, so two requests interleaving would paint with each other's.
@@ -66,10 +59,7 @@ def create_server(
         # Middleware rather than a dependency: it answers before the body is
         # read, so an unauthorised upload costs a header, not the upload.
         supplied = request.headers.get("authorization", "")
-        request.state.user = None
-        if token and hmac.compare_digest(supplied.encode(), f"Bearer {token}".encode()):
-            return await call_next(request)
-        if verifier is None or not supplied.startswith("Bearer "):
+        if not supplied.startswith("Bearer "):
             return _refuse(401, "unauthorized")
         try:
             # In a thread: the first request after a key rotation fetches the
@@ -104,13 +94,10 @@ def create_server(
             return _refuse(400, "bad_hints")
 
         user = request.state.user
-        if user is not None:
-            try:
-                page, generation, device = (
-                    str(uuid.UUID(value)) for value in (page_id, generation_id, device_id)
-                )
-            except ValueError:
-                return _refuse(400, "bad_ids")
+        try:
+            page, generation, device = (str(uuid.UUID(value)) for value in (page_id, generation_id, device_id))
+        except ValueError:
+            return _refuse(400, "bad_ids")
 
         try:
             art = decode_png(line_art.file.read())
@@ -136,12 +123,11 @@ def create_server(
             generation_id=generation_id,
         )
 
-        if user is not None:
-            peer = request.client.host if request.client else None
-            try:
-                ledger.start(user, page, generation, device, client_ip(request.headers.get("x-forwarded-for"), peer))
-            except Refused as refusal:
-                return _refuse(refusal.status, refusal.code, **refusal.params)
+        peer = request.client.host if request.client else None
+        try:
+            ledger.start(user, page, generation, device, client_ip(request.headers.get("x-forwarded-for"), peer))
+        except Refused as refusal:
+            return _refuse(refusal.status, refusal.code, **refusal.params)
 
         painted = False
         try:
@@ -155,8 +141,7 @@ def create_server(
                     return _refuse(422, "proposer_refused", detail=str(exc))
             painted = True
         finally:
-            if user is not None:
-                ledger.finish(user, page, generation, painted)
+            ledger.finish(user, page, generation, painted)
 
         return Response(
             encode_png(proposal),

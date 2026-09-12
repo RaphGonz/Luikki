@@ -140,7 +140,7 @@ def _gpu_refusal(exc: RemoteUnavailable) -> StepError:
     """The GPU server's refusal (`cloud/server.py`, `cloud/accounts.py`), or the
     remote proposer's own, as a step error in the artist's words."""
     match exc.code:
-        case "not_configured":
+        case "not_signed_in":
             return StepError("gpu_sign_in", status=401)
         case "unauthorized":
             return StepError("gpu_unauthorized", status=401)

@@ -95,7 +95,7 @@ wrong is one click to fix.
 
 ## Configuration
 
-- No `.env` file. Environment variables, all read at call time so a flag can set them: `LUIKKI_PROPOSER` (`distinct` | `cobra` | `remote`) and `LUIKKI_EXTRACTOR` (`manga` | `raw`), which `luikki serve --proposer/--extractor` set; `LUIKKI_REMOTE_URL` and `LUIKKI_REMOTE_TOKEN` for `remote` (Cobra on Modal, `cloud/modal_app.py`); `LUIKKI_SUPABASE_URL` and `LUIKKI_SUPABASE_KEY` to point the sign-in (`account.py`) at another Supabase project.
+- No `.env` file. Environment variables, all read at call time so a flag can set them: `LUIKKI_PROPOSER` (`distinct` | `cobra` | `remote`) and `LUIKKI_EXTRACTOR` (`manga` | `raw`), which `luikki serve --proposer/--extractor` set; `LUIKKI_REMOTE_URL` for `remote` (Cobra on Modal, `cloud/modal_app.py`; it goes up with the signed-in account's session, there is no other way in); `LUIKKI_SUPABASE_URL` and `LUIKKI_SUPABASE_KEY` to point the sign-in (`account.py`) at another Supabase project.
 - Otherwise configuration is CLI arguments only (see `src/luikki/cli.py`)
 - `pyproject.toml` - Standard Python project configuration, defines dependencies, entry point, test paths
 - CLI: `luikki = "luikki.cli:main"` - Command-line entry point in `src/luikki/cli.py`

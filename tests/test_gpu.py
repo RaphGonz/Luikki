@@ -48,7 +48,7 @@ def _zoned(client: TestClient, tmp_path) -> None:
 @pytest.mark.parametrize(
     "code, expected, status",
     [
-        ("not_configured", "gpu_sign_in", 401),
+        ("not_signed_in", "gpu_sign_in", 401),
         ("no_subscription", "gpu_no_subscription", 402),
         ("too_many_devices", "gpu_too_many_devices", 403),
         ("job_elsewhere", "gpu_job_elsewhere", 409),
@@ -75,8 +75,7 @@ def test_a_request_the_app_got_wrong_keeps_its_code_for_the_report(tmp_path):
     assert refused.json() == {"code": "gpu_refused", "params": {"reason": "bad_ids"}}
 
 
-def test_step_five_knows_before_the_press_that_it_needs_a_sign_in(tmp_path, monkeypatch):
-    monkeypatch.delenv("LUIKKI_REMOTE_TOKEN", raising=False)
+def test_step_five_knows_before_the_press_that_it_needs_a_sign_in(tmp_path):
     account = Account()
     proposer = RemoteProposer(url="http://gpu", account=account)
     app = create_app(tmp_path / "work", proposer=proposer, extractor=PassthroughExtractor(), account=account)
@@ -87,9 +86,6 @@ def test_step_five_knows_before_the_press_that_it_needs_a_sign_in(tmp_path, monk
             "needs_sign_in": True,
             "quota": None,
         }
-        # B1's shared token still carries a computer that has not signed in.
-        monkeypatch.setenv("LUIKKI_REMOTE_TOKEN", "shared")
-        assert client.get("/api/account/status").json()["needs_sign_in"] is False
 
 
 def test_a_local_proposer_needs_no_account(tmp_path):

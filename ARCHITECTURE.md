@@ -371,7 +371,8 @@ There are two proposers:
 - `RemoteProposer` (`remote`) is Cobra on a GPU somewhere else. It sends the
   line art, the references and the hints of one panel to `POST /v1/panel`
   (`cloud/server.py`) and reads back the raster. The zone map does not leave
-  the machine. It needs `LUIKKI_REMOTE_URL` and `LUIKKI_REMOTE_TOKEN`.
+  the machine. It needs `LUIKKI_REMOTE_URL` and a signed-in account
+  (`account.py`), whose session is the only way into the server.
 
 Everything after this step reads the proposal raster only. To change the
 proposer, change one constructor call.
@@ -565,7 +566,7 @@ No colour is in `app.js`. Each colour is a token in the `:root` block of
       export/psd.py           panels -> a layered PSD
       cloud/
         protocol.py           what client and server agree on: fields, PNG
-        server.py             POST /v1/panel: token, then the proposer
+        server.py             POST /v1/panel: session, quota, then the proposer
         modal_app.py          the server on a Modal L4, weights in a Volume
       model/                  the SQLite store. Not used by the web app.
       spike/                  the A/B experiments. Reports are in `reports/`.

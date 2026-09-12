@@ -324,9 +324,14 @@ fin : ce sont elles qui attendent.
 
 ### B4 — Installeurs (5–8 j)
 
-- [ ] Retirer le token partagé de B1 : serveur Modal, `luikki.bat`, et
+- [x] Retirer le token partagé de B1 : serveur Modal, `luikki.bat`, et
       `luikki flatten --proposer remote` passe par `Account`. Gardé jusque-là
       comme filet si Supabase tombe pendant une séance en visio.
+      Fait (2026-09-12), déployé : la session est la seule entrée de
+      `POST /v1/panel`. Côté client, codes `no_server` (pas d'URL) et
+      `not_signed_in` (pas de session) ; `flatten` lit la session que l'app a
+      rangée dans le trousseau. Reste `LUIKKI_REMOTE_URL` : l'app installée
+      devra porter l'URL elle-même.
 - [ ] Point d'entrée : uvicorn sur `127.0.0.1`, port libre, dans un thread ;
       fenêtre pywebview dessus.
 - [ ] PyInstaller `onedir` ; imports cachés à régler (scipy, scikit-image,

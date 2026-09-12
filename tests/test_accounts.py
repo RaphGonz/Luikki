@@ -30,7 +30,6 @@ from luikki.colour.proposer import PanelRequest  # noqa: E402
 from luikki.colour.remote import RemoteProposer, RemoteUnavailable  # noqa: E402
 
 PROJECT = "https://project.supabase.co"
-SHARED = "shared-token"
 USER = str(uuid.uuid4())
 PAGE, GENERATION, DEVICE = (str(uuid.uuid4()) for _ in range(3))
 KEY = ec.generate_private_key(ec.SECP256R1())
@@ -80,8 +79,22 @@ class _Database:
 
 def _gate(database: _Database, painter: _Painter, key: str = "sb_secret_test") -> TestClient:
     ledger = Ledger(PROJECT, key, client=httpx.Client(transport=httpx.MockTransport(database)))
-    server = create_server(painter, token=SHARED, model_version="painter@1", verifier=_verifier(), ledger=ledger)
+    server = create_server(painter, model_version="painter@1", verifier=_verifier(), ledger=ledger)
     return TestClient(server)
+
+
+@dataclass
+class _Session:
+    """Stands in for `luikki.account.Account`."""
+
+    token: str
+    device: str
+
+    def access_token(self) -> str:
+        return self.token
+
+    def device_id(self) -> str:
+        return self.device
 
 
 def _send(client: TestClient, token: str, device: str = DEVICE) -> np.ndarray:
@@ -91,7 +104,7 @@ def _send(client: TestClient, token: str, device: str = DEVICE) -> np.ndarray:
         page_id=PAGE,
         generation_id=GENERATION,
     )
-    remote = RemoteProposer(url="http://testserver", token=token, client=client, backoff=0, device_id=device)
+    remote = RemoteProposer(url="http://testserver", account=_Session(token, device), client=client, backoff=0)
     return remote.propose(request)
 
 
@@ -159,14 +172,6 @@ def test_anything_short_of_a_valid_session_stops_at_the_door(token):
 
     assert caught.value.code == "unauthorized"
     assert database.calls == [] and painter.seen == []
-
-
-def test_the_shared_token_still_works_and_touches_no_account():
-    database, painter = _Database(), _Painter()
-    _send(_gate(database, painter), SHARED, device="")
-
-    assert database.calls == []
-    assert len(painter.seen) == 1
 
 
 def test_a_database_that_does_not_answer_spends_no_gpu():

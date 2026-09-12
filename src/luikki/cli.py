@@ -153,7 +153,7 @@ def main(argv: list[str] | None = None) -> int:
         choices=["distinct", "cobra", "remote"],
         help=(
             "colour proposer; cobra needs an NVIDIA GPU and its weights, remote "
-            "needs LUIKKI_REMOTE_URL and LUIKKI_REMOTE_TOKEN"
+            "needs LUIKKI_REMOTE_URL and a signed-in account"
         ),
     )
     serve.add_argument(
@@ -177,7 +177,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     flatten.add_argument("-o", "--out", default=None, help="where the PSD lands")
     flatten.add_argument(
-        "--proposer", default="distinct", choices=["distinct", "cobra", "remote"]
+        "--proposer",
+        default="distinct",
+        choices=["distinct", "cobra", "remote"],
+        help="remote uses the account signed in from the app, on this computer",
     )
     flatten.add_argument(
         "--threshold",
@@ -236,9 +239,10 @@ def main(argv: list[str] | None = None) -> int:
 
             proposer = CobraProposer()
         elif args.proposer == "remote":
+            from .account import Account
             from .colour.remote import RemoteProposer
 
-            proposer = RemoteProposer()
+            proposer = RemoteProposer(account=Account())
 
         workdir = Path(args.out or ".luikki-work/flatten")
         session = Session(workdir=workdir, proposer=proposer)
@@ -256,7 +260,17 @@ def main(argv: list[str] | None = None) -> int:
         if steps_dir is not None:
             _dump_steps(session, steps_dir)
 
-        flats = session.generate_flats()
+        from .account import AccountError
+        from .colour.remote import RemoteUnavailable
+
+        try:
+            flats = session.generate_flats()
+        except RemoteUnavailable as exc:
+            if exc.code == "not_signed_in":
+                raise SystemExit("step 5: sign in from Account in the app first") from exc
+            raise SystemExit(f"step 5: {exc}") from exc
+        except AccountError as exc:
+            raise SystemExit(f"step 5: {exc.code}") from exc
         if steps_dir is not None:
             _dump_flats(session, steps_dir, "05_flats_unsnapped.png")
         print(

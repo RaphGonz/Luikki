@@ -19,17 +19,14 @@ if not exist "%PY%" (
     exit /b 1
 )
 
-rem L'URL et le token du GPU Modal vivent dans les variables d'environnement
-rem utilisateur. Une fenetre ouverte avant qu'elles soient posees ne les voit
-rem pas : on les relit dans le registre. Jamais ecrits ici, le fichier est
-rem versionne.
-for %%V in (LUIKKI_REMOTE_URL LUIKKI_REMOTE_TOKEN) do (
-    if not defined %%V (
-        for /f "tokens=2,*" %%a in ('reg query HKCU\Environment /v %%V 2^>nul ^| find "%%V"') do set "%%V=%%b"
-    )
+rem L'URL du GPU Modal vit dans les variables d'environnement utilisateur. Une
+rem fenetre ouverte avant qu'elle soit posee ne la voit pas : on la relit dans
+rem le registre. L'etape 5 part avec le compte connecte dans l'appli (Compte).
+if not defined LUIKKI_REMOTE_URL (
+    for /f "tokens=2,*" %%a in ('reg query HKCU\Environment /v LUIKKI_REMOTE_URL 2^>nul ^| find "LUIKKI_REMOTE_URL"') do set "LUIKKI_REMOTE_URL=%%b"
 )
-if not defined LUIKKI_REMOTE_TOKEN (
-    echo LUIKKI_REMOTE_TOKEN absent : l'etape 5 ne pourra pas joindre Modal.
+if not defined LUIKKI_REMOTE_URL (
+    echo LUIKKI_REMOTE_URL absent : l'etape 5 ne pourra pas joindre Modal.
     echo   luikki.bat --proposer distinct   pour travailler sans GPU
 )
 
