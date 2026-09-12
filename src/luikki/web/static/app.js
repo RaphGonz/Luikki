@@ -951,7 +951,7 @@ function renderHeader() {
 function renderRail() {
   keepFocus(() => {
     $("steps").replaceChildren(...STEPS.map(stepRow));
-    $("books").replaceChildren(bookRow("pages"), bookRow("references"), bookRow("palette"));
+    $("books").replaceChildren(bookRow("pages"), bookRow("references"), bookRow("palette"), bookRow("account"));
   });
 }
 
@@ -1152,6 +1152,7 @@ function bookName(which) {
   switch (which) {
     case "pages": return t("book.pages");
     case "references": return t("book.references");
+    case "account": return t("book.account");
     default: return t("book.palette");
   }
 }
@@ -1160,6 +1161,7 @@ function bookMeta(which) {
   switch (which) {
     case "pages": return t("meta.pages", { count: state.pages.length });
     case "references": return t("meta.references", { count: state.references.length });
+    case "account": return state.account.email ?? t("meta.signed_out");
     default: return t("meta.colours", { count: paletteColours().length });
   }
 }
@@ -1231,6 +1233,7 @@ function inspectorContent() {
   if (shelf === "pages") return pagesView();
   if (shelf === "references") return referencesView();
   if (shelf === "palette") return paletteView();
+  if (shelf === "account") return accountView();
   switch (current) {
     case "upload": return uploadView();
     case "panels":
@@ -1295,6 +1298,123 @@ function pagesView() {
     ],
     [add],
   ];
+}
+
+// Signing in, by a code sent to the artist's email. Once per computer: the
+// session is kept by the server process, in the system's password store, and
+// this page only ever holds what is being typed.
+let signingIn = { email: "", sent: false, code: "" };
+
+const onEnter = (action) => (event) => {
+  if (event.key === "Enter") action();
+};
+
+function accountView() {
+  if (state.account.email) {
+    return [
+      [
+        heading(t("book.account")),
+        note(t("account.signed_in", { email: state.account.email })),
+        note(t("account.stays")),
+      ],
+      [button(t("account.sign_out"), { key: "account-out", onclick: signOut })],
+    ];
+  }
+  const input = (name, label, props) =>
+    h(
+      "label",
+      { class: "field" },
+      h("span", {}, label),
+      h("input", {
+        "data-key": `account-${name}`,
+        value: signingIn[name],
+        ...props,
+        oninput: (event) => {
+          signingIn[name] = event.target.value;
+        },
+      }),
+    );
+  if (!signingIn.sent) {
+    return [
+      [
+        heading(t("book.account")),
+        note(t("account.why")),
+        input("email", t("account.email"), { type: "email", autocomplete: "email", onkeydown: onEnter(sendCode) }),
+      ],
+      [button(t("account.send"), { kind: "primary", key: "account-send", onclick: sendCode })],
+    ];
+  }
+  return [
+    [
+      heading(t("book.account")),
+      note(t("account.sent", { email: signingIn.email })),
+      input("code", t("account.code"), {
+        type: "text",
+        inputmode: "numeric",
+        autocomplete: "one-time-code",
+        onkeydown: onEnter(signIn),
+      }),
+    ],
+    [
+      button(t("account.sign_in"), { kind: "primary", key: "account-in", onclick: signIn }),
+      button(t("account.resend"), { key: "account-resend", onclick: sendCode }),
+      button(t("account.other_email"), {
+        kind: "quiet",
+        key: "account-other",
+        onclick: () => {
+          signingIn = { email: signingIn.email, sent: false, code: "" };
+          renderInspector();
+        },
+      }),
+    ],
+  ];
+}
+
+function accountCall(label, path, method, body) {
+  return working(label, false, () =>
+    call(path, {
+      method,
+      headers: { "content-type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    }),
+  );
+}
+
+async function sendCode() {
+  const email = signingIn.email.trim();
+  try {
+    state = await accountCall(t("work.send_code"), "/api/account/code", "POST", { email });
+    signingIn = { email, sent: true, code: "" };
+    renderAll();
+    say(t("status.code_sent", { email }));
+  } catch (error) {
+    renderAll();
+    say(error.message, true);
+  }
+}
+
+async function signIn() {
+  const body = { email: signingIn.email.trim(), code: signingIn.code.trim() };
+  try {
+    state = await accountCall(t("work.sign_in"), "/api/account", "POST", body);
+    signingIn = { email: "", sent: false, code: "" };
+    renderAll();
+    say(t("status.signed_in", { email: state.account.email }));
+  } catch (error) {
+    renderAll();
+    say(error.message, true);
+  }
+}
+
+async function signOut() {
+  try {
+    state = await accountCall(t("work.sign_out"), "/api/account", "DELETE");
+    renderAll();
+    say(t("status.signed_out"));
+  } catch (error) {
+    renderAll();
+    say(error.message, true);
+  }
 }
 
 function shapeView() {

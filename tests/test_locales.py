@@ -45,8 +45,12 @@ def _python() -> str:
 def _used() -> set[str]:
     keys = set(re.findall(r'"([a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+)"', _script()))
     keys |= set(re.findall(r'data-i18n(?:-title|-aria-label)?="([^"]+)"', _page()))
-    # A refusal from the server is `StepError("code")`, worded as `error.code`.
-    keys |= {f"error.{code}" for code in re.findall(r'StepError\(\s*"([a-z_]+)"', _python())}
+    # A refusal from the server is `StepError("code")` or `AccountError("code")`,
+    # worded as `error.code`.
+    keys |= {
+        f"error.{code}"
+        for code in re.findall(r'(?:StepError|AccountError)\(\s*"([a-z_]+)"', _python())
+    }
     return keys
 
 
@@ -68,7 +72,7 @@ def test_keys_are_written_out_never_assembled():
 
 
 def test_server_refusals_are_written_out_never_assembled():
-    assert re.findall(r'raise StepError\((?!\s*")', _python()) == []
+    assert re.findall(r'raise (?:StepError|AccountError)\((?!\s*")', _python()) == []
 
 
 def test_the_page_carries_no_words_of_its_own():

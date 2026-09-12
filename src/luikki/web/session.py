@@ -32,6 +32,7 @@ import numpy as np
 from PIL import Image
 from scipy import ndimage
 
+from ..account import Account
 from ..colour.extract import EmptyImageError, extract_palette
 from ..colour.proposer import (
     ColourProposer,
@@ -177,8 +178,12 @@ class Session:
         workdir: str | Path,
         proposer: ColourProposer | None = None,
         extractor: LineExtractor | None = None,
+        account: Account | None = None,
     ):
         self.workdir = Path(workdir)
+        # Who is signed in on this machine, for the rail. None where nothing
+        # signs in: the CLI, and most tests.
+        self.account = account
         self.workdir.mkdir(parents=True, exist_ok=True)
         self.proposer: ColourProposer = proposer or DistinctColourProposer()
         self.extractor: LineExtractor = extractor or MangaLineExtractor(
@@ -1693,6 +1698,7 @@ class Session:
         with self.lock:
             chosen = {e.id for e in self._palette}
             return {
+                "account": {"email": self.account.email if self.account else None},
                 "page_id": self.page_id,
                 # Every page of the project, oldest first: the page list.
                 "pages": [

@@ -13,6 +13,28 @@ from __future__ import annotations
 
 import cv2
 import numpy as np
+import pytest
+
+
+class MemoryVault(dict):
+    """The system password store's stand-in: a dict, gone with the test."""
+
+    def get(self, name):
+        return super().get(name)
+
+    def set(self, name, value):
+        self[name] = value
+
+    def delete(self, name):
+        self.pop(name, None)
+
+
+@pytest.fixture(autouse=True)
+def _no_system_vault(monkeypatch):
+    """No test reads or writes the machine's real password store."""
+    from luikki import account
+
+    monkeypatch.setattr(account, "KeyringVault", MemoryVault)
 
 
 def boundary_crossing_page(

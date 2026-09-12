@@ -50,9 +50,12 @@ class RemoteProposer:
     client: Any = None
     # What produced the last proposal, as the server reported it.
     model_version: str = ""
-    # This installation's uuid; an account may use two. Empty until the app
-    # signs in (B2), which is also when the server starts asking for it.
+    # This installation's uuid; an account may use two. Taken from `account`
+    # when this is left empty.
     device_id: str = ""
+    # `luikki.account.Account`: when signed in, its session replaces the
+    # shared token.
+    account: Any = None
 
     @property
     def name(self) -> str:
@@ -62,7 +65,14 @@ class RemoteProposer:
         import httpx
 
         url = self.url or os.environ.get("LUIKKI_REMOTE_URL", "")
-        token = self.token or os.environ.get("LUIKKI_REMOTE_TOKEN", "")
+        # A signed-in artist goes up as themselves, and the server holds them
+        # to their quota. The shared token is B1's, until every copy signs in.
+        token, device = self.token, self.device_id
+        if not token and self.account is not None:
+            session = self.account.access_token()
+            if session:
+                token, device = session, device or self.account.device_id()
+        token = token or os.environ.get("LUIKKI_REMOTE_TOKEN", "")
         if not url or not token:
             raise RemoteUnavailable(
                 "The remote proposer needs LUIKKI_REMOTE_URL and LUIKKI_REMOTE_TOKEN.",
@@ -87,7 +97,7 @@ class RemoteProposer:
             "kinds": [reference.kind for reference in request.references],
             "page_id": request.page_id,
             "generation_id": request.generation_id,
-            "device_id": self.device_id,
+            "device_id": device,
         }
 
         # A cold start loads gigabytes onto the GPU. Modal answers a request

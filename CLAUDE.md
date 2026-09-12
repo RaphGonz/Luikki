@@ -95,7 +95,7 @@ wrong is one click to fix.
 
 ## Configuration
 
-- No `.env` file. Environment variables, all read at call time so a flag can set them: `LUIKKI_PROPOSER` (`distinct` | `cobra` | `remote`) and `LUIKKI_EXTRACTOR` (`manga` | `raw`), which `luikki serve --proposer/--extractor` set; `LUIKKI_REMOTE_URL` and `LUIKKI_REMOTE_TOKEN` for `remote` (Cobra on Modal, `cloud/modal_app.py`).
+- No `.env` file. Environment variables, all read at call time so a flag can set them: `LUIKKI_PROPOSER` (`distinct` | `cobra` | `remote`) and `LUIKKI_EXTRACTOR` (`manga` | `raw`), which `luikki serve --proposer/--extractor` set; `LUIKKI_REMOTE_URL` and `LUIKKI_REMOTE_TOKEN` for `remote` (Cobra on Modal, `cloud/modal_app.py`); `LUIKKI_SUPABASE_URL` and `LUIKKI_SUPABASE_KEY` to point the sign-in (`account.py`) at another Supabase project.
 - Otherwise configuration is CLI arguments only (see `src/luikki/cli.py`)
 - `pyproject.toml` - Standard Python project configuration, defines dependencies, entry point, test paths
 - CLI: `luikki = "luikki.cli:main"` - Command-line entry point in `src/luikki/cli.py`
@@ -107,6 +107,7 @@ wrong is one click to fix.
 ## State on disk
 
 - `<workdir>` without `--workdir`: `%LOCALAPPDATA%\Luikki` / `~/Library/Application Support/Luikki` (`default_workdir` in `web/project.py`). A project left in the old `%TEMP%\luikki` is copied across once.
+- The signed-in session is not on disk: its refresh token, email and the device uuid sit in the system password store under the service `Luikki` (`keyring`). Tests swap in a memory vault (`tests/conftest.py`).
 - `<workdir>/references/` - the reference and palette images, plus `index.json`. Book-scoped: they survive a new page and a restart.
 - `<workdir>/palette.json` - the artist's palette. Held, not derived, since ids must never be reused and a colour must survive its reference being deleted.
 - `<workdir>/project.json` and `<workdir>/pages/NNNN/` - every page, saved on each edit (`web/project.py`): `page.json`, the source image, one `panelN.npy` zone map per panel, the extractor's lines. Files, not SQLite. One page is open at a time; the app reopens the last one.

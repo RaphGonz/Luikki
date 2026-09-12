@@ -255,7 +255,10 @@ fin : ce sont elles qui attendent.
       Fait (2026-09-12) : `uid` dans `page.json` (donné à l'ouverture aux
       planches d'avant), les deux ids partent dans `POST /v1/panel` ; le
       serveur les reçoit sans les contrôler encore.
-- [ ] Écran de connexion dans l'app (email → code), `keyring`, refresh du token.
+- [x] Écran de connexion dans l'app (email → code), `keyring`, refresh du token.
+      Fait (2026-09-12), connexion validée avec un vrai code : `luikki/account.py`,
+      entrée **Compte** du rail. Connecté, l'étape 5 part avec la session et
+      l'uuid de l'appareil ; sinon avec le token partagé.
 - [ ] Vérification du token dans la FastAPI Modal, contrôles ci-dessus,
       écriture de `usage`, `devices`, `jobs`. Déployé (2026-09-12) ; la clé
       publique est refusée sur les tables et les deux fonctions (vérifié).

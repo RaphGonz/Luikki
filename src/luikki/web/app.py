@@ -23,6 +23,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
+from ..account import Account, AccountError
 from ..colour.extract import EmptyImageError
 from ..colour.references import UnknownKind
 from ..colour.snap import SNAP_MAX_DELTA
@@ -71,6 +72,19 @@ class Pick(BaseModel):
     reference_id: int
     rgb: tuple[int, int, int]
 
+
+class Email(BaseModel):
+    """Where to send a sign-in code."""
+
+    email: str
+
+
+class Code(BaseModel):
+    """The code that arrived, and the address it went to."""
+
+    email: str
+    code: str
+
 _STATIC = Path(__file__).parent / "static"
 
 
@@ -82,7 +96,7 @@ class _Fresh(StaticFiles):
         response.headers["cache-control"] = "no-store"
         return response
 
-def _build_proposer():
+def _build_proposer(account: Account | None = None):
     """`LUIKKI_PROPOSER=cobra` swaps the model in without a code edit.
 
     `remote` is the same model on a GPU elsewhere (`colour/remote.py`).
@@ -95,7 +109,7 @@ def _build_proposer():
     if choice == "remote":
         from ..colour.remote import RemoteProposer
 
-        return RemoteProposer()
+        return RemoteProposer(account=account)
     if choice != "cobra":
         from ..colour.proposer import DistinctColourProposer
 
@@ -125,13 +139,16 @@ def create_app(
     workdir: str | Path | None = None,
     proposer=None,
     extractor=None,
+    account: Account | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Luikki")
     workdir = Path(workdir) if workdir else default_workdir()
+    account = account or Account()
     session = Session(
         workdir,
-        proposer=proposer or _build_proposer(),
+        proposer=proposer or _build_proposer(account),
         extractor=extractor or _build_extractor(),
+        account=account,
     )
     app.state.session = session
 
@@ -142,6 +159,10 @@ def create_app(
 
     @app.exception_handler(StepError)
     def _step_error(_request, exc: StepError):
+        return JSONResponse({"code": exc.code, "params": exc.params}, status_code=exc.status)
+
+    @app.exception_handler(AccountError)
+    def _account_error(_request, exc: AccountError):
         return JSONResponse({"code": exc.code, "params": exc.params}, status_code=exc.status)
 
     # -- state -----------------------------------------------------------
@@ -156,6 +177,26 @@ def create_app(
         holds the session lock for its whole run, and this route answers
         while it does."""
         return session.progress.snapshot()
+
+    # -- the account -----------------------------------------------------
+    #
+    # Signing in runs here and not in the browser: the session belongs in the
+    # system's password store, which only this process can reach.
+
+    @app.post("/api/account/code")
+    def send_code(body: Email):
+        session.account.send_code(body.email)
+        return session.state()
+
+    @app.post("/api/account")
+    def sign_in(body: Code):
+        session.account.verify(body.email, body.code)
+        return session.state()
+
+    @app.delete("/api/account")
+    def sign_out():
+        session.account.sign_out()
+        return session.state()
 
     # -- 1. pages --------------------------------------------------------
 
@@ -431,7 +472,7 @@ def create_app(
         try:
             result = session.generate_flats()
         except RuntimeError as exc:
-            if isinstance(exc, StepError):
+            if isinstance(exc, (StepError, AccountError)):
                 raise
             # CobraUnavailable and friends: the artist needs the sentence, not
             # a traceback.
