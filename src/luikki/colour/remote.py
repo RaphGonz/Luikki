@@ -50,6 +50,9 @@ class RemoteProposer:
     client: Any = None
     # What produced the last proposal, as the server reported it.
     model_version: str = ""
+    # This installation's uuid; an account may use two. Empty until the app
+    # signs in (B2), which is also when the server starts asking for it.
+    device_id: str = ""
 
     @property
     def name(self) -> str:
@@ -84,6 +87,7 @@ class RemoteProposer:
             "kinds": [reference.kind for reference in request.references],
             "page_id": request.page_id,
             "generation_id": request.generation_id,
+            "device_id": self.device_id,
         }
 
         # A cold start loads gigabytes onto the GPU. Modal answers a request

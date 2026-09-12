@@ -257,7 +257,13 @@ fin : ce sont elles qui attendent.
       serveur les reçoit sans les contrôler encore.
 - [ ] Écran de connexion dans l'app (email → code), `keyring`, refresh du token.
 - [ ] Vérification du token dans la FastAPI Modal, contrôles ci-dessus,
-      écriture de `usage`, `devices`, `jobs`.
+      écriture de `usage`, `devices`, `jobs`. Codé (2026-09-12), pas encore
+      déployé : `cloud/accounts.py`, `start_panel` / `finish_panel` dans
+      `schema.sql`. Token vérifié sur place (ES256, clé publique du projet),
+      tout le reste en une transaction. Écarts : `usage` écrit seulement si
+      la case est peinte ; un appareil absent 30 j libère sa place ; les PNG
+      sont décodés avant le quota. Restent : plafonds px/Mo, et retirer le
+      token partagé une fois la connexion faite.
 - [ ] `GET /v1/me` → quota affiché dans l'étape 5, **avant** le clic.
 - [ ] Erreurs réseau / quota / abonnement / version en `StepError`
       `{code, params}` (mécanisme fait dans A, restent ces codes), mots dans `locales/en.json` et `fr.json`.

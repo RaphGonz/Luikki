@@ -17,12 +17,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "httpx>=0.28"]
+dev = ["pytest>=8.0", "httpx>=0.28", "pyjwt[crypto]>=2.8"]
 # httpx: `--proposer remote` talks to the GPU endpoint through it.
 # platformdirs: where the project lives when `serve` is given no --workdir.
 web = ["fastapi>=0.141", "uvicorn[standard]>=0.52", "python-multipart>=0.0.32", "httpx>=0.28", "platformdirs>=4"]
 # Deploys `luikki.cloud.modal_app`. Not needed to run the app.
-cloud = ["modal>=1.5"]
+cloud = ["modal>=1.5", "httpx>=0.28", "pyjwt[crypto]>=2.8"]
 
 [project.scripts]
 luikki = "luikki.cli:main"

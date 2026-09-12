@@ -1,6 +1,7 @@
 """Cobra on Modal: `cloud/server.py` on an L4, the weights in a Volume.
 
     modal secret create luikki-api LUIKKI_API_TOKEN=<token>
+    # and, in the dashboard: luikki-supabase, SUPABASE_URL + SUPABASE_SECRET_KEY
     modal run -m luikki.cloud.modal_app::download    # once: weights into the Volume
     modal deploy -m luikki.cloud.modal_app           # prints the endpoint URL
 
@@ -46,6 +47,9 @@ image = (
         "scikit-image",
         "fastapi",
         "python-multipart",
+        # Accounts: session tokens and the database (`cloud/accounts.py`).
+        "httpx",
+        "pyjwt[crypto]",
     )
     .add_local_dir(
         _REPO / "third_party" / "Cobra", COBRA_DIR, copy=True, ignore=[".git", "examples", "figs"]
@@ -72,7 +76,10 @@ def download() -> None:
     image=image,
     gpu="L4",
     volumes={WEIGHTS_DIR: weights},
-    secrets=[modal.Secret.from_name("luikki-api", required_keys=["LUIKKI_API_TOKEN"])],
+    secrets=[
+        modal.Secret.from_name("luikki-api", required_keys=["LUIKKI_API_TOKEN"]),
+        modal.Secret.from_name("luikki-supabase", required_keys=["SUPABASE_URL", "SUPABASE_SECRET_KEY"]),
+    ],
     # Serving reads the Volume and nothing else: a missing file fails the
     # load instead of quietly downloading on a paid GPU.
     env={"HF_HUB_OFFLINE": "1"},
@@ -96,10 +103,14 @@ class Cobra:
 
     @modal.asgi_app()
     def web(self):
+        from luikki.cloud.accounts import Ledger, TokenVerifier
         from luikki.cloud.server import create_server
 
+        project = os.environ["SUPABASE_URL"]
         return create_server(
             self.proposer,
             token=os.environ["LUIKKI_API_TOKEN"],
             model_version=f"cobra-line@{self.proposer.revision[:12]}",
+            verifier=TokenVerifier(project),
+            ledger=Ledger(project, os.environ["SUPABASE_SECRET_KEY"]),
         )

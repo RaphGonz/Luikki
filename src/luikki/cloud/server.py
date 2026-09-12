@@ -6,7 +6,10 @@ goes back. Everything that decides whether a request may cost GPU time is
 checked here, before the proposer is touched — the client is open source and
 is not trusted with any of it.
 
-B1 has one check, a shared token. Accounts, quota and devices are B2.
+Two ways in. An artist's session token (B2): verified here, then the account's
+subscription, quota, devices and one-job lock are settled in one database call
+(`accounts.py`), and the panel is charged only once it is painted. Or B1's
+shared token, which skips all of that and stays until the app can sign in.
 
 Errors are `{"code", "params"}`, never sentences: the words belong to the
 artist's locale, on the artist's machine.
@@ -16,13 +19,16 @@ from __future__ import annotations
 
 import hmac
 import threading
+import uuid
 
 import numpy as np
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
+from starlette.concurrency import run_in_threadpool
 
 from ..colour.proposer import ColourProposer, PanelRequest, ReferenceImage
 from ..model.masks import UNASSIGNED
+from .accounts import Ledger, Refused, TokenVerifier, client_ip
 from .protocol import MODEL_VERSION_HEADER, PANEL_ROUTE, PROTOCOL, decode_png, encode_png
 
 # Cobra runs 10 steps. The ceiling only stops one request from holding the GPU
@@ -34,12 +40,22 @@ def _refuse(status: int, code: str, **params) -> JSONResponse:
     return JSONResponse({"code": code, "params": params}, status_code=status)
 
 
-def create_server(proposer: ColourProposer, token: str, model_version: str) -> FastAPI:
+def create_server(
+    proposer: ColourProposer,
+    token: str,
+    model_version: str,
+    verifier: TokenVerifier | None = None,
+    ledger: Ledger | None = None,
+) -> FastAPI:
     """The endpoint around one loaded proposer.
 
     `proposer` must expose `num_inference_steps` and `seed`, which each request
-    sets. An empty `token` refuses every request rather than none.
+    sets. An empty `token` turns the shared token off rather than letting
+    everyone in. Accounts need both `verifier` and `ledger`.
     """
+    if (verifier is None) != (ledger is None):
+        raise ValueError("accounts need both a verifier and a ledger")
+
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     # One panel on the GPU at a time. The steps and seed are set on the shared
     # proposer, so two requests interleaving would paint with each other's.
@@ -50,13 +66,22 @@ def create_server(proposer: ColourProposer, token: str, model_version: str) -> F
         # Middleware rather than a dependency: it answers before the body is
         # read, so an unauthorised upload costs a header, not the upload.
         supplied = request.headers.get("authorization", "")
-        expected = f"Bearer {token}"
-        if not token or not hmac.compare_digest(supplied.encode(), expected.encode()):
+        request.state.user = None
+        if token and hmac.compare_digest(supplied.encode(), f"Bearer {token}".encode()):
+            return await call_next(request)
+        if verifier is None or not supplied.startswith("Bearer "):
             return _refuse(401, "unauthorized")
+        try:
+            # In a thread: the first request after a key rotation fetches the
+            # project's public keys.
+            request.state.user = await run_in_threadpool(verifier.user, supplied[len("Bearer ") :])
+        except Refused as refusal:
+            return _refuse(refusal.status, refusal.code, **refusal.params)
         return await call_next(request)
 
     @app.post(PANEL_ROUTE)
     def panel(
+        request: Request,
         protocol: int = Form(...),
         steps: int = Form(10),
         seed: int = Form(0),
@@ -65,9 +90,9 @@ def create_server(proposer: ColourProposer, token: str, model_version: str) -> F
         kinds: list[str] = Form(default=[]),
         hint_colours: UploadFile | None = File(None),
         hint_mask: UploadFile | None = File(None),
-        # Received, not yet checked: B2 counts the quota by them.
         page_id: str = Form(""),
         generation_id: str = Form(""),
+        device_id: str = Form(""),
     ):
         if protocol != PROTOCOL:
             return _refuse(426, "protocol_unsupported", supported=PROTOCOL)
@@ -77,6 +102,15 @@ def create_server(proposer: ColourProposer, token: str, model_version: str) -> F
             return _refuse(400, "bad_references")
         if (hint_colours is None) != (hint_mask is None):
             return _refuse(400, "bad_hints")
+
+        user = request.state.user
+        if user is not None:
+            try:
+                page, generation, device = (
+                    str(uuid.UUID(value)) for value in (page_id, generation_id, device_id)
+                )
+            except ValueError:
+                return _refuse(400, "bad_ids")
 
         try:
             art = decode_png(line_art.file.read())
@@ -91,7 +125,7 @@ def create_server(proposer: ColourProposer, token: str, model_version: str) -> F
         except ValueError:
             return _refuse(400, "bad_image")
 
-        request = PanelRequest(
+        panel_request = PanelRequest(
             line_art=art,
             # The zone map stays on the artist's machine. Cobra never reads it.
             label_map=np.full(art.shape[:2], UNASSIGNED, dtype=np.int32),
@@ -101,14 +135,28 @@ def create_server(proposer: ColourProposer, token: str, model_version: str) -> F
             page_id=page_id,
             generation_id=generation_id,
         )
-        with gpu:
-            proposer.num_inference_steps = steps
-            proposer.seed = seed
+
+        if user is not None:
+            peer = request.client.host if request.client else None
             try:
-                proposal = proposer.propose(request)
-            except RuntimeError as exc:
-                # CobraUnavailable: a panel with no references, most often.
-                return _refuse(422, "proposer_refused", detail=str(exc))
+                ledger.start(user, page, generation, device, client_ip(request.headers.get("x-forwarded-for"), peer))
+            except Refused as refusal:
+                return _refuse(refusal.status, refusal.code, **refusal.params)
+
+        painted = False
+        try:
+            with gpu:
+                proposer.num_inference_steps = steps
+                proposer.seed = seed
+                try:
+                    proposal = proposer.propose(panel_request)
+                except RuntimeError as exc:
+                    # CobraUnavailable: a panel with no references, most often.
+                    return _refuse(422, "proposer_refused", detail=str(exc))
+            painted = True
+        finally:
+            if user is not None:
+                ledger.finish(user, page, generation, painted)
 
         return Response(
             encode_png(proposal),
