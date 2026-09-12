@@ -257,8 +257,9 @@ fin : ce sont elles qui attendent.
       serveur les reçoit sans les contrôler encore.
 - [ ] Écran de connexion dans l'app (email → code), `keyring`, refresh du token.
 - [ ] Vérification du token dans la FastAPI Modal, contrôles ci-dessus,
-      écriture de `usage`, `devices`, `jobs`. Codé (2026-09-12), pas encore
-      déployé : `cloud/accounts.py`, `start_panel` / `finish_panel` dans
+      écriture de `usage`, `devices`, `jobs`. Déployé (2026-09-12) ; la clé
+      publique est refusée sur les tables et les deux fonctions (vérifié).
+      `cloud/accounts.py`, `start_panel` / `finish_panel` dans
       `schema.sql`. Token vérifié sur place (ES256, clé publique du projet),
       tout le reste en une transaction. Écarts : `usage` écrit seulement si
       la case est peinte ; un appareil absent 30 j libère sa place ; les PNG
