@@ -28,6 +28,7 @@ from ..colour.references import UnknownKind
 from ..colour.snap import SNAP_MAX_DELTA
 from pydantic import BaseModel
 
+from .project import default_workdir
 from .session import Session, StepError
 
 
@@ -126,7 +127,7 @@ def create_app(
     extractor=None,
 ) -> FastAPI:
     app = FastAPI(title="Luikki")
-    workdir = Path(workdir) if workdir else Path(tempfile.gettempdir()) / "luikki"
+    workdir = Path(workdir) if workdir else default_workdir()
     session = Session(
         workdir,
         proposer=proposer or _build_proposer(),
@@ -141,7 +142,7 @@ def create_app(
 
     @app.exception_handler(StepError)
     def _step_error(_request, exc: StepError):
-        return JSONResponse({"error": str(exc)}, status_code=409)
+        return JSONResponse({"code": exc.code, "params": exc.params}, status_code=exc.status)
 
     # -- state -----------------------------------------------------------
 
@@ -170,7 +171,7 @@ def create_app(
         try:
             session.load_page(staged, original_name=name)
         except (FileNotFoundError, ValueError) as exc:
-            raise HTTPException(400, f"could not read that image: {exc}") from exc
+            raise StepError("image_unreadable", status=422, detail=str(exc)) from exc
         finally:
             # The page folder keeps its own copy.
             staged.unlink(missing_ok=True)
@@ -342,9 +343,9 @@ def create_app(
         except UnknownKind as exc:
             raise HTTPException(422, str(exc)) from exc
         except EmptyImageError as exc:
-            raise HTTPException(422, f"no colours in that image: {exc}") from exc
+            raise StepError("image_empty", status=422) from exc
         except (OSError, ValueError) as exc:
-            raise HTTPException(422, f"could not read that image: {exc}") from exc
+            raise StepError("image_unreadable", status=422, detail=str(exc)) from exc
         finally:
             # The store keeps its own copy, so the upload never lingers.
             staged.unlink(missing_ok=True)
@@ -394,9 +395,9 @@ def create_app(
         try:
             session.add_palette(staged, original_name=name)
         except EmptyImageError as exc:
-            raise HTTPException(422, f"no colours in that image: {exc}") from exc
+            raise StepError("image_empty", status=422) from exc
         except (OSError, ValueError) as exc:
-            raise HTTPException(422, f"could not read that image: {exc}") from exc
+            raise StepError("image_unreadable", status=422, detail=str(exc)) from exc
         finally:
             staged.unlink(missing_ok=True)
         return session.state()

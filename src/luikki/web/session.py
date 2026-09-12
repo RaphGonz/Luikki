@@ -133,12 +133,24 @@ def _rgb(value) -> tuple[int, int, int]:
     """Three channels, 0-255, from whatever the wire or the store sent."""
     channels = tuple(int(part) for part in value)
     if len(channels) != 3 or any(not 0 <= part <= 255 for part in channels):
-        raise StepError(f"{value!r} is not an r,g,b colour.")
+        raise StepError("colour_invalid")
     return channels
 
 
 class StepError(RuntimeError):
-    """A button was pressed before the step it depends on had run."""
+    """What the artist asked for cannot be done now, named by a code.
+
+    The code is a locale key without its `error.` prefix, and `params` fill
+    its placeholders: the browser words the refusal in the artist's language.
+    Codes are written out at the raise, so `tests/test_locales.py` can check
+    that each one has its sentence.
+    """
+
+    def __init__(self, code: str, status: int = 409, **params):
+        super().__init__(f"{code} {params}" if params else code)
+        self.code = code
+        self.status = status
+        self.params = params
 
 
 def _best_device() -> str:
@@ -253,7 +265,7 @@ class Session:
 
     def _require_page(self) -> None:
         if self.line_mask is None:
-            raise StepError("Upload a page first.")
+            raise StepError("upload_first")
 
     # -- 1. upload -------------------------------------------------------
 
@@ -280,11 +292,11 @@ class Session:
         """Open another page of the project, exactly as it was left."""
         with self.lock:
             if page_id not in self._pages:
-                raise StepError(f"No page {page_id}.")
+                raise StepError("page_missing", page=page_id)
             try:
                 project.open_page(self, page_id)
             except (OSError, ValueError) as exc:
-                raise StepError(f"Page {page_id} could not be read: {exc}") from exc
+                raise StepError("page_unreadable", page=page_id, detail=str(exc)) from exc
             project.save_project(self)
 
     def delete_page(self) -> None:
@@ -350,7 +362,7 @@ class Session:
             # meant, and re-running panel detection after tracing balloons is
             # how an artist loses work they cannot get back.
             if not self.panels:
-                raise StepError("Detect panels first — the steps run in order.")
+                raise StepError("panels_first")
             if self.bubble_detector is None:
                 self.bubble_detector = BubbleDetector()
             polygons = detect_bubbles(
@@ -373,7 +385,7 @@ class Session:
     # pointer is and leaves the server holding only what is true of the
     # result.
 
-    def _clean_polygon(self, polygon, noun: str) -> list[tuple[int, int]]:
+    def _clean_polygon(self, polygon) -> list[tuple[int, int]]:
         """A polygon the rest of the pipeline can rasterise, or an error.
 
         Clamped to the page because a corner dragged past the edge is a
@@ -388,28 +400,22 @@ class Session:
         if len(cleaned) > 1 and cleaned[0] == cleaned[-1]:
             cleaned.pop()
         if len(cleaned) < 3:
-            raise StepError(f"A {noun} needs at least three corners.")
+            raise StepError("corners_too_few")
         return cleaned
 
     def _require_panel_stage(self) -> None:
         self._require_page()
         if not self.panels:
-            raise StepError("Detect panels first — there is nothing to correct yet.")
+            raise StepError("panels_first")
         if self._zones_done:
-            raise StepError(
-                "The zones are already cut from these panels. "
-                "Press Detect panels to reopen the geometry."
-            )
+            raise StepError("panels_closed")
 
     def _require_bubble_stage(self) -> None:
         self._require_page()
         if not self._bubbles_done:
-            raise StepError("Detect bubbles first — there is nothing to correct yet.")
+            raise StepError("bubbles_first")
         if self._zones_done:
-            raise StepError(
-                "The zones are already cut around these bubbles. "
-                "Press Detect bubbles to reopen the geometry."
-            )
+            raise StepError("bubbles_closed")
 
     def _reorder_panels(self) -> None:
         """Renumber panels into reading order after the artist changed them.
@@ -438,13 +444,13 @@ class Session:
         for panel in self.panels:
             if panel.order == order:
                 return panel
-        raise StepError(f"No panel {order + 1}.")
+        raise StepError("panel_missing", number=order + 1)
 
     def set_panel_polygon(self, order: int, polygon) -> PanelState:
         with self.lock:
             self._require_panel_stage()
             panel = self._panel_for(order)
-            panel.polygon = self._clean_polygon(polygon, "panel")
+            panel.polygon = self._clean_polygon(polygon)
             self._fit_box(panel)
             self._reorder_panels()
             self._invalidate_from_panels()
@@ -460,7 +466,7 @@ class Session:
                 y=0,
                 width=0,
                 height=0,
-                polygon=self._clean_polygon(polygon, "panel"),
+                polygon=self._clean_polygon(polygon),
             )
             self._fit_box(panel)
             self.panels.append(panel)
@@ -474,10 +480,7 @@ class Session:
             self._require_panel_stage()
             panel = self._panel_for(order)
             if len(self.panels) == 1:
-                raise StepError(
-                    "That is the last panel. A page with no panels has nothing "
-                    "to segment — draw its replacement first."
-                )
+                raise StepError("last_panel")
             self.panels.remove(panel)
             self._reorder_panels()
             self._invalidate_from_panels()
@@ -498,7 +501,7 @@ class Session:
         with self.lock:
             self._require_bubble_stage()
             self._require_bubble_index(index)
-            self.protected[index] = self._clean_polygon(polygon, "bubble")
+            self.protected[index] = self._clean_polygon(polygon)
             self._invalidate_from_panels()
             self._save()
             return self.protected[index]
@@ -506,7 +509,7 @@ class Session:
     def add_bubble(self, polygon) -> int:
         with self.lock:
             self._require_bubble_stage()
-            self.protected.append(self._clean_polygon(polygon, "bubble"))
+            self.protected.append(self._clean_polygon(polygon))
             self._invalidate_from_panels()
             self._save()
             return len(self.protected) - 1
@@ -521,7 +524,7 @@ class Session:
 
     def _require_bubble_index(self, index: int) -> None:
         if not 0 <= index < len(self.protected):
-            raise StepError(f"No bubble {index}.")
+            raise StepError("bubble_missing", number=index + 1)
 
     # -- 4. segment zones ------------------------------------------------
 
@@ -536,12 +539,12 @@ class Session:
         # Checked before anything else: a bad number is wrong whatever state
         # the page is in, and saying so beats reporting the step it blocked.
         if leak_gap is not None and not 0.0 <= leak_gap <= 1.0:
-            raise StepError("The gap allowance is a share, between 0 and 1.")
+            raise StepError("gap_share")
 
         with self.lock:
             self._require_page()
             if not self.panels:
-                raise StepError("Detect panels first — zones are segmented per panel.")
+                raise StepError("panels_first")
             if leak_gap is not None:
                 self.leak_gap = leak_gap
 
@@ -708,12 +711,9 @@ class Session:
     def _require_zone_stage(self) -> None:
         self._require_page()
         if not self._zones_done:
-            raise StepError("Segment zones first — there are no zones to correct yet.")
+            raise StepError("zones_first")
         if self._flats_done:
-            raise StepError(
-                "The flats are coloured from these zones. Press Segment zones to "
-                "cut the page again — every merge and cut goes with it."
-            )
+            raise StepError("zones_closed")
 
     def zone_at(self, x: int, y: int) -> tuple[int, int] | None:
         """The (panel, label) under a page-space point, or None.
@@ -801,7 +801,7 @@ class Session:
             self._require_zone_stage()
             panel = self._panel_for(panel_order)
             if panel.label_map is None:
-                raise StepError(f"Panel {panel_order + 1} has no zones.")
+                raise StepError("panel_no_zones", panel=panel_order + 1)
 
             wanted = {int(label) for label in labels}
             present = {
@@ -810,7 +810,7 @@ class Session:
                 if int(label) in wanted and int(label) != UNASSIGNED
             }
             if len(present) < 2:
-                raise StepError("Select at least two zones of one panel to merge.")
+                raise StepError("merge_too_few")
 
             survivor = max(present, key=lambda label: present[label])
             others = [label for label in present if label != survivor]
@@ -835,17 +835,17 @@ class Session:
             self._require_zone_stage()
             panel = self._panel_for(panel_order)
             if panel.label_map is None:
-                raise StepError(f"Panel {panel_order + 1} has no zones.")
+                raise StepError("panel_no_zones", panel=panel_order + 1)
 
             mask = panel.label_map == int(label)
             if not mask.any():
-                raise StepError(f"No zone {label} in panel {panel_order + 1}.")
+                raise StepError("zone_missing", zone=int(label), panel=panel_order + 1)
 
             points = np.array(
                 [[int(x) - panel.x, int(y) - panel.y] for x, y in stroke], np.int32
             )
             if len(points) < 2:
-                raise StepError("Draw the cut across the zone, from one side to the other.")
+                raise StepError("cut_too_short")
 
             # Both ends run on past where the hand stopped. A stroke has to
             # leave the zone on both sides to separate it, and stopping a few
@@ -862,10 +862,7 @@ class Session:
                 remaining.astype(np.uint8), connectivity=8
             )
             if count - 1 < 2:
-                raise StepError(
-                    "That stroke does not separate the zone — draw it right across, "
-                    "from one edge of the zone to the other."
-                )
+                raise StepError("cut_no_split")
 
             next_label = int(panel.label_map.max()) + 1
             made = [int(label)]
@@ -897,11 +894,11 @@ class Session:
         with self.lock:
             panel = self._panel_for(panel_order)
             if panel.label_map is None:
-                raise StepError(f"Panel {panel_order + 1} has no zones.")
+                raise StepError("panel_no_zones", panel=panel_order + 1)
             mask = panel.label_map == int(label)
             rows, cols = np.nonzero(mask)
             if not len(rows):
-                raise StepError(f"No zone {label} in panel {panel_order + 1}.")
+                raise StepError("zone_missing", zone=int(label), panel=panel_order + 1)
 
             top, bottom = int(rows.min()), int(rows.max())
             left, right = int(cols.min()), int(cols.max())
@@ -1068,7 +1065,7 @@ class Session:
         see `_split_into_panels`.
         """
         if kind == PALETTE_KIND:
-            raise StepError("A palette image goes in through Add palette.")
+            raise StepError("palette_kind")
         with self.lock:
             label = original_name or Path(path).name
             stored = [self.reference_store.add(path, label=label, kind=kind)]
@@ -1229,7 +1226,7 @@ class Session:
         with self.lock:
             wanted = _rgb(rgb)
             if wanted not in self.candidates(reference_id):
-                raise StepError("That colour is not one of this reference's.")
+                raise StepError("colour_not_offered")
             existing = self._taken.get((reference_id, wanted))
             if existing is not None:
                 return self._entry(existing)
@@ -1300,7 +1297,7 @@ class Session:
         for entry in self._palette:
             if entry.id == entry_id:
                 return entry
-        raise StepError(f"No palette entry {entry_id}.")
+        raise StepError("palette_entry_missing", id=entry_id)
 
     # The palette outlives the page and the process, exactly as the reference
     # pool does: it belongs to the book. Without this a restart would empty a
@@ -1381,7 +1378,7 @@ class Session:
         with self.lock:
             self._require_page()
             if not self._zones_done:
-                raise StepError("Segment zones first — there is nothing to colour yet.")
+                raise StepError("zones_first")
 
             # `threshold=None` unconditionally: **flats never snap**. Every
             # zone's modal colour becomes its own entry and stays that way
@@ -1458,7 +1455,7 @@ class Session:
 
     def _require_flats(self) -> None:
         if not self._flats_done:
-            raise StepError("Generate flats first — there are no segments to snap yet.")
+            raise StepError("flats_first")
 
     def segment(self, panel: int, label: int) -> Segment | None:
         for candidate in self.segments:
@@ -1519,17 +1516,15 @@ class Session:
         the page once rather than once per segment."""
         segment = self.segment(panel, label)
         if segment is None:
-            raise StepError(f"No segment {label} in panel {panel + 1}.")
+            raise StepError("segment_missing", segment=int(label), panel=panel + 1)
 
         if entry_id is None:
             entry, _ = self.snap_suggestion(segment)
             if entry is None:
-                raise StepError(
-                    "No reference colours to snap to — upload a character sheet."
-                )
+                raise StepError("snap_no_palette")
             entry_id = int(entry.id or 0)
         elif entry_id not in self.palette_by_id:
-            raise StepError(f"No palette entry {entry_id}.")
+            raise StepError("palette_entry_missing", id=entry_id)
 
         segment.palette_entry_id = entry_id
         segment.snapped = entry_id != self._auto_entry.get(segment.key)
@@ -1544,10 +1539,10 @@ class Session:
             self._require_flats()
             segment = self.segment(panel, label)
             if segment is None:
-                raise StepError(f"No segment {label} in panel {panel + 1}.")
+                raise StepError("segment_missing", segment=int(label), panel=panel + 1)
             original = self._auto_entry.get(segment.key)
             if original is None:
-                raise StepError(f"Segment {label} has no original colour recorded.")
+                raise StepError("segment_no_original", segment=int(label))
             segment.palette_entry_id = original
             segment.snapped = False
             self.panels[panel].assignments[label] = original
@@ -1603,13 +1598,10 @@ class Session:
     ) -> Path:
         with self.lock:
             if not self._flats_done:
-                raise StepError("Generate flats first — there is nothing to export.")
+                raise StepError("flats_first")
             if granularity is not None:
                 if granularity not in GRANULARITIES:
-                    raise StepError(
-                        f"Unknown export granularity {granularity!r} — "
-                        f"expected one of {', '.join(GRANULARITIES)}."
-                    )
+                    raise StepError("granularity_unknown", value=granularity)
                 self.granularity = granularity
                 project.save_project(self)
             target = Path(path) if path else self.workdir / f"{Path(self.original_name).stem}_flats.psd"

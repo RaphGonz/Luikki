@@ -101,7 +101,10 @@ def test_the_model_version_is_kept():
 
 
 @pytest.mark.parametrize("token", ["wrong", ""])
-def test_a_bad_token_never_reaches_the_proposer(token):
+def test_a_bad_token_never_reaches_the_proposer(token, monkeypatch):
+    # No token means none at all: the real one in the machine's environment
+    # would otherwise stand in for it.
+    monkeypatch.delenv("LUIKKI_REMOTE_TOKEN", raising=False)
     painter = Painter()
     with pytest.raises(RemoteUnavailable) as caught:
         _remote(painter, token=token or None).propose(_request())

@@ -347,14 +347,15 @@ function fitPage() {
 
 // ---- the server -------------------------------------------------------------
 
-// A server that names its error by code gets it translated. One that sends a
-// sentence gets the sentence — English, until the Python learns codes.
+// A refusal the server names by code (`StepError`) is worded here, in the
+// artist's language. A sentence — a proposer that could not run — shows as
+// it came.
 function failure(body, fallback) {
   const code = body && body.code ? "error." + body.code : null;
   if (code && (code in words.strings || code in words.fallback)) {
     return new Error(lookup(code, body.params || {}));
   }
-  const message = body && (body.error || body.detail);
+  const message = body && body.detail;
   if (typeof message === "string") return new Error(message);
   return new Error(message ? t("error.refused") : fallback || t("error.refused"));
 }

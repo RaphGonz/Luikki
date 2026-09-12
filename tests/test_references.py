@@ -312,7 +312,7 @@ def test_a_palette_image_is_not_shown_to_the_proposer(tmp_path):
 
 def test_a_palette_goes_in_through_its_own_door(tmp_path):
     session = Session(tmp_path / "work")
-    with pytest.raises(RuntimeError, match="Add palette"):
+    with pytest.raises(RuntimeError, match="palette_kind"):
         session.add_reference(_sheet(tmp_path / "a.png"), kind=PALETTE_KIND)
 
 

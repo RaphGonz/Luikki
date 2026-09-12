@@ -127,7 +127,7 @@ def test_zones_need_panels_even_with_a_page(client, page):
     upload(client, "/api/page", page)
     response = client.post("/api/zones")
     assert response.status_code == 409
-    assert "panel" in response.json()["error"].lower()
+    assert response.json()["code"] == "panels_first"
 
 
 def test_rerunning_a_step_invalidates_what_depended_on_it(client, page):
@@ -182,7 +182,7 @@ def test_bubbles_wait_for_panels(client, page):
     upload(client, "/api/page", page)
     refused = client.post("/api/bubbles")
     assert refused.status_code == 409
-    assert "panel" in refused.json()["error"].lower()
+    assert refused.json()["code"] == "panels_first"
 
     client.post("/api/panels")
     assert client.post("/api/bubbles").status_code == 200
@@ -231,7 +231,7 @@ def test_a_panel_can_be_deleted_but_not_the_last_one(client, page):
 
     refused = client.delete(f"/api/panel/{panels[0]['order']}")
     assert refused.status_code == 409
-    assert "last panel" in refused.json()["error"]
+    assert refused.json()["code"] == "last_panel"
     assert len(client.get("/api/state").json()["panels"]) == 1
 
 
@@ -240,7 +240,7 @@ def test_two_corners_are_not_a_panel(client, page):
     order = client.post("/api/panels").json()["panels"][0]["order"]
     refused = client.put(f"/api/panel/{order}", json={"polygon": [[10, 10], [20, 20]]})
     assert refused.status_code == 409
-    assert "three corners" in refused.json()["error"]
+    assert refused.json()["code"] == "corners_too_few"
 
 
 def test_correcting_a_panel_invalidates_what_was_cut_from_it(client, page):
@@ -329,7 +329,7 @@ def test_zones_are_correctable_between_the_cut_and_the_colour(client, page):
     assert client.get("/api/state").json()["editable"]["zones"] is False
     refused = client.post("/api/zones/merge", json={"panel": 0, "labels": [1, 2]})
     assert refused.status_code == 409
-    assert "Segment zones" in refused.json()["error"]
+    assert refused.json()["code"] == "zones_closed"
 
 
 def test_a_press_resolves_to_the_zone_under_it(client, page):
@@ -402,7 +402,7 @@ def test_one_zone_is_not_a_merge(client, page):
     _zoned(client, page)
     refused = client.post("/api/zones/merge", json={"panel": 0, "labels": [1]})
     assert refused.status_code == 409
-    assert "at least two" in refused.json()["error"]
+    assert refused.json()["code"] == "merge_too_few"
 
 
 def test_a_cut_splits_a_zone_and_keeps_every_pixel(client, page):
@@ -444,7 +444,7 @@ def test_a_stroke_that_separates_nothing_changes_nothing(client, page):
         json={"panel": 0, "label": target["label"], "stroke": [[40, 40], [44, 44]]},
     )
     assert refused.status_code == 409
-    assert "does not separate" in refused.json()["error"]
+    assert refused.json()["code"] == "cut_no_split"
     assert client.get("/api/state").json()["panels"][0]["zones"] == before
 
 
@@ -497,7 +497,7 @@ def test_a_colour_that_is_not_a_colour_is_refused(client, page, tmp_path):
     entry = _palette_of(state)[0]
     off_scale = client.put(f"/api/palette/{entry['id']}", json={"rgb": [7, 300, 13]})
     assert off_scale.status_code == 409
-    assert "r,g,b" in off_scale.json()["error"]
+    assert off_scale.json()["code"] == "colour_invalid"
     assert client.put("/api/palette/9999", json={"rgb": [7, 24, 13]}).status_code == 409
 
 
@@ -528,7 +528,7 @@ def test_a_colour_the_reference_does_not_have_is_refused(client, tmp_path):
         "/api/palette", json={"reference_id": reference_id, "rgb": [1, 2, 3]}
     )
     assert refused.status_code == 409
-    assert "not one of this reference" in refused.json()["error"]
+    assert refused.json()["code"] == "colour_not_offered"
 
 
 def test_a_palette_image_needs_no_clicking(client, tmp_path):
@@ -792,4 +792,5 @@ def test_a_reference_that_is_not_an_image_is_refused(tmp_path, client):
             "/api/reference", files={"file": ("broken.png", handle, "image/png")}
         )
     assert response.status_code == 422
+    assert response.json()["code"] == "image_unreadable"
     assert client.get("/api/state").json()["references"] == []

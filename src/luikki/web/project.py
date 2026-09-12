@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import tempfile
 from pathlib import Path
 
 import cv2
@@ -57,6 +58,29 @@ def _read_json(path: Path) -> dict | None:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
+
+
+def default_workdir() -> Path:
+    """The project folder when `luikki serve` is given none.
+
+    The user's data folder (`%LOCALAPPDATA%\\Luikki`, `~/Library/Application
+    Support/Luikki`), not the temp folder the app used before: the system's
+    disk cleanup empties that one, and every page with it. Local rather than
+    roaming on Windows, because zone maps are not something to sync.
+
+    A project still in the old place is copied across once, through a staging
+    folder, so a copy cut short is never taken for the project.
+    """
+    from platformdirs import user_data_dir
+
+    workdir = Path(user_data_dir("Luikki", appauthor=False))
+    legacy = Path(tempfile.gettempdir()) / "luikki"
+    if not workdir.exists() and legacy.is_dir():
+        staging = workdir.with_name(workdir.name + ".part")
+        shutil.rmtree(staging, ignore_errors=True)
+        shutil.copytree(legacy, staging)
+        staging.rename(workdir)
+    return workdir
 
 
 def page_folder(workdir: Path, page_id: int) -> Path:

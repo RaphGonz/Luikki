@@ -16,7 +16,8 @@ from pathlib import Path
 
 import pytest
 
-STATIC = Path(__file__).resolve().parents[1] / "src" / "luikki" / "web" / "static"
+SOURCE = Path(__file__).resolve().parents[1] / "src" / "luikki"
+STATIC = SOURCE / "web" / "static"
 LOCALES = STATIC / "locales"
 PLURAL_FORMS = {"zero", "one", "two", "few", "many", "other"}
 
@@ -37,9 +38,15 @@ def _page() -> str:
     return (STATIC / "index.html").read_text(encoding="utf-8")
 
 
+def _python() -> str:
+    return "\n".join(path.read_text(encoding="utf-8") for path in SOURCE.rglob("*.py"))
+
+
 def _used() -> set[str]:
     keys = set(re.findall(r'"([a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+)"', _script()))
     keys |= set(re.findall(r'data-i18n(?:-title|-aria-label)?="([^"]+)"', _page()))
+    # A refusal from the server is `StepError("code")`, worded as `error.code`.
+    keys |= {f"error.{code}" for code in re.findall(r'StepError\(\s*"([a-z_]+)"', _python())}
     return keys
 
 
@@ -58,6 +65,10 @@ def test_every_english_key_is_used():
 
 def test_keys_are_written_out_never_assembled():
     assert re.findall(r'(?<![\w.$])t\((?!")[^)]*\)', _script()) == []
+
+
+def test_server_refusals_are_written_out_never_assembled():
+    assert re.findall(r'raise StepError\((?!\s*")', _python()) == []
 
 
 def test_the_page_carries_no_words_of_its_own():

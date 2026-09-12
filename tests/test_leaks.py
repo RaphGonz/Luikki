@@ -131,5 +131,5 @@ def test_the_gap_allowance_is_a_share(tmp_path):
 
     session = Session(workdir=tmp_path)
     for bad in (-0.1, 1.5):
-        with pytest.raises(StepError, match="share"):
+        with pytest.raises(StepError, match="gap_share"):
             session.segment_zones(leak_gap=bad)
