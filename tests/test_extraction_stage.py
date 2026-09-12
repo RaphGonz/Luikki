@@ -14,12 +14,13 @@ import cv2
 import numpy as np
 import pytest
 
+from luikki import models
 from luikki.extract.base import ExtractionResult
 from luikki.model.masks import UNASSIGNED
 from luikki.segmentation.preprocess import binarise_lines
 from luikki.web.session import Session
 
-WEIGHTS = Path(__file__).resolve().parents[1] / "third_party" / "MangaLineExtraction" / "erika.pth"
+ONNX = models.model_dir() / models.MANGA_LINE
 
 
 class FakeExtractor:
@@ -144,7 +145,7 @@ def test_flats_still_reach_under_the_artists_real_ink(tmp_path):
     assert (covered != UNASSIGNED).all(), "raw ink left unpainted under the line"
 
 
-@pytest.mark.skipif(not WEIGHTS.exists(), reason="erika.pth not vendored")
+@pytest.mark.skipif(not ONNX.exists(), reason="manga_line.onnx not built (luikki models)")
 def test_the_real_extractor_thins_ink(tmp_path):
     """MangaLineExtraction on the actual fixture, not a stand-in.
 
@@ -152,21 +153,51 @@ def test_the_real_extractor_thins_ink(tmp_path):
     so the ink fraction collapses while the structure survives. That is the
     property the app depends on, so it is measured rather than assumed.
     """
-    pytest.importorskip("torch")
     from luikki.extract.manga_line import MangaLineExtractor
     from luikki.segmentation.preprocess import ink_fraction
-    from luikki.web.session import _best_device
 
     page = brush_page(tmp_path)
-    session = Session(
-        tmp_path / "work", extractor=MangaLineExtractor(device=_best_device())
-    )
+    session = Session(tmp_path / "work", extractor=MangaLineExtractor())
     session.load_page(page)
 
     raw = ink_fraction(session.line_mask)
     structural = ink_fraction(session.structural_mask())
 
     assert structural < raw, f"extractor did not thin the ink ({structural} vs {raw})"
+
+
+@pytest.mark.skipif(
+    not (ONNX.exists() and models.ERIKA.exists()), reason="needs both manga_line.onnx and erika.pth"
+)
+def test_the_onnx_export_draws_what_the_upstream_model_draws(tmp_path):
+    """The export is the model, not an approximation of it.
+
+    Both runtimes go through the same padding and tiling; only the network
+    call differs. A difference past rounding would be a wrong export, and it
+    would move every zone boundary the artist then corrects.
+    """
+    torch = pytest.importorskip("torch")
+    import sys
+
+    from luikki.extract.manga_line import MangaLineExtractor
+
+    sys.path.insert(0, str(models.ERIKA.parent))
+    from model_torch import res_skip  # type: ignore[import-not-found]
+
+    network = res_skip()
+    network.load_state_dict(torch.load(models.ERIKA, map_location="cpu", weights_only=True))
+    network.eval()
+
+    class Upstream(MangaLineExtractor):
+        def _infer(self, batch):
+            with torch.no_grad():
+                return network(torch.from_numpy(batch)).numpy()
+
+    grey = cv2.imread(str(brush_page(tmp_path)), cv2.IMREAD_GRAYSCALE)
+    exported = MangaLineExtractor(tile=256, overlap=64).extract(grey).lines
+    upstream = Upstream(tile=256, overlap=64).extract(grey).lines
+
+    assert np.abs(exported.astype(int) - upstream.astype(int)).max() <= 1
 
 
 def test_a_spot_black_is_not_a_zone_of_its_own(tmp_path):

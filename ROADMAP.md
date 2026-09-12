@@ -287,15 +287,27 @@ fin : ce sont elles qui attendent.
 - Fait quand : un compte testeur génère ; un compte sans plan est refusé avec
   un message traduit.
 
-### B3 — Client autonome (7–12 j)
+### B3 — Client autonome (fait, 2026-09-12)
 
-- [ ] MangaLineExtraction → ONNX : `torch.onnx.export` une fois, `.onnx`
+- [x] MangaLineExtraction → ONNX : `torch.onnx.export` une fois, `.onnx`
       versionné, `extract/manga_line.py` sur onnxruntime. Test de parité
       torch/ONNX sur 2 planches réelles (lu sur les rendus).
-- [ ] Plus de torch dans le client : `_best_device` (`web/session.py`) passe aux
+      Fait (2026-09-12). Parité sur teddy et laurine : écart max 1 niveau de
+      gris sur 255, 0,001 % des pixels touchés, aucun pixel ne change de côté
+      encre/papier ; rendus dans `reports/onnx_parity/`. ONNX un peu plus
+      rapide que torch sur CPU (102 s contre 120 s sur teddy). Écart : le
+      `.onnx` n'est **pas** versionné, 173 Mo dépassent la limite de GitHub ;
+      `luikki models` l'exporte, et B4 devra le fournir au build (asset de
+      release ou export dans la CI).
+- [x] Plus de torch dans le client : `_best_device` (`web/session.py`) passe aux
       providers onnxruntime. `CobraProposer` reste utilisable depuis les sources.
-- [ ] Détecteur de bulles embarqué : plus de téléchargement au lancement
-      (`segmentation/bubbles.py:109`).
+      Fait (2026-09-12) : `best_providers` dans `extract/manga_line.py` (CUDA
+      avec `onnxruntime-gpu`, DirectML avec `onnxruntime-directml`, sinon CPU).
+- [x] Détecteur de bulles embarqué : plus de téléchargement au lancement
+      (`segmentation/bubbles.py:109`). Fait (2026-09-12) : `luikki/models.py`
+      lit `models/` dans le bundle de l'app installée, ou dans le dépôt ;
+      `luikki models` le remplit une fois (détecteur vérifié par sha256, ONNX
+      exporté depuis `erika.pth`). Mettre `models/` dans le bundle : B4.
 - [x] `platformdirs` : `%LOCALAPPDATA%\Luikki` (local, pas roaming : les
       cartes de zones ne se synchronisent pas), `~/Library/Application
       Support/Luikki`, comme dossier de travail par défaut (2026-09-12).
@@ -305,6 +317,10 @@ fin : ce sont elles qui attendent.
       fenêtre ne perd plus la page.
 - Fait quand : pipeline complet dans un venv sans torch, et une page survit à
   la fermeture de l'app.
+  Vérifié le 2026-09-12 dans un venv neuf (`pip install -e ".[web,dev]"`,
+  torch absent) : `luikki flatten` sur teddy sort son PSD (3 cases, 438
+  segments, comme sur Modal), et la suite passe (321, le seul test sauté est
+  la parité, qui a besoin de torch).
 
 ### B4 — Installeurs (5–8 j)
 

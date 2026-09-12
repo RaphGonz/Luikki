@@ -16,32 +16,46 @@ Two things to keep in mind when reading its output:
   afterwards moves the region count substantially, so it is a parameter of the
   experiment rather than an implementation detail.
 
-The upstream model is vendored under third_party/ and imported rather than
-reimplemented, so the released ``erika.pth`` state dict loads without a
-key-mapping layer between us and their weights.
+The network runs on onnxruntime, from `manga_line.onnx`: the upstream
+``erika.pth`` exported once by `luikki models` (`luikki/models.py`). That keeps
+torch, and its gigabyte, out of the app an artist installs.
 """
 
 from __future__ import annotations
 
-import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import cv2
 import numpy as np
 
+from ..models import MANGA_LINE, model_file
 from .base import ExtractionResult
-
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-_VENDOR_DIR = _REPO_ROOT / "third_party" / "MangaLineExtraction"
-_DEFAULT_WEIGHTS = _VENDOR_DIR / "erika.pth"
 
 # The network downsamples five times, so both sides must be multiples of 16.
 _STRIDE = 16
 
+# In the order worth trying. onnxruntime reports only what its build can run:
+# the stock wheel is CPU, `onnxruntime-gpu` adds CUDA, `onnxruntime-directml`
+# adds DirectML (any Windows GPU).
+_PREFERRED = ("CUDAExecutionProvider", "DmlExecutionProvider", "CPUExecutionProvider")
+
+
+def best_providers() -> list[str]:
+    """A GPU when this onnxruntime can use one, the CPU otherwise.
+
+    The difference is seconds against minutes on a full page, and nothing else
+    in the app needs a GPU, so this degrades rather than refuses.
+    """
+    import onnxruntime
+
+    available = set(onnxruntime.get_available_providers())
+    return [provider for provider in _PREFERRED if provider in available] or ["CPUExecutionProvider"]
+
 
 class MangaLineExtractor:
-    """CPU-capable wrapper around the ``res_skip`` network.
+    """The ``res_skip`` network on onnxruntime, over overlapping tiles.
 
     ``tile`` bounds peak memory and lets full-resolution studio pages (300dpi
     is routinely 3500x5000) run without a GPU. Tiles overlap and are feathered
@@ -52,80 +66,72 @@ class MangaLineExtractor:
 
     def __init__(
         self,
-        weights: str | Path | None = None,
+        model: str | Path | None = None,
         tile: int | None = 1024,
         overlap: int = 128,
-        device: str = "cpu",
+        providers: list[str] | None = None,
     ):
-        self.weights = Path(weights) if weights else _DEFAULT_WEIGHTS
+        self.model = Path(model) if model else None
         self.tile = tile
         self.overlap = overlap
-        self.device = device
-        self._model = None
+        self.providers = providers
+        self._session = None
+        self._input = ""
 
     @property
     def name(self) -> str:
         return "manga_line_extraction"
 
     def _load(self):
-        if self._model is not None:
-            return self._model
+        if self._session is None:
+            import onnxruntime
 
-        import torch
-
-        if not self.weights.exists():
-            raise FileNotFoundError(
-                f"MangaLineExtraction weights not found at {self.weights}. "
-                "Download erika.pth from "
-                "https://github.com/ljsabc/MangaLineExtraction_PyTorch/releases/download/v1/erika.pth"
+            self.model = self.model or model_file(MANGA_LINE)
+            self._session = onnxruntime.InferenceSession(
+                str(self.model), providers=self.providers or best_providers()
             )
-        if str(_VENDOR_DIR) not in sys.path:
-            sys.path.insert(0, str(_VENDOR_DIR))
+            self._input = self._session.get_inputs()[0].name
+        return self._session
 
-        from model_torch import res_skip  # type: ignore[import-not-found]
+    def _infer(self, batch: np.ndarray) -> np.ndarray:
+        """One padded ``1x1xHxW`` float32 batch through the network.
 
-        model = res_skip()
-        model.load_state_dict(torch.load(self.weights, map_location=self.device))
-        model.to(self.device)
-        model.eval()
-        self._model = model
-        return model
+        The only method that knows the runtime, so a comparison can put the
+        upstream torch model in its place and keep everything around it.
+        """
+        return self._load().run(None, {self._input: batch})[0]
 
     def extract(
         self,
         grey: np.ndarray,
         progress: Callable[[int, int], None] | None = None,
     ) -> ExtractionResult:
-        import torch
-
-        model = self._load()
-        started = time.perf_counter()
-
         if grey.ndim != 2:
             raise ValueError("MangaLineExtractor expects a 2-D greyscale array")
+        session = self._load()
+        started = time.perf_counter()
 
         height, width = grey.shape
         use_tiling = self.tile is not None and max(height, width) > self.tile
-
-        with torch.no_grad():
-            if use_tiling:
-                lines = self._extract_tiled(model, grey, torch, progress)
-            else:
-                lines = self._extract_whole(model, grey, torch)
-                if progress is not None:
-                    progress(1, 1)
+        if use_tiling:
+            lines = self._extract_tiled(grey, progress)
+        else:
+            lines = self._run(grey.astype(np.float32)).astype(np.uint8)
+            if progress is not None:
+                progress(1, 1)
 
         return ExtractionResult(
             lines=lines,
             meta={
                 "extractor": self.name,
-                "weights": str(self.weights),
+                "model": str(self.model),
+                "providers": session.get_providers(),
                 "tiled": use_tiling,
                 "seconds": round(time.perf_counter() - started, 2),
             },
         )
 
-    def _run(self, model, patch: np.ndarray, torch) -> np.ndarray:
+    def _run(self, patch: np.ndarray) -> np.ndarray:
         """Run the network on one array, handling the stride-16 padding."""
         height, width = patch.shape
         padded_h = int(np.ceil(height / _STRIDE)) * _STRIDE
@@ -136,12 +142,8 @@ class MangaLineExtractor:
         buffer = np.ones((1, 1, padded_h, padded_w), dtype=np.float32)
         buffer[0, 0, :height, :width] = patch
 
-        tensor = torch.from_numpy(buffer).to(self.device)
-        out = model(tensor).cpu().numpy()[0, 0]
+        out = self._infer(buffer)[0, 0]
         return np.clip(out[:height, :width], 0, 255)
-
-    def _extract_whole(self, model, grey: np.ndarray, torch) -> np.ndarray:
-        return self._run(model, grey.astype(np.float32), torch).astype(np.uint8)
 
     def _tiles(self, height: int, width: int) -> list[tuple[int, int, int, int]]:
         """Every tile as ``(y0, y1, x0, x1)``, listed up front so it can be counted."""
@@ -163,9 +165,7 @@ class MangaLineExtractor:
 
     def _extract_tiled(
         self,
-        model,
         grey: np.ndarray,
-        torch,
         progress: Callable[[int, int], None] | None = None,
     ) -> np.ndarray:
         height, width = grey.shape
@@ -175,7 +175,7 @@ class MangaLineExtractor:
         tiles = self._tiles(height, width)
         for done, (y0a, y1, x0a, x1) in enumerate(tiles, start=1):
             patch = grey[y0a:y1, x0a:x1].astype(np.float32)
-            result = self._run(model, patch, torch)
+            result = self._run(patch)
 
             blend = _feather(result.shape, self.overlap)
             accum[y0a:y1, x0a:x1] += result * blend

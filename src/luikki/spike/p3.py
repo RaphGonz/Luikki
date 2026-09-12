@@ -143,7 +143,7 @@ def _build_extractors(conditions: list[Condition], weights: Path | None) -> dict
         if condition.extractor == "passthrough":
             extractors[condition.extractor] = PassthroughExtractor()
         elif condition.extractor == "manga_line":
-            extractors[condition.extractor] = MangaLineExtractor(weights=weights)
+            extractors[condition.extractor] = MangaLineExtractor(model=weights)
         else:
             raise ValueError(f"unknown extractor: {condition.extractor}")
     return extractors

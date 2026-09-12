@@ -16,13 +16,13 @@ failed on real pages: hatching read as `iiii`, cup holders read as `OOO`.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import cv2
 import numpy as np
 import pytest
 
+from luikki import models
 from luikki.segmentation.bubbles import BubbleParams, trace_bubble
 
 PAGES = Path(__file__).resolve().parent.parent / "test_pages"
@@ -175,7 +175,7 @@ def test_vertex_count_stays_editable():
 
 @pytest.mark.skipif(
     not (
-        Path(os.environ.get("LUIKKI_BUBBLE_MODEL", "models/comic_bubble_detector.onnx")).exists()
+        (models.model_dir() / models.BUBBLE_DETECTOR).exists()
         and PAGES.exists()
     ),
     reason="detector weights or test pages not on this machine",

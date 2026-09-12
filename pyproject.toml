@@ -22,6 +22,8 @@ dev = ["pytest>=8.0", "httpx>=0.28", "pyjwt[crypto]>=2.8"]
 # platformdirs: where the project lives when `serve` is given no --workdir.
 # keyring: the signed-in session, in the system's password store.
 web = ["fastapi>=0.141", "uvicorn[standard]>=0.52", "python-multipart>=0.0.32", "httpx>=0.28", "platformdirs>=4", "keyring>=25"]
+# Only to build models/manga_line.onnx from erika.pth (`luikki models`), once.
+models = ["torch", "onnx>=1.17", "onnxscript>=0.2"]
 # Deploys `luikki.cloud.modal_app`. Not needed to run the app.
 cloud = ["modal>=1.5", "httpx>=0.28", "pyjwt[crypto]>=2.8"]
 

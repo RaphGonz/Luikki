@@ -18,7 +18,7 @@ Every one of those is the same failure: deciding "is this text?" from the
 geometry of ink blobs. D-23's claim that height similarity plus a shared
 baseline separates lettering from hatching is not true of real art.
 
-So detection is now a model -- see `DETECTOR_URL`. This is the seam D-25
+So detection is now a model -- see `luikki.models.DETECTOR_URL`. This is the seam D-25
 reserved for exactly this case ("if one is ever added it belongs behind an
 optional seam distributing no restricted weights"), and the licence question
 D-25 raised is answered rather than dodged: RT-DETR-v2 under Apache-2.0,
@@ -40,19 +40,13 @@ whenever PROT-02's hand-drawing stops being enough.
 
 from __future__ import annotations
 
-import os
-import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
 import numpy as np
 
-DETECTOR_URL = (
-    "https://huggingface.co/ogkalu/comic-text-and-bubble-detector/"
-    "resolve/main/detector.onnx"
-)
-DEFAULT_MODEL_PATH = Path("models/comic_bubble_detector.onnx")
+from ..models import BUBBLE_DETECTOR, model_file
 
 # The model's own class ids. `TEXT_IN_BUBBLE` and `TEXT_FREE` are unused today
 # and named anyway, because the next person to open this file will want to
@@ -91,24 +85,13 @@ class BubbleParams:
 
 
 def model_path() -> Path:
-    """Where the detector weights live, downloading them on first use.
+    """Where the detector weights live (`luikki.models`).
 
-    `LUIKKI_BUBBLE_MODEL` overrides the location. Otherwise the file is
-    fetched once into `models/` -- the same shape as Cobra's runtime weight
-    pull, and for the same reason: 161 MB does not belong in git history.
+    Never downloaded at launch: an installed app carries them, and a source
+    checkout fetches them once with `luikki models`. 161 MB does not belong in
+    git history, nor in the artist's first press of Detect bubbles.
     """
-    override = os.environ.get("LUIKKI_BUBBLE_MODEL")
-    path = Path(override) if override else DEFAULT_MODEL_PATH
-    if path.exists():
-        return path
-    if override:
-        raise FileNotFoundError(f"LUIKKI_BUBBLE_MODEL points at nothing: {path}")
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    partial = path.with_suffix(".part")
-    urllib.request.urlretrieve(DETECTOR_URL, partial)
-    partial.replace(path)
-    return path
+    return model_file(BUBBLE_DETECTOR)
 
 
 class BubbleDetector:

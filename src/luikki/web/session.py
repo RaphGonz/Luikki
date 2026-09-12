@@ -156,21 +156,6 @@ class StepError(RuntimeError):
         self.params = params
 
 
-def _best_device() -> str:
-    """CUDA when there is a card, CPU otherwise.
-
-    The extractor is a small conv net and runs on either; the difference is
-    minutes versus seconds on a full-resolution page. Nothing else in the
-    barebone app needs a GPU, so this must degrade rather than refuse.
-    """
-    try:
-        import torch
-
-        return "cuda" if torch.cuda.is_available() else "cpu"
-    except ImportError:
-        return "cpu"
-
-
 class Session:
     """The whole application state. One instance per process."""
 
@@ -187,9 +172,8 @@ class Session:
         self.account = account
         self.workdir.mkdir(parents=True, exist_ok=True)
         self.proposer: ColourProposer = proposer or DistinctColourProposer()
-        self.extractor: LineExtractor = extractor or MangaLineExtractor(
-            device=_best_device()
-        )
+        # On onnxruntime, with a GPU when the installed build has one.
+        self.extractor: LineExtractor = extractor or MangaLineExtractor()
         # Serialises the buttons. Segmentation takes seconds and the artist
         # will double-click; two passes mutating the same panel list is the
         # one race worth spending a lock on.

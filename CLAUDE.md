@@ -77,7 +77,7 @@ wrong is one click to fix.
 - onnxruntime >=1.20 - The RT-DETR balloon detector. Deliberately not `ultralytics`, which is AGPL-3.0 whatever licence its weights carry.
 - fastapi / uvicorn / python-multipart (`[web]`) - The local app and its uploads
 - httpx (`[dev]`) - Required by `fastapi.testclient`, which `tests/test_web.py` presses every button through
-- torch (PyTorch) - Required by `MangaLineExtraction` line extraction (in `src/luikki/extract/manga_line.py`, line 74), but NOT listed in project dependencies. Must be installed separately. Vendored model weights: `third_party/MangaLineExtraction/erika.pth`
+- torch (PyTorch) - NOT a runtime dependency. The client runs MangaLineExtraction from `models/manga_line.onnx` on onnxruntime; torch (plus onnx, onnxscript: the `[models]` extra) is only needed once, for `luikki models` to export that file from `third_party/MangaLineExtraction/erika.pth`. Cobra on Modal has its own torch.
 - pytest >=8.0 - Unit testing framework
 
 ## Vendored Third-Party
@@ -90,7 +90,7 @@ wrong is one click to fix.
 - Purpose: Structural line extraction model (§7 Tier 3 adaptation)
 - Model weights: `erika.pth` (PyTorch state dict, ~50MB, vendored)
 - Architecture: `res_skip` network (imported from `model_torch.py` in vendor directory)
-- Integration: Wrapped in `src/luikki/extract/manga_line.py` as `MangaLineExtractor` class
+- Integration: `src/luikki/extract/manga_line.py` `MangaLineExtractor` runs the ONNX export of these weights on onnxruntime; the vendored torch code is only read by the export and the parity test
 - Note: Trained on manga line art; tolerance for Franco-Belgian hatching is experimental
 
 ## Configuration
@@ -103,6 +103,7 @@ wrong is one click to fix.
   - `serve` - the local app. `--port`, `--workdir`, `--proposer`, `--extractor`
   - `flatten` - one page headlessly, then snap-all, then the PSD. `--reference`, `--threshold` (`inf` snaps everything), `--no-snap`, `--leak-gap` (§1.3's gap allowance, 0-1), `--steps` (one image per stage boundary)
   - `p3` / `ab` - the segmentation experiments; reports land in `reports/`
+  - `models` - fill `models/` once: download the bubble detector (sha256-pinned), export `manga_line.onnx`
 
 ## State on disk
 
@@ -127,10 +128,11 @@ wrong is one click to fix.
 
 - Python 3.11+
 - pip and setuptools
-- For torch (MangaLineExtraction): CPU or GPU. The web app picks CUDA when a card is present (`_best_device` in `web/session.py`) and degrades to CPU rather than refusing — minutes instead of seconds on a full page.
+- MangaLineExtraction: CPU or GPU through onnxruntime providers (`best_providers` in `extract/manga_line.py`: CUDA with `onnxruntime-gpu`, DirectML with `onnxruntime-directml`, else CPU). It degrades to CPU rather than refusing.
+- Model files live in `models/` (`luikki/models.py`; `LUIKKI_MODELS` overrides, a frozen app reads its bundle). Nothing downloads at launch: `luikki models` fetches the bubble detector and exports the line extractor, once per checkout.
 - For GUI/visualization: OpenCV with headless mode (cv2 works without display server)
 - Python 3.11+ runtime
-- torch optional (only if line extraction is used; can skip for colour-only pipelines)
+- No torch at runtime: the whole local pipeline runs on numpy, OpenCV and onnxruntime
 - No external services or APIs required (entirely self-contained except for future Cobra integration)
 - Storage: Local filesystem for SQLite database and image outputs
 

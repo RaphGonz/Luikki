@@ -112,7 +112,7 @@ def main(argv: list[str] | None = None) -> int:
     p3 = sub.add_parser("p3", help="run the P3 region-count spike")
     p3.add_argument("pages", nargs="+", help="image files or directories")
     p3.add_argument("-o", "--out", default="reports/p3", help="output directory")
-    p3.add_argument("--weights", default=None, help="path to erika.pth")
+    p3.add_argument("--weights", default=None, help="path to manga_line.onnx (default: models/)")
     p3.add_argument(
         "--reading", default="rtl", choices=["rtl", "ltr"], help="panel reading order"
     )
@@ -126,7 +126,12 @@ def main(argv: list[str] | None = None) -> int:
     ab = sub.add_parser("ab", help="compare our trapped-ball against LineFiller")
     ab.add_argument("pages", nargs="+", help="image files or directories")
     ab.add_argument("-o", "--out", default="reports/ab", help="output directory")
-    ab.add_argument("--weights", default=None, help="path to erika.pth")
+    ab.add_argument("--weights", default=None, help="path to manga_line.onnx (default: models/)")
+
+    sub.add_parser(
+        "models",
+        help="fetch and build the model files the app runs (once, in a source checkout)",
+    )
     ab.add_argument(
         "--conditions",
         default="raw,extracted",
@@ -308,6 +313,15 @@ def main(argv: list[str] | None = None) -> int:
 
         print(f"Luikki on http://{args.host}:{args.port}")
         uvicorn.run(create_app(args.workdir), host=args.host, port=args.port)
+        return 0
+
+    if args.command == "models":
+        from .models import fetch_models
+
+        try:
+            fetch_models()
+        except RuntimeError as exc:
+            raise SystemExit(str(exc)) from exc
         return 0
 
     if args.command == "p3":

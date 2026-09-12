@@ -60,7 +60,7 @@ def run_ab(
     out_dir.mkdir(parents=True, exist_ok=True)
     extractors = {
         "raw": PassthroughExtractor(),
-        "extracted": MangaLineExtractor(weights=weights),
+        "extracted": MangaLineExtractor(model=weights),
     }
 
     report: dict = {
