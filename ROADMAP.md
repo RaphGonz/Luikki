@@ -364,7 +364,8 @@ fin : ce sont elles qui attendent.
       s'ouvre, lit le compte dans le trousseau, se ferme proprement. Reste
       l'icône : l'exécutable a celle de PyInstaller.
 - [ ] Projet d'exemple embarqué : 1 page + character sheet + palette → PSD au
-      premier lancement.
+      premier lancement. Planche dessinée par Raph (2026-09-12) : les
+      `test_pages` sont sous copyright et ne peuvent pas être distribuées.
 - [x] Windows : Inno Setup. Non signé pendant les tests (« Informations
       complémentaires → Exécuter quand même »).
       Fait (2026-09-12) : `packaging/luikki.iss` (Inno Setup 6.7), installeur
@@ -387,8 +388,12 @@ fin : ce sont elles qui attendent.
       macOS 15, clic droit → Ouvrir ne suffit plus).
 - [ ] CI : tag `v*` → build Win + Mac → GitHub Releases (gratuit, dépôt
       public). Secrets de signature : B6.
-- [ ] Mise à jour : `GET /v1/version` au lancement → bandeau avec le lien.
-- [ ] Un Mac pour tester : un testeur, ou un Mac loué à l'heure.
+- [ ] Mise à jour : au lancement, la dernière release GitHub (API publique)
+      → bandeau avec le lien. Décidé le 2026-09-12 à la place de
+      `GET /v1/version` : sur Modal, la route vit dans le conteneur GPU et
+      chaque lancement le réveillerait.
+- [ ] Un Mac pour tester : un testeur, ou un Mac loué à l'heure. En attente
+      (2026-09-12) : Raph ne peut pas tester sur Mac en direct pour l'instant.
 - Fait quand : installation sur une VM Windows vierge et sur un vrai Mac, une
   page va jusqu'au PSD.
 
