@@ -67,6 +67,8 @@ class _Auth:
             return httpx.Response(200, json=self._session())
         if request.url.path == "/auth/v1/logout":
             return httpx.Response(204)
+        if request.url.path == "/rest/v1/rpc/my_status":
+            return httpx.Response(200, json={"active": True, "pages_used": 3})
         return httpx.Response(404)
 
 
@@ -153,6 +155,22 @@ def test_signing_out_forgets_the_session_but_not_the_computer():
     assert account.email is None and account.access_token() is None
     assert auth.calls[-1][0] == "/auth/v1/logout"
     assert account.device_id() == device
+
+
+def test_what_is_left_is_asked_as_the_artist_for_this_page():
+    auth = _Auth()
+    account = _signed_in(auth)
+
+    assert account.status("page-uuid") == {"active": True, "pages_used": 3}
+    path, body, headers = auth.calls[-1]
+    assert (path, body) == ("/rest/v1/rpc/my_status", {"p_page": "page-uuid"})
+    assert headers["authorization"] == "Bearer access-1"
+
+
+def test_a_signed_out_computer_asks_nothing():
+    auth = _Auth()
+    assert _account(auth).status("page-uuid") is None
+    assert auth.calls == []
 
 
 def test_an_auth_server_that_does_not_answer_is_named():

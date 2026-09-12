@@ -107,6 +107,18 @@
   "error.email_invalid": "That is not an email address.",
   "error.flats_first": "Generate flats first. The steps run in order.",
   "error.gap_share": "The largest gap must be between 0 and 100 % of a border.",
+  "error.gpu_job_elsewhere": "This account is generating flats on another computer right now.",
+  "error.gpu_job_running": "Flats are already being generated for this account. Wait for them to finish.",
+  "error.gpu_no_subscription": "This account has no active subscription.",
+  "error.gpu_proposer_refused": "The model could not colour this panel: {detail}",
+  "error.gpu_quota_generations": "This page has been generated as many times as a page can be this month.",
+  "error.gpu_quota_pages": "This account has used all its pages for this month.",
+  "error.gpu_refused": "The GPU server refused this panel ({reason}). The fault is in the app, not in your page.",
+  "error.gpu_sign_in": "Sign in from Account to generate flats on the GPU.",
+  "error.gpu_too_many_devices": "This account is already used on as many computers as it allows. A computer unused for a month frees its place.",
+  "error.gpu_unauthorized": "The GPU server did not accept this computer's session. Sign out, then sign in again.",
+  "error.gpu_unreachable": "The GPU server does not answer. Check the connection and try again.",
+  "error.gpu_update": "This version of Luikki is too old for the GPU server. Update the app.",
   "error.granularity_unknown": "{value} is not a way to stack the PSD layers.",
   "error.image_empty": "That image has no colours to take.",
   "error.image_unreadable": "That image could not be read: {detail}",
@@ -147,6 +159,19 @@
     "one": "{count} segment, with a proposed colour.",
     "other": "{count} segments, each with a proposed colour."
   },
+  "flats.no_subscription": "This account has no active subscription, so the GPU would refuse.",
+  "flats.page_counted": {
+    "one": "This page is already counted this month: {count} generation left for it.",
+    "other": "This page is already counted this month: {count} generations left for it."
+  },
+  "flats.page_out": "This page has used all its generations for this month.",
+  "flats.pages_left": {
+    "one": "{count} page left this month, out of {limit}.",
+    "other": "{count} pages left this month, out of {limit}."
+  },
+  "flats.quota_out": "No pages left this month.",
+  "flats.quota_unknown": "The account server does not answer, so what is left this month is unknown.",
+  "flats.sign_in": "Flats are generated on the GPU with your account. Sign in first.",
   "flats.stale": "A reference these flats were proposed from has been removed since. They still work: generate them again to use the references you have now.",
 
   "footer.language": "Language",

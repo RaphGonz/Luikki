@@ -153,6 +153,7 @@ App installée (Win/Mac)                    Modal (GPU)                      Sup
 - `usage` : une ligne par `POST /v1/panel` — `user_id`, `page_id`, `generation_id`, `created_at`
 - `devices` : `user_id`, `device_id`, `last_seen`
 - `jobs` : `user_id`, `started_at`, `ip` — le verrou « un job à la fois »
+- `plans` : `plan`, `pages_per_month`, `generations_per_page`, `devices` — une limite changée = une ligne, sans déploiement
 
 Quota compté en `page_id` distincts par mois ; relancer la même page ne
 recompte pas, jusqu'à un plafond de générations par page (`generation_id`
@@ -166,7 +167,8 @@ Toutes sous `Authorization: Bearer <token Supabase>`, sauf le webhook. Chaque
 requête porte `protocol` ; un client trop vieux reçoit un code, l'app le traduit.
 
 - `GET /v1/version` — dernière version client, protocole minimal.
-- `GET /v1/me` — plan, quota restant.
+- ~~`GET /v1/me`~~ — remplacé par `my_status` côté Supabase, appelé par l'app
+  avec sa session : lire un quota ne réveille pas le GPU.
 - `POST /v1/panel` — in : `page_id`, `generation_id`, `device_id` (uuid tous
   les trois), case masquée (PNG), références
   (PNG), indices (masque + couleurs), `steps`, `seed`. Out : raster PNG +
@@ -270,14 +272,18 @@ fin : ce sont elles qui attendent.
       la connexion faite (plafond des images : B6). Validé de bout en bout
       (2026-09-12) : étape 5 connectée, `usage` et `devices` écrits,
       `jobs` vidé à la fin.
-- [ ] `GET /v1/me` → quota affiché dans l'étape 5, **avant** le clic.
-- [ ] Erreurs réseau / quota / abonnement / version en `StepError`
-      `{code, params}` (mécanisme fait dans A, restent ces codes), mots dans `locales/en.json` et `fr.json`.
-- [ ] Hors ligne ou sans abonnement : étapes 1–4, 6, 7 marchent ; l'étape 5 dit
+- [x] Quota affiché dans l'étape 5, **avant** le clic (2026-09-12). Pas par
+      `GET /v1/me` : l'app appelle la fonction Supabase `my_status` avec sa
+      session, parce que lire un quota sur Modal réveillerait le GPU. Les
+      limites vivent dans la table `plans`, lue aussi par `start_panel`.
+- [x] Erreurs réseau / quota / abonnement / version en `StepError`
+      `{code, params}`, mots dans `locales/en.json` et `fr.json` (2026-09-12) :
+      codes `gpu_*`, traduits par `_gpu_refusal` dans `web/app.py`.
+- [x] Hors ligne ou sans abonnement : étapes 1–4, 6, 7 marchent ; l'étape 5 dit
       pourquoi elle ne peut pas. Le proposer `distinct` reste un choix explicite
       de l'artiste, jamais un repli silencieux — ses couleurs ne portent aucun
       sens et le snap derrière serait arbitraire.
-- [ ] Testeurs : `plan='tester'` posé à la main dans Supabase (pas de Stripe).
+- [x] Testeurs : `plan='tester'` posé à la main dans Supabase (pas de Stripe).
 - Fait quand : un compte testeur génère ; un compte sans plan est refusé avec
   un message traduit.
 

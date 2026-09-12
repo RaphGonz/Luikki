@@ -167,6 +167,19 @@ class Account:
                     pass
             self._forget()
 
+    def status(self, page: str = "") -> dict | None:
+        """The plan and what is left of it this month, for step 5 before it is
+        pressed (`my_status` in `schema.sql`). None when signed out or when the
+        database will not say: the GPU server still decides at the press."""
+        token = self.access_token()
+        if not token:
+            return None
+        response = self._post("/rest/v1/rpc/my_status", {"p_page": page or None}, bearer=token)
+        if response.status_code >= 300:
+            logger.warning("my_status answered %s: %s", response.status_code, response.text[:200])
+            return None
+        return response.json()
+
     def device_id(self) -> str:
         """This installation's uuid, made once. Kept through signing out: it is
         the computer, not the session, that an account's two places count."""

@@ -52,12 +52,26 @@ create table if not exists public.jobs (
     ip         inet not null
 );
 
+-- What each plan allows. Read by the gate and by the app's quota line, so the
+-- number the artist is shown is the number they are held to. Changing a limit
+-- is one update here, no deploy.
+create table if not exists public.plans (
+    plan                 text primary key check (plan in ('tester', 'paid')),
+    pages_per_month      int not null,
+    generations_per_page int not null,
+    devices              int not null
+);
+insert into public.plans (plan, pages_per_month, generations_per_page, devices)
+values ('tester', 100, 10, 2), ('paid', 100, 10, 2)
+on conflict (plan) do nothing;
+
 alter table public.subscriptions enable row level security;
 alter table public.usage         enable row level security;
 alter table public.devices       enable row level security;
 alter table public.jobs          enable row level security;
+alter table public.plans         enable row level security;
 
-revoke all on table public.subscriptions, public.usage, public.devices, public.jobs
+revoke all on table public.subscriptions, public.usage, public.devices, public.jobs, public.plans
     from anon, authenticated;
 
 -- The whole gate, in one transaction: `POST /v1/panel` calls this before the
@@ -65,8 +79,8 @@ revoke all on table public.subscriptions, public.usage, public.devices, public.j
 -- an insert after it, because two requests for one account could both pass a
 -- count neither has written to yet. Returns 'ok' or the refusal's code.
 --
--- The limits come from the server (`cloud/accounts.py`), so changing one is a
--- deploy, not a migration.
+-- The limits come from `plans`. The server's own (`cloud/accounts.py`) only
+-- stand in for a plan that has no row there.
 create or replace function public.start_panel(
     p_user uuid, p_page uuid, p_generation uuid, p_device uuid, p_ip inet,
     p_pages_per_month int, p_generations_per_page int,
@@ -78,6 +92,9 @@ as $$
 declare
     month_start constant timestamptz := date_trunc('month', now());
     running_ip inet;
+    pages_limit int;
+    generations_limit int;
+    devices_limit int;
 begin
     -- Calls for one account queue here, so the checks below see each other.
     perform pg_advisory_xact_lock(hashtextextended(p_user::text, 0));
@@ -89,6 +106,14 @@ begin
         return 'no_subscription';
     end if;
 
+    select coalesce(p.pages_per_month, p_pages_per_month),
+           coalesce(p.generations_per_page, p_generations_per_page),
+           coalesce(p.devices, p_devices)
+    into pages_limit, generations_limit, devices_limit
+    from public.subscriptions s
+    left join public.plans p on p.plan = s.plan
+    where s.user_id = p_user;
+
     -- A device unseen for p_device_days gives its place up: a new computer
     -- must not be locked out by one that went to the tip.
     if not exists (
@@ -96,7 +121,7 @@ begin
     ) and (
         select count(*) from public.devices
         where user_id = p_user and last_seen > now() - make_interval(days => p_device_days)
-    ) >= p_devices then
+    ) >= devices_limit then
         return 'too_many_devices';
     end if;
 
@@ -117,7 +142,7 @@ begin
         if (
             select count(distinct page_id) from public.usage
             where user_id = p_user and created_at >= month_start
-        ) >= p_pages_per_month then
+        ) >= pages_limit then
             return 'quota_pages';
         end if;
     elsif not exists (
@@ -126,7 +151,7 @@ begin
     ) and (
         select count(distinct generation_id) from public.usage
         where user_id = p_user and page_id = p_page and created_at >= month_start
-    ) >= p_generations_per_page then
+    ) >= generations_limit then
         return 'quota_generations';
     end if;
 
@@ -160,3 +185,43 @@ revoke execute on function public.finish_panel(uuid, uuid, uuid, boolean)
 grant execute on function public.start_panel(uuid, uuid, uuid, uuid, inet, int, int, int, int, int)
     to service_role;
 grant execute on function public.finish_panel(uuid, uuid, uuid, boolean) to service_role;
+
+-- The signed-in artist's own plan and what is left of it this month, for the
+-- app to show before step 5 is pressed. Called by the app itself, with the
+-- artist's session: it runs as the table owner to read past RLS, and answers
+-- only about `auth.uid()`. The GPU server is not woken to answer it.
+create or replace function public.my_status(p_page uuid default null)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+    with me as (select auth.uid() as id),
+         month as (select date_trunc('month', now()) as start)
+    select jsonb_build_object(
+        'plan', s.plan,
+        'active', coalesce(s.status in ('active', 'trialing') and s.period_end > now(), false),
+        'period_end', s.period_end,
+        'pages_per_month', p.pages_per_month,
+        'generations_per_page', p.generations_per_page,
+        'pages_used', (
+            select count(distinct u.page_id) from public.usage u, month
+            where u.user_id = me.id and u.created_at >= month.start
+        ),
+        'page_counted', exists (
+            select 1 from public.usage u, month
+            where u.user_id = me.id and u.page_id = p_page and u.created_at >= month.start
+        ),
+        'page_generations', (
+            select count(distinct u.generation_id) from public.usage u, month
+            where u.user_id = me.id and u.page_id = p_page and u.created_at >= month.start
+        )
+    )
+    from me
+    left join public.subscriptions s on s.user_id = me.id
+    left join public.plans p on p.plan = s.plan;
+$$;
+
+revoke execute on function public.my_status(uuid) from public, anon;
+grant execute on function public.my_status(uuid) to authenticated;

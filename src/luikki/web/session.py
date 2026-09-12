@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import os
 import threading
 import time
 import uuid
@@ -32,7 +33,7 @@ import numpy as np
 from PIL import Image
 from scipy import ndimage
 
-from ..account import Account
+from ..account import Account, AccountError
 from ..colour.extract import EmptyImageError, extract_palette
 from ..colour.proposer import (
     ColourProposer,
@@ -1693,6 +1694,31 @@ class Session:
         self._auto_entry = {}
         self._zones_done = False
         self._flats_done = False
+
+    def gpu_status(self) -> dict:
+        """What step 5 knows before it is pressed, when it runs on the GPU server.
+
+        Not part of `state()`, which runs after every press: this asks
+        Supabase, and only step 5 wants the answer. Taken without the session
+        lock, so it answers while a step runs.
+        """
+        remote = self.proposer.name == "remote"
+        account = self.account
+        quota = None
+        if remote and account is not None and account.email:
+            try:
+                quota = account.status(self.page_uid)
+            except AccountError:
+                # Unreachable, or the session ended — which `email` now says.
+                quota = None
+        signed_in = bool(account is not None and account.email)
+        shared = bool(getattr(self.proposer, "token", None) or os.environ.get("LUIKKI_REMOTE_TOKEN"))
+        return {
+            "remote": remote,
+            "signed_in": signed_in,
+            "needs_sign_in": remote and not signed_in and not shared,
+            "quota": quota,
+        }
 
     def state(self) -> dict:
         with self.lock:

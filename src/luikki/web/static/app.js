@@ -664,7 +664,8 @@ function pressRow(step, status) {
   if (status === "locked" || status === "current") return;
   if (status === "next") {
     if (step.id === "upload") return choosePage();
-    if (RUNS[step.id]) return requestRun(step.id);
+    // Step 5 that the GPU would refuse opens instead, where it says why.
+    if (RUNS[step.id] && !(step.id === "flats" && gpuBlock())) return requestRun(step.id);
     // Export and snap only open: each has a choice to make first (the layers,
     // the guard), and a row click that skipped it hid the choice entirely.
   }
@@ -818,6 +819,9 @@ async function runStep(id) {
     renderAll();
     say(error.message, true);
   }
+  // A press of step 5 spends a page or a generation, or was refused for a reason
+  // that may have changed: either way the line above the button is stale.
+  if (id === "flats") refreshGpu();
 }
 
 // Uploading adds a page: the one on screen stays in the project as it was
@@ -858,6 +862,8 @@ async function enterPage(next) {
   pan = { x: 0, y: 0 };
   await reloadLayers();
   renderAll();
+  // Another page is another count: counted this month or not.
+  refreshGpu();
 }
 
 $("page-file").addEventListener("change", async () => {
@@ -983,7 +989,7 @@ function stepRow(step) {
 
 const note = (text, attention = false) => h("p", { class: attention ? "note attention" : "note" }, text);
 
-function runButton(id, first, again) {
+function runButton(id, first, again, blocked = null) {
   const done = state.done[id];
   return h(
     "div",
@@ -992,6 +998,8 @@ function runButton(id, first, again) {
       kind: done ? "" : "primary",
       key: `run-${id}`,
       onclick: () => requestRun(id),
+      disabled: blocked !== null,
+      why: blocked,
     }),
   );
 }
@@ -1062,7 +1070,8 @@ function stepBody(id) {
         askBlock("flats"),
         state.flats_stale ? note(t("flats.stale"), true) : null,
         note(done.flats ? t("flats.done", { count: state.segments.count }) : t("about.flats")),
-        runButton("flats", t("run.flats"), t("run.flats.again")),
+        ...gpuNotes(),
+        runButton("flats", t("run.flats"), t("run.flats.again"), gpuBlock()),
       ];
     case "snap": {
       const snappable = state.segments.snappable;
@@ -1370,6 +1379,67 @@ function accountView() {
   ];
 }
 
+function openAccount() {
+  shelf = "account";
+  renderRail();
+  renderInspector();
+}
+
+// What step 5 will meet on the GPU server, asked before it is pressed:
+// `/api/account/status`. null until known, and unknown is never a refusal —
+// an account server that does not answer is no reason to stop an artist
+// whose subscription is fine. The GPU server decides at the press either way.
+let gpu = null;
+
+async function refreshGpu() {
+  if (!state || state.proposer !== "remote") {
+    gpu = null;
+    return;
+  }
+  try {
+    gpu = await call("/api/account/status");
+  } catch {
+    gpu = null;
+  }
+  renderRail();
+}
+
+// Why the GPU server would refuse step 5, or null.
+function gpuBlock() {
+  if (!gpu || !gpu.remote) return null;
+  if (gpu.needs_sign_in) return t("flats.sign_in");
+  const quota = gpu.quota;
+  if (!quota) return null;
+  if (!quota.active) return t("flats.no_subscription");
+  if (quota.pages_per_month === null) return null;
+  if (quota.page_counted) {
+    return quota.page_generations >= quota.generations_per_page ? t("flats.page_out") : null;
+  }
+  return quota.pages_used >= quota.pages_per_month ? t("flats.quota_out") : null;
+}
+
+function gpuNotes() {
+  if (!gpu || !gpu.remote) return [];
+  const blocked = gpuBlock();
+  if (blocked) {
+    return [
+      note(blocked, true),
+      gpu.needs_sign_in
+        ? h("div", { class: "row" }, button(t("account.sign_in"), { key: "flats-sign-in", onclick: openAccount }))
+        : null,
+    ];
+  }
+  const quota = gpu.quota;
+  if (gpu.signed_in && !quota) return [note(t("flats.quota_unknown"))];
+  if (!quota || quota.pages_per_month === null) return [];
+  if (quota.page_counted) {
+    return [note(t("flats.page_counted", { count: quota.generations_per_page - quota.page_generations }))];
+  }
+  return [
+    note(t("flats.pages_left", { count: quota.pages_per_month - quota.pages_used, limit: quota.pages_per_month })),
+  ];
+}
+
 function accountCall(label, path, method, body) {
   return working(label, false, () =>
     call(path, {
@@ -1400,6 +1470,7 @@ async function signIn() {
     signingIn = { email: "", sent: false, code: "" };
     renderAll();
     say(t("status.signed_in", { email: state.account.email }));
+    refreshGpu();
   } catch (error) {
     renderAll();
     say(error.message, true);
@@ -1411,6 +1482,7 @@ async function signOut() {
     state = await accountCall(t("work.sign_out"), "/api/account", "DELETE");
     renderAll();
     say(t("status.signed_out"));
+    refreshGpu();
   } catch (error) {
     renderAll();
     say(error.message, true);
@@ -3027,4 +3099,5 @@ new ResizeObserver(resize).observe(stage);
   await reloadLayers();
   renderAll();
   say(state.page ? t("status.ready") : t("status.start"));
+  refreshGpu();
 })();

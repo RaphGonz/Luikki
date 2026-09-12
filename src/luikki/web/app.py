@@ -26,6 +26,7 @@ from PIL import Image
 from ..account import Account, AccountError
 from ..colour.extract import EmptyImageError
 from ..colour.references import UnknownKind
+from ..colour.remote import RemoteUnavailable
 from ..colour.snap import SNAP_MAX_DELTA
 from pydantic import BaseModel
 
@@ -135,6 +136,38 @@ def _build_extractor():
     return None  # Session picks MangaLineExtraction on the best device.
 
 
+def _gpu_refusal(exc: RemoteUnavailable) -> StepError:
+    """The GPU server's refusal (`cloud/server.py`, `cloud/accounts.py`), or the
+    remote proposer's own, as a step error in the artist's words."""
+    match exc.code:
+        case "not_configured":
+            return StepError("gpu_sign_in", status=401)
+        case "unauthorized":
+            return StepError("gpu_unauthorized", status=401)
+        case "unreachable":
+            return StepError("gpu_unreachable", status=503)
+        case "no_subscription":
+            return StepError("gpu_no_subscription", status=402)
+        case "too_many_devices":
+            return StepError("gpu_too_many_devices", status=403)
+        case "job_running":
+            return StepError("gpu_job_running")
+        case "job_elsewhere":
+            return StepError("gpu_job_elsewhere")
+        case "quota_pages":
+            return StepError("gpu_quota_pages", status=429)
+        case "quota_generations":
+            return StepError("gpu_quota_generations", status=429)
+        case "protocol_unsupported":
+            return StepError("gpu_update", status=426)
+        case "proposer_refused":
+            return StepError("gpu_proposer_refused", status=422, detail=str(exc.params.get("detail", "")))
+        case _:
+            # A request the app itself got wrong: nothing the artist can fix,
+            # so the code is kept for whoever reads the report.
+            return StepError("gpu_refused", status=502, reason=exc.code)
+
+
 def create_app(
     workdir: str | Path | None = None,
     proposer=None,
@@ -197,6 +230,11 @@ def create_app(
     def sign_out():
         session.account.sign_out()
         return session.state()
+
+    @app.get("/api/account/status")
+    def gpu_status():
+        """What step 5 will meet on the GPU server, asked before it is pressed."""
+        return session.gpu_status()
 
     # -- 1. pages --------------------------------------------------------
 
@@ -471,6 +509,8 @@ def create_app(
     def generate_flats():
         try:
             result = session.generate_flats()
+        except RemoteUnavailable as exc:
+            raise _gpu_refusal(exc) from exc
         except RuntimeError as exc:
             if isinstance(exc, (StepError, AccountError)):
                 raise

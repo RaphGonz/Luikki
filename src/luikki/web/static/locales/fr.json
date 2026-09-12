@@ -104,6 +104,18 @@
   "error.email_invalid": "Ce n'est pas une adresse e-mail.",
   "error.flats_first": "Générez d'abord les aplats. Les étapes se suivent dans l'ordre.",
   "error.gap_share": "Le plus grand trou doit être entre 0 et 100 % d'une bordure.",
+  "error.gpu_job_elsewhere": "Ce compte génère des aplats sur un autre ordinateur en ce moment.",
+  "error.gpu_job_running": "Des aplats sont déjà en cours de génération pour ce compte. Attendez qu'ils finissent.",
+  "error.gpu_no_subscription": "Ce compte n'a pas d'abonnement actif.",
+  "error.gpu_proposer_refused": "Le modèle n'a pas pu colorer cette case : {detail}",
+  "error.gpu_quota_generations": "Cette planche a été générée autant de fois qu'une planche peut l'être ce mois-ci.",
+  "error.gpu_quota_pages": "Ce compte a utilisé toutes ses planches du mois.",
+  "error.gpu_refused": "Le serveur GPU a refusé cette case ({reason}). Le défaut vient de l'app, pas de votre planche.",
+  "error.gpu_sign_in": "Connectez-vous depuis Compte pour générer les aplats sur le GPU.",
+  "error.gpu_too_many_devices": "Ce compte est déjà utilisé sur autant d'ordinateurs qu'il le permet. Un ordinateur inutilisé depuis un mois libère sa place.",
+  "error.gpu_unauthorized": "Le serveur GPU n'a pas accepté la session de cet ordinateur. Déconnectez-vous, puis reconnectez-vous.",
+  "error.gpu_unreachable": "Le serveur GPU ne répond pas. Vérifiez la connexion et réessayez.",
+  "error.gpu_update": "Cette version de Luikki est trop ancienne pour le serveur GPU. Mettez l'app à jour.",
   "error.granularity_unknown": "{value} n'est pas une façon d'empiler les calques du PSD.",
   "error.image_empty": "Cette image n'a aucune couleur à prendre.",
   "error.image_unreadable": "Impossible de lire cette image : {detail}",
@@ -144,6 +156,19 @@
     "one": "{count} segment, avec une couleur proposée.",
     "other": "{count} segments, chacun avec une couleur proposée."
   },
+  "flats.no_subscription": "Ce compte n'a pas d'abonnement actif : le GPU refuserait.",
+  "flats.page_counted": {
+    "one": "Cette planche est déjà comptée ce mois-ci : il lui reste {count} génération.",
+    "other": "Cette planche est déjà comptée ce mois-ci : il lui reste {count} générations."
+  },
+  "flats.page_out": "Cette planche a épuisé ses générations du mois.",
+  "flats.pages_left": {
+    "one": "{count} planche restante ce mois-ci, sur {limit}.",
+    "other": "{count} planches restantes ce mois-ci, sur {limit}."
+  },
+  "flats.quota_out": "Plus aucune planche ce mois-ci.",
+  "flats.quota_unknown": "Le serveur des comptes ne répond pas : impossible de savoir ce qu'il reste ce mois-ci.",
+  "flats.sign_in": "Les aplats se génèrent sur le GPU avec votre compte. Connectez-vous d'abord.",
   "flats.stale": "Une référence ayant servi à ces aplats a été retirée depuis. Ils restent utilisables : générez-les à nouveau pour profiter des références actuelles.",
 
   "footer.language": "Langue",

@@ -24,7 +24,8 @@ from typing import Any
 
 logger = logging.getLogger("luikki.cloud")
 
-# Provisional, fixed for good once measured (ROADMAP §C).
+# Stand-ins for a plan with no row in `plans` (`schema.sql`), which is where
+# the limits live. Provisional, fixed for good once measured (ROADMAP §C).
 PAGES_PER_MONTH = 100
 GENERATIONS_PER_PAGE = 10
 DEVICES = 2
