@@ -54,6 +54,14 @@ opens the window; `Luikki.exe <command>` runs any `luikki` command, which is
 what `smoke.py` uses to take one page through the build. The app has no
 console: its output goes to `luikki.log` in the user's log folder.
 
+    "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" packaging\luikki.iss
+
+The Windows installer, in `dist\installer`, from `dist\Luikki`. It installs
+for the current user in `%LOCALAPPDATA%\Programs\Luikki`, without
+administrator rights; the project in `%LOCALAPPDATA%\Luikki` is not touched by
+installing or uninstalling. The icon is drawn from `favicon.svg` by
+`packaging/icon.py` during the PyInstaller build.
+
 Run the tests with `pytest`.
 
 ## 3. The words this project uses
@@ -389,8 +397,9 @@ There are two proposers:
 - `RemoteProposer` (`remote`) is Cobra on a GPU somewhere else. It sends the
   line art, the references and the hints of one panel to `POST /v1/panel`
   (`cloud/server.py`) and reads back the raster. The zone map does not leave
-  the machine. It needs `LUIKKI_REMOTE_URL` and a signed-in account
-  (`account.py`), whose session is the only way into the server.
+  the machine. It needs a signed-in account (`account.py`), whose session is
+  the only way into the server. `LUIKKI_REMOTE_URL` points it at another
+  server than the one written in `remote.py`.
 
 Everything after this step reads the proposal raster only. To change the
 proposer, change one constructor call.

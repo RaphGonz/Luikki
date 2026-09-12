@@ -4,8 +4,8 @@
     modal run -m luikki.cloud.modal_app::download    # once: weights into the Volume
     modal deploy -m luikki.cloud.modal_app           # prints the endpoint URL
 
-Then, on the artist's side, `LUIKKI_REMOTE_URL=<url> luikki serve --proposer
-remote`, and sign in from Account.
+Then write that URL into `REMOTE_URL` (`colour/remote.py`), or set
+`LUIKKI_REMOTE_URL` to try another deployment, and sign in from Account.
 
 Only the standard library and `modal` at module level: Modal imports this file
 again inside the container, before anything is known about what it holds.

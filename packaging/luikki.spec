@@ -8,6 +8,7 @@
 # be pulled in; `models/` must be filled first (`luikki models`, in a venv that
 # has torch) and `third_party/LineFiller` cloned.
 
+import sys
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_submodules
@@ -19,6 +20,12 @@ LINEFILLER = ROOT / "third_party" / "LineFiller"
 for required in (MODELS / "manga_line.onnx", MODELS / "comic_bubble_detector.onnx", LINEFILLER / "linefiller"):
     if not required.exists():
         raise SystemExit(f"{required} is missing; see the top of this file")
+
+sys.path.insert(0, SPECPATH)
+from icon import write_icon  # noqa: E402
+
+# Also read by `luikki.iss`, for the installer and the uninstaller.
+ICON = write_icon(ROOT / "src" / "luikki" / "web" / "static" / "favicon.svg", ROOT / "build" / "luikki.ico")
 
 a = Analysis(
     [str(ROOT / "packaging" / "luikki_app.py")],
@@ -43,6 +50,7 @@ exe = EXE(
     name="Luikki",
     # A window app: no console behind it. `desktop.log_to_file` catches output.
     console=False,
+    icon=str(ICON),
     upx=False,
 )
 coll = COLLECT(exe, a.binaries, a.datas, name="Luikki", upx=False)

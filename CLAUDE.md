@@ -95,7 +95,7 @@ wrong is one click to fix.
 
 ## Configuration
 
-- No `.env` file. Environment variables, all read at call time so a flag can set them: `LUIKKI_PROPOSER` (`distinct` | `cobra` | `remote`) and `LUIKKI_EXTRACTOR` (`manga` | `raw`), which `luikki serve --proposer/--extractor` set; `LUIKKI_REMOTE_URL` for `remote` (Cobra on Modal, `cloud/modal_app.py`; it goes up with the signed-in account's session, there is no other way in); `LUIKKI_SUPABASE_URL` and `LUIKKI_SUPABASE_KEY` to point the sign-in (`account.py`) at another Supabase project.
+- No `.env` file. Environment variables, all read at call time so a flag can set them: `LUIKKI_PROPOSER` (`distinct` | `cobra` | `remote`) and `LUIKKI_EXTRACTOR` (`manga` | `raw`), which `luikki serve --proposer/--extractor` set; `LUIKKI_REMOTE_URL` to point `remote` at another GPU server than `REMOTE_URL` in `colour/remote.py` (Cobra on Modal, `cloud/modal_app.py`; it goes up with the signed-in account's session, there is no other way in); `LUIKKI_SUPABASE_URL` and `LUIKKI_SUPABASE_KEY` to point the sign-in (`account.py`) at another Supabase project.
 - Otherwise configuration is CLI arguments only (see `src/luikki/cli.py`)
 - `pyproject.toml` - Standard Python project configuration, defines dependencies, entry point, test paths
 - CLI: `luikki = "luikki.cli:main"` - Command-line entry point in `src/luikki/cli.py`
@@ -131,7 +131,7 @@ wrong is one click to fix.
 - pip and setuptools
 - MangaLineExtraction: CPU or GPU through onnxruntime providers (`best_providers` in `extract/manga_line.py`: CUDA with `onnxruntime-gpu`, DirectML with `onnxruntime-directml`, else CPU). It degrades to CPU rather than refusing.
 - Model files live in `models/` (`luikki/models.py`; `LUIKKI_MODELS` overrides, a frozen app reads its bundle). Nothing downloads at launch: `luikki models` fetches the bubble detector and exports the line extractor, once per checkout.
-- The installed app: `packaging/luikki.spec` (PyInstaller onedir, built from `.venv-build`, which never has torch) → `dist/Luikki`. `packaging/smoke.py <page>` checks a build end to end; the windowed exe logs to `%LOCALAPPDATA%\Luikki\Logs\luikki.log`.
+- The installed app: `packaging/luikki.spec` (PyInstaller onedir, built from `.venv-build`, which never has torch) → `dist/Luikki`. `packaging/smoke.py <page>` checks a build end to end; the windowed exe logs to `%LOCALAPPDATA%\Luikki\Logs\luikki.log`. `packaging/luikki.iss` (Inno Setup 6, per-user, no admin) → `dist/installer/Luikki-<version>-setup.exe`; `packaging/TESTEURS.md` is what testers read.
 - For GUI/visualization: OpenCV with headless mode (cv2 works without display server)
 - Python 3.11+ runtime
 - No torch at runtime: the whole local pipeline runs on numpy, OpenCV and onnxruntime

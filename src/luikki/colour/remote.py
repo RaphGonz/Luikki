@@ -5,8 +5,11 @@ art, the references and any hints go up as PNG, the proposal raster comes
 back. The zone map does not travel — Cobra never reads it, and the artist's
 segmentation has no business on a server.
 
-`LUIKKI_REMOTE_URL` says where, read at call time like the other `LUIKKI_*`
-switches. The artist's own session says as whom: there is no other way in.
+The server's address is written here, like the Supabase project's in
+`account.py`: every copy of the app carries it, and it grants nothing without
+a session. `LUIKKI_REMOTE_URL` points a build at another server, read at call
+time like the other `LUIKKI_*` switches. The artist's own session says as
+whom: there is no other way in.
 """
 
 from __future__ import annotations
@@ -20,6 +23,9 @@ import numpy as np
 
 from ..cloud.protocol import MODEL_VERSION_HEADER, PANEL_ROUTE, PROTOCOL, decode_png, encode_png
 from .proposer import PanelRequest
+
+# `cloud/modal_app.py`, as `modal deploy` printed it.
+REMOTE_URL = "https://raphgonz--luikki-cobra-cobra-web.modal.run"
 
 
 class RemoteUnavailable(RuntimeError):
@@ -62,9 +68,7 @@ class RemoteProposer:
     def propose(self, request: PanelRequest) -> np.ndarray:
         import httpx
 
-        url = self.url or os.environ.get("LUIKKI_REMOTE_URL", "")
-        if not url:
-            raise RemoteUnavailable("The remote proposer needs LUIKKI_REMOTE_URL.", code="no_server")
+        url = self.url or os.environ.get("LUIKKI_REMOTE_URL") or REMOTE_URL
         # The artist goes up as themselves, and the server holds them to their
         # quota.
         token = self.account.access_token() if self.account is not None else None

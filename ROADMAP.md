@@ -330,8 +330,10 @@ fin : ce sont elles qui attendent.
       Fait (2026-09-12), déployé : la session est la seule entrée de
       `POST /v1/panel`. Côté client, codes `no_server` (pas d'URL) et
       `not_signed_in` (pas de session) ; `flatten` lit la session que l'app a
-      rangée dans le trousseau. Reste `LUIKKI_REMOTE_URL` : l'app installée
-      devra porter l'URL elle-même.
+      rangée dans le trousseau. L'URL du serveur est écrite dans
+      `colour/remote.py` (`REMOTE_URL`, comme celle de Supabase dans
+      `account.py`) ; `LUIKKI_REMOTE_URL` ne sert plus qu'à viser un autre
+      déploiement.
 - [x] Point d'entrée : uvicorn sur `127.0.0.1`, port libre, dans un thread ;
       fenêtre pywebview dessus.
       Fait (2026-09-12) : `luikki app` (`desktop.py`, extra `[desktop]`,
@@ -363,13 +365,23 @@ fin : ce sont elles qui attendent.
       l'icône : l'exécutable a celle de PyInstaller.
 - [ ] Projet d'exemple embarqué : 1 page + character sheet + palette → PSD au
       premier lancement.
-- [ ] Windows : Inno Setup. Non signé pendant les tests (« Informations
+- [x] Windows : Inno Setup. Non signé pendant les tests (« Informations
       complémentaires → Exécuter quand même »).
+      Fait (2026-09-12) : `packaging/luikki.iss` (Inno Setup 6.7), installeur
+      de 385 Mo. Pour l'utilisateur, sans droits admin, dans
+      `%LOCALAPPDATA%\Programs\Luikki` ; français et anglais ; icône tirée de
+      `favicon.svg` (`packaging/icon.py`) ; une mise à jour remplace tout
+      `_internal`. Si WebView2 manque, l'installeur le dit avec le lien (pas
+      encore embarqué). Vérifié sur cette machine : installation silencieuse,
+      raccourci créé, tintin jusqu'au PSD dans l'app installée (47 s),
+      désinstallation qui retire exe et raccourci et laisse le projet de
+      `%LOCALAPPDATA%\Luikki` intact. Pas encore fait : une VM Windows vierge.
 - [ ] Mac : build sur runner macOS GitHub Actions (PyInstaller ne compile pas
       en croisé). Signature ad hoc seulement (`codesign -s -`, que PyInstaller
       pose par défaut ; vérifier `codesign -dv` sur le `.app`) : sans aucune
       signature, un binaire arm64 ne se lance pas. DMG. arm64. Notarisation : B6.
-- [ ] Mode d'emploi testeur, une ligne par OS. Windows : « Informations
+- [x] Mode d'emploi testeur, une ligne par OS. Fait (2026-09-12) :
+      `packaging/TESTEURS.md`, avec la connexion et où trouver `luikki.log`. Windows : « Informations
       complémentaires → Exécuter quand même ». Mac : ouvrir une fois, puis
       Réglages → Confidentialité et sécurité → « Ouvrir quand même » (depuis
       macOS 15, clic droit → Ouvrir ne suffit plus).

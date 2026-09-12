@@ -19,16 +19,8 @@ if not exist "%PY%" (
     exit /b 1
 )
 
-rem L'URL du GPU Modal vit dans les variables d'environnement utilisateur. Une
-rem fenetre ouverte avant qu'elle soit posee ne la voit pas : on la relit dans
-rem le registre. L'etape 5 part avec le compte connecte dans l'appli (Compte).
-if not defined LUIKKI_REMOTE_URL (
-    for /f "tokens=2,*" %%a in ('reg query HKCU\Environment /v LUIKKI_REMOTE_URL 2^>nul ^| find "LUIKKI_REMOTE_URL"') do set "LUIKKI_REMOTE_URL=%%b"
-)
-if not defined LUIKKI_REMOTE_URL (
-    echo LUIKKI_REMOTE_URL absent : l'etape 5 ne pourra pas joindre Modal.
-    echo   luikki.bat --proposer distinct   pour travailler sans GPU
-)
+rem L'etape 5 part vers le GPU Modal (REMOTE_URL dans colour/remote.py) avec le
+rem compte connecte dans l'appli (Compte).
 
 rem Attend que le port reponde, puis ouvre le navigateur. En arriere-plan.
 start "" /b powershell -NoProfile -WindowStyle Hidden -Command ^

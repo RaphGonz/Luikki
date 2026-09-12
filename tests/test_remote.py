@@ -24,7 +24,7 @@ from luikki.cloud.accounts import Refused  # noqa: E402
 from luikki.cloud.protocol import MODEL_VERSION_HEADER, PANEL_ROUTE, encode_png  # noqa: E402
 from luikki.cloud.server import create_server  # noqa: E402
 from luikki.colour.proposer import PanelRequest, ReferenceImage  # noqa: E402
-from luikki.colour.remote import RemoteProposer, RemoteUnavailable  # noqa: E402
+from luikki.colour.remote import REMOTE_URL, RemoteProposer, RemoteUnavailable  # noqa: E402
 from luikki.model.masks import UNASSIGNED  # noqa: E402
 
 TOKEN = "session"
@@ -171,11 +171,23 @@ def test_no_account_at_all_is_no_session():
     assert caught.value.code == "not_signed_in"
 
 
-def test_without_a_server_address_nothing_is_sent(monkeypatch):
-    monkeypatch.delenv("LUIKKI_REMOTE_URL", raising=False)
-    with pytest.raises(RemoteUnavailable) as caught:
-        _remote(Painter(), url=None).propose(_request())
-    assert caught.value.code == "no_server"
+def test_the_server_is_the_built_in_one_unless_told_otherwise(monkeypatch):
+    sent = []
+
+    def handler(request):
+        sent.append(str(request.url))
+        return httpx.Response(401, json={"code": "unauthorized"})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    for elsewhere in (None, "http://elsewhere"):
+        if elsewhere:
+            monkeypatch.setenv("LUIKKI_REMOTE_URL", elsewhere)
+        else:
+            monkeypatch.delenv("LUIKKI_REMOTE_URL", raising=False)
+        with pytest.raises(RemoteUnavailable):
+            RemoteProposer(account=_Session(), client=client, backoff=0).propose(_request())
+
+    assert sent == [REMOTE_URL + PANEL_ROUTE, "http://elsewhere" + PANEL_ROUTE]
 
 
 def test_a_request_with_no_bearer_is_refused():

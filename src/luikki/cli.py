@@ -119,7 +119,7 @@ def _app_options(parser: argparse.ArgumentParser, proposer: str | None = None) -
         choices=["distinct", "cobra", "remote"],
         help=(
             "colour proposer; cobra needs an NVIDIA GPU and its weights, remote "
-            "needs LUIKKI_REMOTE_URL and a signed-in account"
+            "needs a signed-in account"
             + (f" (default: {proposer})" if proposer else "")
         ),
     )
