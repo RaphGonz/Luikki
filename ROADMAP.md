@@ -267,7 +267,9 @@ fin : ce sont elles qui attendent.
       tout le reste en une transaction. Écarts : `usage` écrit seulement si
       la case est peinte ; un appareil absent 30 j libère sa place ; les PNG
       sont décodés avant le quota. Restent : plafonds px/Mo, et retirer le
-      token partagé une fois la connexion faite.
+      token partagé une fois la connexion faite. Validé de bout en bout
+      (2026-09-12) : étape 5 connectée, `usage` et `devices` écrits,
+      `jobs` vidé à la fin.
 - [ ] `GET /v1/me` → quota affiché dans l'étape 5, **avant** le clic.
 - [ ] Erreurs réseau / quota / abonnement / version en `StepError`
       `{code, params}` (mécanisme fait dans A, restent ces codes), mots dans `locales/en.json` et `fr.json`.
