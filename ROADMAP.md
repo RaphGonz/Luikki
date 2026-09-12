@@ -266,8 +266,8 @@ fin : ce sont elles qui attendent.
       `schema.sql`. Token vérifié sur place (ES256, clé publique du projet),
       tout le reste en une transaction. Écarts : `usage` écrit seulement si
       la case est peinte ; un appareil absent 30 j libère sa place ; les PNG
-      sont décodés avant le quota. Restent : plafonds px/Mo, et retirer le
-      token partagé une fois la connexion faite. Validé de bout en bout
+      sont décodés avant le quota. Reste : retirer le token partagé une fois
+      la connexion faite (plafond des images : B6). Validé de bout en bout
       (2026-09-12) : étape 5 connectée, `usage` et `devices` écrits,
       `jobs` vidé à la fin.
 - [ ] `GET /v1/me` → quota affiché dans l'étape 5, **avant** le clic.
@@ -369,6 +369,10 @@ fin : ce sont elles qui attendent.
       (EV ne la donne plus d'office).
 - [ ] Toutes les clés (Stripe live, `service_role`, signature) uniquement dans
       les secrets Modal et GitHub.
+- [ ] Plafond des images reçues par `POST /v1/panel` : 10 000 px de côté
+      (décidé 2026-09-12), lu dans l'en-tête PNG avant tout décodage. Protège
+      le GPU partagé d'une image géante ou d'un PNG qui explose au décodage ;
+      l'app n'envoie rien d'aussi grand.
 - Fait quand : un inconnu télécharge, s'abonne avec une vraie carte, génère
   une page et reçoit sa facture.
 
