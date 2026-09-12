@@ -240,6 +240,8 @@ const tokens = (() => {
     dark: read("--over-dark"),
     light: read("--over-light"),
     wash: read("--over-wash"),
+    panel: read("--over-panel"),
+    bubble: read("--over-bubble"),
     ring: read("--action-ring"),
     edge: read("--canvas-edge"),
     chip: read("--bg"),
@@ -1845,12 +1847,12 @@ function render() {
   const editing = activeLayer();
   if (show.bubbles) {
     state.protected.forEach((polygon, index) =>
-      outline(polygon, DASH.protected, editing === "bubbles" && shapeSelected === index),
+      outline(polygon, DASH.protected, editing === "bubbles" && shapeSelected === index, tokens.bubble),
     );
   }
   if (show.panels) {
     state.panels.forEach((panel, index) =>
-      outline(panel.polygon, [], editing === "panels" && shapeSelected === index),
+      outline(panel.polygon, [], editing === "panels" && shapeSelected === index, tokens.panel),
     );
     for (const panel of state.panels) panelNumber(panel);
   }
@@ -1871,15 +1873,15 @@ function render() {
 
 const DASH = { protected: [6, 4], selected: [4, 4], cut: [6, 4] };
 
-function strokeTwice(dash = [], offset = 0, under = 3, over = 1.5) {
+function strokeTwice(dash = [], offset = 0, under = 3, over = 1.5, colours = [tokens.dark, tokens.light]) {
   ctx.save();
   ctx.lineJoin = "round";
   ctx.setLineDash(dash);
   ctx.lineDashOffset = offset;
-  ctx.strokeStyle = tokens.dark;
+  ctx.strokeStyle = colours[0];
   ctx.lineWidth = under;
   ctx.stroke();
-  ctx.strokeStyle = tokens.light;
+  ctx.strokeStyle = colours[1];
   ctx.lineWidth = over;
   ctx.stroke();
   ctx.restore();
@@ -1894,12 +1896,14 @@ function tracePath(points, close) {
   if (close) ctx.closePath();
 }
 
-// A selected shape marches; the rest stand still.
-function outline(polygon, dash, selectedShape) {
+// A selected shape marches; the rest stand still. Panels and balloons break
+// §11 on Raph's call: grey is lost in black-and-white ink, so they draw a deep
+// hue over a light halo, which still holds on a spot black.
+function outline(polygon, dash, selectedShape, colour) {
   if (polygon.length < 2) return;
   ctx.beginPath();
   tracePath(polygon, true);
-  strokeTwice(selectedShape ? DASH.selected : dash, selectedShape ? -marching : 0);
+  strokeTwice(selectedShape ? DASH.selected : dash, selectedShape ? -marching : 0, 4, 2, [tokens.light, colour]);
 }
 
 function panelNumber(panel) {

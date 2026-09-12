@@ -35,6 +35,9 @@
   --over-dark:  rgba(0, 0, 0, 0.62);
   --over-light: rgba(255, 255, 255, 0.90);
   --over-wash:  rgba(255, 255, 255, 0.12);
+  /* Raph's exception: grey outlines vanish in black and white ink. */
+  --over-panel:  #3257A4;  /* --action.                              */
+  --over-bubble: #7B4F37;  /* --attention's hue at the blue's L 0.47. */
 
   /* ---- Space. A 4px grid. Nothing off it. ---- */
   --s-1: 4px;  --s-2: 8px;  --s-3: 12px; --s-4: 16px;

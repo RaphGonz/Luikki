@@ -159,10 +159,12 @@ Paste this block at the top of `app.css`. Do not edit a value.
   --canvas-neutral: #8C8C8C;  /* L 0.64, C 0. The toggle of task 7. */
   --canvas-edge:    #5F5C61;  /* L 0.48. The page border.           */
 
-  /* ---- On the artwork. Luminance only. See section 11. ---- */
+  /* ---- On the artwork. Luminance, plus two shapes. See section 11. ---- */
   --over-dark:  rgba(0, 0, 0, 0.62);
   --over-light: rgba(255, 255, 255, 0.90);
   --over-wash:  rgba(255, 255, 255, 0.12);
+  --over-panel:  #3257A4;  /* --action.                              */
+  --over-bubble: #7B4F37;  /* --attention's hue at the blue's L 0.47. */
 
   /* ---- Space. A 4px grid. Nothing off it. ---- */
   --s-1: 4px;  --s-2: 8px;  --s-3: 12px; --s-4: 16px;
@@ -369,15 +371,21 @@ on white paper and on a spot black.
 
 | Thing | Stroke |
 |---|---|
-| Panel polygon | Double stroke, solid. |
-| Protected area | Double stroke, dashed `[6, 4]`. |
+| Panel polygon | `--over-light` at 4px, then `--over-panel` (deep blue) at 2px, solid. |
+| Protected area | `--over-light` at 4px, then `--over-bubble` (deep brown) at 2px, dashed `[6, 4]`. |
 | Selected zone | Double stroke, dashed `[4, 4]`, animated offset. No fill. |
 | A sweep of many zones | The same, plus `--over-wash` inside. The wash is white. |
 | The cut stroke, while the button is down | Double stroke, 2px, dashed. |
 | The panel number | A chip of `--bg` at 80 % alpha, with `--text`. |
 
-Two exceptions, and no more:
+Three exceptions, and no more:
 
+- Panel and protected-area outlines carry a deep hue. A grey double stroke
+  disappears into black-and-white ink, and these shapes are the ones the
+  artist must read across the whole page. The hue is deep and the line is
+  thin, and the light halo underneath holds it on a spot black. Zone
+  selection and the cut stroke stay luminance only, because they sit on the
+  colour that the artist is judging.
 - A corner handle is an 8px square with `--over-light` fill and a 1px
   `--over-dark` border. The handle under the pointer fills with `--action-ring`.
   The area is under 100 square pixels, so it cannot shift the perception of the
