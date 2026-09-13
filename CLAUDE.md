@@ -31,7 +31,7 @@ wrong is one click to fix.
   restrictions propagate to derivatives. Keep the dependency pinned to the
   diffusers repo; the raw-`.pth` mirror is AGPL and "research purpose only".
 
-- **Licence**: Project is intended to be open-source — Vendored dependencies
+- **Licence**: Source-available under PolyForm Shield 1.0.0 (`LICENSE`): any use, commercial included, except supplying a product that competes with Luikki — Vendored dependencies
   (LineFiller, MangaLineExtraction) are MIT, which is compatible.
 
 - **Export**: PSD only — `.clip` is an undocumented SQLite container; CSP

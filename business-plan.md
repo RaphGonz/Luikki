@@ -98,14 +98,22 @@ web site.
 
 ### 2.4 What the customer buys
 
-The code of the application is open source. Luikki does not sell a key for
-the application. Luikki sells the colour service on the GPU.
+The source code of the application is public, under the PolyForm Shield
+licence. Any person can read it, change it and use it, also for paid work. No
+person can use it to supply a product that competes with Luikki.
+
+Luikki does not sell a key for the application. Luikki sells the colour
+service on the GPU.
 
 The server decides each request. It checks the account, the rights, the
 panels left and the seats. The application holds no licence and no secret.
 
 A person can run Cobra on a personal GPU from the source code. The licence
-permits this. This person is not the target customer.
+permits this. This person is not the target customer. The price protects
+against this person, not the licence.
+
+Register the trademark "Luikki". The licence stops a competing product. The
+trademark stops a product that uses your name.
 
 ---
 

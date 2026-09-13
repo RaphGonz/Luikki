@@ -114,7 +114,7 @@ Stripe en mode test. **Pas de signature de code pendant les tests** : ni Apple
 Developer ni Azure Artifact Signing, trop chers avant d'avoir fait tester
 l'app. Le testeur passe l'avertissement de l'OS. Les deux passent en B6.
 
-**Principe de sécurité.** Le client est open source : on ne le protège pas.
+**Principe de sécurité.** Le client est public (PolyForm Shield) : on ne le protège pas.
 Tout ce qui coûte — le GPU — se décide côté serveur, à chaque requête : token,
 abonnement, quota, concurrence. Donc **pas** de clé de licence, pas de JWT hors
 ligne, pas d'obfuscation, pas de VPS de licences. Faire tourner Cobra sur son
@@ -558,11 +558,23 @@ cases achetées ; les cases achetées marchent sans pass. Testeurs :
       de 1 000 cases/mois du pass à 39 € perd de l'argent au-delà de 10 s par
       case (`business-plan.md` §4.6). Au-delà, baisser `cases_per_month` :
       une ligne dans `plans`, sans nouvelle version.
-- [ ] Licence du code : le dépôt est public mais n'a **aucun fichier
+- [x] Licence du code : le dépôt est public mais n'a **aucun fichier
       `LICENSE`** (2026-09-13). Sans lui, le code n'est pas open source, et
       « le code est ouvert, on vend le service » (`business-plan.md` §2.4)
       n'est pas vrai. Choisir une licence compatible avec les dépendances
       vendorisées (MIT) et avec OpenRAIL++-M.
+      Décidé le 2026-09-13 : **PolyForm Shield 1.0.0**. Tout usage, commercial
+      compris (un coloriste travaille pour ses clients), sauf fournir un
+      produit concurrent. Écarté : l'AGPL, qui laisse vendre un clone pourvu
+      que son code soit publié ; PolyForm Noncommercial, qui interdirait
+      l'app gratuite aux coloristes pros. Le code est « source disponible »,
+      plus « open source » au sens OSI.
+- [ ] **[€]** Déposer la marque « Luikki » (INPI, environ 200 € pour une
+      classe) : la licence arrête un produit concurrent, la marque arrête
+      celui qui prend le nom.
+- [ ] Notices tierces dans l'installeur : LineFiller et MangaLineExtraction
+      (MIT), le détecteur de bulles (Apache-2.0), et les licences des
+      bibliothèques Python embarquées.
 - [ ] **[€]** Sentry client + serveur, **aucune image** dans les événements.
 - [ ] **[€]** Apple Developer Program, 99 $/an, inscription en individuel (une
       micro-entreprise n'est pas une personne morale). Puis `codesign`
