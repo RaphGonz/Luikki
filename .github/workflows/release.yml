@@ -1,0 +1,129 @@
+# The installers (ROADMAP B4). A tag `v*` builds Windows and the Mac, checks
+# each bundle on a drawn page, and publishes a release with `latest.json`, the
+# file installed apps read to offer the update. Run by hand, it builds and
+# keeps the installers as workflow artifacts, without releasing anything.
+
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  PYTHON_VERSION: "3.14"
+  LINEFILLER_COMMIT: 5905904fa1b3e67559b0e19771244e4bb5cb9f74
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            system: windows
+            bundle: dist/Luikki
+          - os: macos-14
+            system: mac
+            bundle: dist/Luikki.app/Contents/MacOS
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Version
+        id: version
+        run: |
+          version=$(python -c "import re; print(re.search(r'__version__ = \"(.+)\"', open('src/luikki/__init__.py').read())[1])")
+          if [[ "$GITHUB_REF" == refs/tags/v* && "${GITHUB_REF_NAME#v}" != "$version" ]]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match luikki.__version__ $version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: LineFiller
+        run: |
+          git clone --quiet https://github.com/hepesu/LineFiller third_party/LineFiller
+          git -C third_party/LineFiller checkout --quiet "$LINEFILLER_COMMIT"
+
+      - uses: actions/cache@v4
+        with:
+          path: models
+          key: models-${{ hashFiles('src/luikki/models.py') }}
+
+      - name: Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[desktop]" pyinstaller
+
+      - name: Models
+        run: luikki models
+
+      - name: Build
+        run: pyinstaller packaging/luikki.spec --noconfirm
+
+      - name: Sign ad hoc (Mac)
+        if: matrix.system == 'mac'
+        run: |
+          codesign --force --deep --sign - dist/Luikki.app
+          codesign --verify --deep --strict dist/Luikki.app
+          codesign -dv dist/Luikki.app
+
+      - name: Smoke test
+        env:
+          LUIKKI_PROPOSER: distinct
+        run: |
+          python packaging/synthetic_page.py build/page.png
+          python packaging/smoke.py build/page.png ${{ matrix.bundle }}
+
+      - name: Installer (Windows)
+        if: matrix.system == 'windows'
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y
+          $iscc = Get-ChildItem "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          & $iscc.FullName "/DAppVersion=${{ steps.version.outputs.version }}" packaging\luikki.iss
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: DMG (Mac)
+        if: matrix.system == 'mac'
+        run: |
+          mkdir -p build/dmg dist/installer
+          ditto dist/Luikki.app build/dmg/Luikki.app
+          ln -s /Applications build/dmg/Applications
+          hdiutil create -volname Luikki -srcfolder build/dmg -ov -format UDZO \
+            "dist/installer/Luikki-${{ steps.version.outputs.version }}-mac-arm64.dmg"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: luikki-${{ matrix.system }}
+          path: dist/installer/*
+          compression-level: 0
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 packaging/latest_json.py "$GITHUB_REF_NAME" "$GITHUB_REPOSITORY" out
+          gh release create "$GITHUB_REF_NAME" out/* --title "Luikki ${GITHUB_REF_NAME#v}" --generate-notes --latest

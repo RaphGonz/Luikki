@@ -1,12 +1,14 @@
 """The model files the client runs, and where a copy of the app finds them.
 
 Nothing downloads at launch. An installed app carries `models/` inside its
-bundle (B4); a source checkout fills `models/` once with `luikki models`. Both
-files are too large for git history, which is why they are fetched or built
-rather than committed.
+bundle (B4); a source checkout, and the release build, fill `models/` once with
+`luikki models`. Both files are too large for git history, which is why they
+are fetched rather than committed, and each is checked against a pinned sha256.
 
 - `manga_line.onnx` — MangaLineExtraction (MIT), exported from the upstream
-  `erika.pth` so the client runs it on onnxruntime and never needs torch.
+  `erika.pth` so the client runs it on onnxruntime and never needs torch. The
+  export the parity test was read on is published as a release asset, so no
+  build needs torch either; `export_manga_line` is how that file was made.
 - `comic_bubble_detector.onnx` — RT-DETR-v2 (Apache-2.0), downloaded as
   published and checked against the file the test pages were measured with.
 """
@@ -30,6 +32,10 @@ DETECTOR_URL = (
 # The file `segmentation/bubbles.py` was measured with on the six test pages.
 DETECTOR_SHA256 = "065744e91c0594ad8663aa8b870ce3fb27222942eded5a3cc388ce23421bd195"
 
+MANGA_LINE_URL = "https://github.com/RaphGonz/Luikki/releases/download/models-1/manga_line.onnx"
+# The export read against torch on teddy and laurine (`reports/onnx_parity/`).
+MANGA_LINE_SHA256 = "0395b38ae61258b81485b7ba60b857df6542d923801fee2f17470439c7bcbf58"
+
 _REPO = Path(__file__).resolve().parents[2]
 ERIKA = _REPO / "third_party" / "MangaLineExtraction" / "erika.pth"
 ERIKA_URL = "https://github.com/ljsabc/MangaLineExtraction_PyTorch/releases/download/v1/erika.pth"
@@ -51,42 +57,32 @@ def model_file(name: str) -> Path:
     path = model_dir() / name
     if not path.exists():
         raise FileNotFoundError(
-            f"{path} is missing. Run `luikki models` once to fetch and build the model files."
+            f"{path} is missing. Run `luikki models` once to fetch the model files."
         )
     return path
 
 
 def fetch_models(log: Callable[[str], None] = print) -> None:
-    """Fill `models/`: download the detector, export the line extractor. Safe to rerun."""
+    """Fill `models/` with the pinned files. Safe to rerun."""
     folder = model_dir()
     folder.mkdir(parents=True, exist_ok=True)
-
-    detector = folder / BUBBLE_DETECTOR
-    if not detector.exists():
-        log(f"downloading {DETECTOR_URL}")
-        partial = detector.with_name(detector.name + ".part")
-        urllib.request.urlretrieve(DETECTOR_URL, partial)
-        digest = _sha256(partial)
-        if digest != DETECTOR_SHA256:
-            partial.unlink()
-            raise RuntimeError(f"the bubble detector downloaded is not the one measured: sha256 {digest}")
-        partial.replace(detector)
-    log(f"ready: {detector}")
-
-    manga = folder / MANGA_LINE
-    if not manga.exists():
-        if not ERIKA.exists():
-            raise RuntimeError(f"{MANGA_LINE} is built from {ERIKA}, which is not here. Download it from {ERIKA_URL}")
-        log(f"exporting {ERIKA.name} to ONNX (needs torch, onnx and onnxscript, once)")
-        export_manga_line(ERIKA, manga)
-    log(f"ready: {manga}")
+    for name, url, sha256 in (
+        (BUBBLE_DETECTOR, DETECTOR_URL, DETECTOR_SHA256),
+        (MANGA_LINE, MANGA_LINE_URL, MANGA_LINE_SHA256),
+    ):
+        path = folder / name
+        if not path.exists():
+            log(f"downloading {url}")
+            _download(url, sha256, path)
+        log(f"ready: {path}")
 
 
 def export_manga_line(weights: Path, out: Path) -> None:
     """`erika.pth` to ONNX, with the page's height and width left free.
 
-    Development only: the one place torch is still needed on the client side,
-    and it runs once per model, not per install.
+    Development only, and once per model: this is how the published
+    `manga_line.onnx` was made. A new export is a new release asset and a new
+    `MANGA_LINE_SHA256`, after the parity test has been read again.
     """
     import torch
 
@@ -116,6 +112,16 @@ def export_manga_line(weights: Path, out: Path) -> None:
         dynamo=True,
         external_data=False,
     )
+    partial.replace(out)
+
+
+def _download(url: str, sha256: str, out: Path) -> None:
+    partial = out.with_name(out.name + ".part")
+    urllib.request.urlretrieve(url, partial)
+    digest = _sha256(partial)
+    if digest != sha256:
+        partial.unlink()
+        raise RuntimeError(f"{url} is not the file the app was measured with: sha256 {digest}")
     partial.replace(out)
 
 

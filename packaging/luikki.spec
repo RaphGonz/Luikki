@@ -2,12 +2,15 @@
 #
 #     python -m venv .venv-build
 #     .venv-build\Scripts\pip install -e ".[desktop]" pyinstaller
+#     .venv-build\Scripts\luikki models
 #     .venv-build\Scripts\pyinstaller packaging\luikki.spec --noconfirm
 #
-# Out: dist\Luikki\Luikki.exe. From a venv without torch, so nothing of it can
-# be pulled in; `models/` must be filled first (`luikki models`, in a venv that
-# has torch) and `third_party/LineFiller` cloned.
+# Out: dist\Luikki\Luikki.exe on Windows, dist/Luikki.app on the Mac (arm64,
+# signed ad hoc by PyInstaller). From a venv without torch, so nothing of it
+# can be pulled in; `third_party/LineFiller` must be cloned. The release build
+# is `.github/workflows/release.yml`.
 
+import re
 import sys
 from pathlib import Path
 
@@ -16,6 +19,8 @@ from PyInstaller.utils.hooks import collect_submodules
 ROOT = Path(SPECPATH).parent
 MODELS = ROOT / "models"
 LINEFILLER = ROOT / "third_party" / "LineFiller"
+MAC = sys.platform == "darwin"
+VERSION = re.search(r'__version__ = "(.+)"', (ROOT / "src" / "luikki" / "__init__.py").read_text())[1]
 
 for required in (MODELS / "manga_line.onnx", MODELS / "comic_bubble_detector.onnx", LINEFILLER / "linefiller"):
     if not required.exists():
@@ -24,8 +29,12 @@ for required in (MODELS / "manga_line.onnx", MODELS / "comic_bubble_detector.onn
 sys.path.insert(0, SPECPATH)
 from icon import write_icon  # noqa: E402
 
-# Also read by `luikki.iss`, for the installer and the uninstaller.
-ICON = write_icon(ROOT / "src" / "luikki" / "web" / "static" / "favicon.svg", ROOT / "build" / "luikki.ico")
+# The .ico is also read by `luikki.iss`. On the Mac PyInstaller turns the PNG
+# into the bundle's .icns itself, with Pillow.
+ICON = write_icon(
+    ROOT / "src" / "luikki" / "web" / "static" / "favicon.svg",
+    ROOT / "build" / ("luikki.png" if MAC else "luikki.ico"),
+)
 
 a = Analysis(
     [str(ROOT / "packaging" / "luikki_app.py")],
@@ -54,3 +63,18 @@ exe = EXE(
     upx=False,
 )
 coll = COLLECT(exe, a.binaries, a.datas, name="Luikki", upx=False)
+
+if MAC:
+    app = BUNDLE(
+        coll,
+        name="Luikki.app",
+        icon=str(ICON),
+        bundle_identifier="app.luikki",
+        version=VERSION,
+        info_plist={
+            "CFBundleShortVersionString": VERSION,
+            "NSHighResolutionCapable": True,
+            # The window shows the app's own server on 127.0.0.1, over http.
+            "NSAppTransportSecurity": {"NSAllowsLocalNetworking": True},
+        },
+    )

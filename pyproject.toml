@@ -1,6 +1,6 @@
 [project]
 name = "luikki"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Layered colour-flatting pipeline for comic and manga production"
 requires-python = ">=3.11"
 dependencies = [
@@ -34,6 +34,10 @@ luikki = "luikki.cli:main"
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.dynamic]
+# One version, in `luikki/__init__.py`: the release build checks the tag against it.
+version = {attr = "luikki.__version__"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
