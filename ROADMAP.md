@@ -554,10 +554,19 @@ cases achetées ; les cases achetées marchent sans pass. Testeurs :
       PixArt), images supprimées après le job, aucun entraînement. Case à cocher
       à l'inscription. « Aucun entraînement » est une clause du contrat, et le
       premier écran du site (`business-plan.md` §2.3).
-- [ ] Mesurer le temps GPU d'une case **avant la vente publique** : le quota
+- [x] Mesurer le temps GPU d'une case **avant la vente publique** : le quota
       de 1 000 cases/mois du pass à 39 € perd de l'argent au-delà de 10 s par
       case (`business-plan.md` §4.6). Au-delà, baisser `cases_per_month` :
       une ligne dans `plans`, sans nouvelle version.
+      Mesuré le 2026-09-13 (logs Modal, 2 séances d'une planche de 3 cases,
+      valeurs identiques) : démarrage à froid 30 s, première case 15 s, cases
+      suivantes 10,4 s (10,0–11,0), 120 s d'attente avant extinction. Facture
+      Modal de la journée : 0,10 $, cohérente avec 1 $/h tout compris. Donc
+      environ 0,0025 € par case et 0,05 € pour une planche isolée, où
+      démarrage et attente coûtent plus que les cases. Le pass est rentable
+      jusqu'à environ 970 cases/mois. **Prix inchangés** (Raph) : le prix est
+      décorrélé du coût, et on ne se dévalue pas ; les prix seront testés toute
+      l'année (promos, semaines à ×2). La mesure est la vérité terrain.
 - [x] Licence du code : le dépôt est public mais n'a **aucun fichier
       `LICENSE`** (2026-09-13). Sans lui, le code n'est pas open source, et
       « le code est ouvert, on vend le service » (`business-plan.md` §2.4)
@@ -601,6 +610,11 @@ cases achetées ; les cases achetées marchent sans pass. Testeurs :
 - [ ] Mesurer sur 10 comptes : s/case, cases/page, cases/mois, pic VRAM,
       démarrage à froid, coût réel par case, relances par page → ajuster
       `cases_per_month` et le plafond Studio (5 000, calculé à 20 s/case).
+      Premier point (2026-09-13, 6 cases) : 10,4 s/case à chaud, 30 s de
+      démarrage, 1 $/h tout compris. À 10 s, le calcul autoriserait 12 000
+      cases Studio ; le plafond reste 5 000 jusqu'aux 10 comptes.
+- [ ] Journal des expériences de prix : chaque promo ou semaine à ×2, avec
+      ses dates et ses ventes (`business-plan.md` §4.9).
 - [ ] Comptes d'équipe Studio : plusieurs emails sous un seul paiement (v1 :
       un email, 3 postes).
 - [ ] Ligne Production : devis, facture annuelle, SLA.

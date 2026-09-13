@@ -269,33 +269,50 @@ account has 3 seats that generate at the same time.
 ### 4.5 The upper limit of the Studio line
 
 The Studio line needs an upper limit. Without it, one webtoon studio makes the
-GPU invoice. This is the calculation.
+GPU invoice. This is the calculation, from the measured cost.
 
-The assumptions:
+The measurement: 13 September 2026, on Modal, with one L4 GPU. Two work
+sessions, each on one page of 3 panels, gave the same values.
+
+| Item | Measured value |
+|---|---|
+| Cold start: the container starts and loads the model | 30 s, one time in each session |
+| First panel after a cold start | 15 s |
+| Each next panel | 10,4 s on average, from 10,0 s to 11,0 s |
+| Idle time before the GPU stops | 120 s, from the Modal configuration |
+| Modal invoice for the full day of tests | 0,10 $ |
+
+The invoice agrees with 1,00 $ each hour for the L4, with CPU and memory.
+
+The other values:
 
 | Item | Value | Source |
 |---|---|---|
-| GPU | 0,80 $ each hour for one L4, 1,00 $ with CPU and memory | Modal price list |
 | Exchange rate | 1 € = 1,10 $ | Assumption |
-| GPU time for one panel | 20 seconds, warm | Assumption. Not measured. Pessimistic |
-| One work session | 60 s of cold start and 120 s of idle time | Modal configuration |
 | Payment fees | 3,5 % Managed Payments + approximately 1,5 % card + 0,25 € | Stripe |
 | GPU budget | 25 % of the net revenue | Decision |
 
 The costs:
 
 - One second of GPU costs 1,00 $ / 3 600 / 1,10 = 0,00025 €.
-- One panel costs 20 × 0,00025 = 0,005 €.
-- One work session costs 180 × 0,00025 = 0,046 €.
+- One panel costs 10 × 0,00025 = 0,0025 €.
+- One work session costs 150 s of start and idle time, thus 0,04 €.
+- One page of 3 panels, alone in its session, costs approximately 0,05 €. The
+  start and the idle time cost more than the panels.
 
 The Studio line:
 
 - Net revenue: 149 € − 5 % − 0,25 € = 141 € each month.
 - GPU budget: 25 % of 141 € = 35 € each month.
-- Sessions: 3 seats × 2 sessions each day × 22 days = 132 sessions = 6 €.
-- Budget for the panels: 35 € − 6 € = 29 €.
-- Panels: 29 € / 0,005 € = 5 700 panels. **Round down to 5 000 panels each
-  month.**
+- Sessions: 3 seats × 2 sessions each day × 22 days = 132 sessions = 5 €.
+- Budget for the panels: 35 € − 5 € = 30 €.
+- Panels: 30 € / 0,0025 € = 12 000 panels each month.
+
+**The limit stays at 5 000 panels each month.** The first calculation used 20
+seconds for each panel and gave 5 700 panels. At the measured 10 seconds,
+5 000 panels and the sessions cost 17,50 €, thus 12 % of the net revenue. Six
+panels are not a full measurement. Change the limit only after the
+measurement on 10 accounts.
 
 The check against the real work:
 
@@ -309,24 +326,21 @@ limit. At the limit, the studio buys packs or asks for a Production quote.
 
 ### 4.6 The condition on the individual lines
 
-The individual lines have a risk. A customer who uses 1 000 panels each month
-costs more than the price.
+A customer who uses all the monthly panels, each month, costs more GPU than a
+normal customer. This table uses the measured 10 seconds for each panel (§4.5):
 
-| Line | Net revenue each year | Break-even at 20 s each panel | Break-even at 10 s each panel |
+| Line | Net revenue each year | Work sessions each year | Break-even |
 |---|---|---|---|
-| Luikki, 69 € | 65 € | 830 panels each month | 1 660 panels each month |
-| Colour pass, 39 € | 37 € | 430 panels each month | 860 panels each month |
+| Luikki, 69 € | 65 € | 20 € | 1 500 panels each month |
+| Colour pass, 39 € | 37 € | 8 € | 970 panels each month |
 
-The calculation removes 24 € each year for the work sessions at 69 €, and
-10 € at 39 €.
+Most customers do approximately 250 panels each month. The colour pass gives a
+margin up to approximately 970 panels each month. Only a customer who uses the
+full 1 000 panels each month, for a full year, costs a small amount of money.
 
-Most customers do approximately 250 panels each month. Thus the average
-customer gives a margin. But a heavy customer on the colour pass costs money.
-
-**Measure the GPU time of one panel before the public sale.** If one panel
-takes more than 10 seconds, reduce the monthly panels of the colour pass. The
-limit is one row in the database. The change needs no new version of the
-application.
+Keep the measurement current. If the GPU time of one panel increases (a new
+model, more references), calculate this table again. The monthly limit is one
+row in the database. A change needs no new version of the application.
 
 ### 4.7 The regional price
 
@@ -350,6 +364,17 @@ recurrent. Each month starts at zero on that line.
 
 Your MRR comes from the Studio line and the Production line. The individuals
 give the cash and the reputation. Accept this. It agrees with section 3.
+
+### 4.9 The price and the cost
+
+The price does not come from the cost. The measured cost is a floor. It is not
+a reason to reduce a price. A low price tells the customer that the product
+has a low value.
+
+Test the prices during the year. Make promotions. For some weeks, multiply a
+price by two. Write down each test and its sales.
+
+The measurements of the cost are the ground truth. The prices are experiments.
 
 ---
 
@@ -402,7 +427,7 @@ Studio customer is not 26 times larger. Put the effort on the studios.
 | A free tool does the same task | The price falls to zero | Sell the control, not the colours |
 | One account runs on five machines | Loss of revenue | The server counts the seats at each panel |
 | Many jobs start at the same time | A large GPU invoice | One job for each seat, and a limit of GPUs |
-| One panel costs more than 0,5 cent | The colour pass loses money | Measure. Reduce the monthly panels in the database |
+| The GPU time of one panel increases | Heavy customers on the colour pass cost money | Measure again. Reduce the monthly panels in the database |
 | Cobra fails on some artwork | The customer asks for the money back | The free mode always works |
 
 ### 6.1 The free tools
@@ -461,7 +486,7 @@ it saves 30 %, 69 € is too much.
 | 1. Finish the local application. Connect the project store. | Done |
 | 2. Package the application. Sign the Windows build. | Package done. Signature to do |
 | 3. Open the payment. Start the regional price. | Payment works in test mode. Panels and regional price to do |
-| 4. Measure the GPU time of one panel. | To do, before the public sale |
+| 4. Measure the GPU time of one panel. | First measurement done: 10,4 s each panel, 30 s of cold start, 1 $ each hour (§4.5) |
 | 5. Sell the 100 founder licences. | To do |
 | 6. Measure the real cost on 10 accounts. | To do |
 | 7. Publish the Korean web site. | To do |
@@ -500,5 +525,5 @@ The server counts panels for all the customers. The application shows
 - Stripe, Managed Payments pricing — 3,5 % for each transaction, plus the
   standard processing fees
 - Stripe, manual currency prices — one price for each currency
-- Modal, price list, and the Luikki measurements of 11 September 2026 — the L4
-  price, the cold start and the idle time
+- Modal, request logs and invoice of 13 September 2026 — the GPU time of one
+  panel, the cold start, and the real cost of one hour of L4
