@@ -125,7 +125,7 @@ def create_server(
 
         peer = request.client.host if request.client else None
         try:
-            ledger.start(user, page, generation, device, client_ip(request.headers.get("x-forwarded-for"), peer))
+            source = ledger.start(user, page, generation, device, client_ip(request.headers.get("x-forwarded-for"), peer))
         except Refused as refusal:
             return _refuse(refusal.status, refusal.code, **refusal.params)
 
@@ -141,7 +141,7 @@ def create_server(
                     return _refuse(422, "proposer_refused", detail=str(exc))
             painted = True
         finally:
-            ledger.finish(user, page, generation, painted)
+            ledger.finish(user, page, generation, device, source, painted)
 
         return Response(
             encode_png(proposal),

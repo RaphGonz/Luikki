@@ -30,6 +30,11 @@ Cloud = endpoint GPU authentifié, pas une SaaS. Projet, pages, refs, palette, m
       pupille ont la même forme et la même bordure.
 - [ ] Contre-épreuve du seuil sur les 7 planches de `crosspage`, comme pour 0,14.
 - [ ] Nommer/créer/renommer entrées de palette (SPEC 17).
+- [ ] **Premier retour de Raph sur l'app (2026-09-13)** : impossible d'ajouter
+      une couleur à la main dans la palette, seulement depuis une référence ou
+      une image de palette. Il faut une boîte de couleur : curseurs RGB, HSL
+      et OKLab, saisie hexadécimale, pipette (sur la planche et sur les
+      références).
 - [ ] Vérifier `expand_under_lines` : halo 1px ? jonction 3 zones sous trait épais ? intérieur des aplats noirs ?
 - [x] Sous-couche grise : hors sujet ici, c'est un autre procédé. La convention
       est tranchée et déjà en place — la couleur du flat passe **sous l'encre**
@@ -114,6 +119,9 @@ Tout ce qui coûte — le GPU — se décide côté serveur, à chaque requête 
 abonnement, quota, concurrence. Donc **pas** de clé de licence, pas de JWT hors
 ligne, pas d'obfuscation, pas de VPS de licences. Faire tourner Cobra sur son
 propre GPU depuis les sources est permis et n'est pas le client visé.
+Les postes du Studio sont des `device_id` comptés par le serveur à chaque case,
+jamais des sièges dans un JWT (décidé le 2026-09-13, contre la §6.2 du premier
+jet de `business-plan.md`).
 
 ```
 App installée (Win/Mac)                    Modal (GPU)                      Supabase (UE)
@@ -140,6 +148,9 @@ App installée (Win/Mac)                    Modal (GPU)                      Sup
 - **Paiement : Stripe.** Checkout hébergé ouvert dans le navigateur système,
   Customer Portal pour résilier et changer de carte, webhooks → Supabase. Le
   serveur ne croit jamais le client sur l'état d'un abonnement.
+  Managed Payments (Stripe marchand officiel, TVA comprise) : 3,5 % en plus des
+  frais de carte. Prix régionaux par devise (`currency_options`). Pas de
+  Paddle ni de Lemon Squeezy (2026-09-13) : la chaîne est validée sur Stripe.
 - **Packaging : PyInstaller `onedir` + pywebview.** Inno Setup (Windows), DMG
   (Mac arm64), non signés jusqu'à B6, GitHub Actions sur tag → GitHub Releases.
 - **Pas de CLIP en ONNX.** La sélection des tuiles reste sur le serveur
@@ -160,6 +171,11 @@ recompte pas, jusqu'à un plafond de générations par page (`generation_id`
 distincts : un appui sur l'étape 5) (sinon l'artiste
 hésite à corriger, ce qui tue la valeur centrale). Valeurs provisoires :
 100 pages/mois, 10 générations/page. Fixées pour de bon en C.
+
+**Remplacé le 2026-09-13 par le compte en cases** (B5b) : le GPU coûte par
+case, et un épisode de webtoon en compte 60 à 80. **La règle de la relance est
+abandonnée** (Raph, 2026-09-13) : chaque génération d'une case compte une case,
+relance comprise. Plus de plafond de générations par page.
 
 ### API serveur v1
 
@@ -185,6 +201,8 @@ Contrôles à chaque `POST /v1/panel`, dans cet ordre, avant de toucher au GPU :
 signature du token · abonnement actif (`tester` ou `paid` non expiré) · quota ·
 ≤ 2 `device_id` par compte · un seul job en cours (deux IP simultanées = refus
 + log) · entrées PNG uniquement, plafond en px et en Mo · timeout.
+Avec B5b : droit aux couleurs actif **ou** cases achetées · cases du mois puis
+cases achetées · postes ≤ `devices` du plan · jobs ≤ `parallel_jobs` du plan.
 
 ### Estimation
 
@@ -454,12 +472,67 @@ fin : ce sont elles qui attendent.
       Codes `TESTEUR-XXXX` avec `max_redemptions` et `expires_at`. Pas de carte
       demandée grâce à `payment_method_collection="if_required"`.
       Fait (2026-09-13) : 5 codes à usage unique, 60 jours pour s'en servir.
-- [ ] Offre fondateur : un autre coupon, même mécanique (remplace les
-      « licences fondateur »). Conditions à décider.
+- ~~Offre fondateur : un autre coupon, même mécanique~~ : devenue une ligne
+  de vente à part entière (B5b).
 - Fait quand : un testeur s'abonne avec un code sans carte, résilie via le
   portail, et perd l'accès.
-  Validé le 2026-09-13 par Raph sur le second PC. Seule reste l'offre
-  fondateur, dont les conditions ne sont pas fixées.
+  Validé le 2026-09-13 par Raph sur le second PC. Le produit à 15 €/mois qui a
+  servi au test est remplacé par la vente en cases (B5b).
+
+### B5b — Vente en cases (décidée le 2026-09-13, `business-plan.md`)
+
+L'infrastructure de B5 reste : Checkout, portail, webhook, Managed Payments,
+`stripe_setup`. Ce qui change : on vend des **cases**, et plus un abonnement
+mensuel aux particuliers. La case est ce que le GPU coûte ; la page ne l'est
+pas (un épisode de webtoon compte 60 à 80 cases). Le calcul des plafonds est
+dans `business-plan.md` §4.5 et §4.6.
+
+| Ligne | Prix | Stripe | Droit côté serveur |
+|---|---|---|---|
+| Gratuit | 0 € | — | `distinct` seulement, choisi par l'artiste |
+| Luikki | 69 € une fois | `mode=payment` | Cobra 1 an, 1 000 cases/mois, 2 postes |
+| Pass couleur | 39 €/an | `mode=payment` | Cobra +1 an |
+| Pack | 19 € | `mode=payment` | +1 000 cases, sans expiration |
+| Studio | 149 €/mois | `mode=subscription` | 5 000 cases/mois, 3 postes, 3 jobs en parallèle |
+| Fondateur | 249 €, 100 exemplaires | `mode=payment` | Luikki (1 an) + 5 000 cases sans expiration + nom au générique |
+| Production | devis annuel | facture | volume, SLA |
+
+Les cases achetées (packs, fondateur) **n'expirent jamais** : les auteurs
+travaillent par vagues. Le serveur prend d'abord les cases du mois, puis les
+cases achetées ; les cases achetées marchent sans pass. Testeurs :
+`plan='tester'` posé à la main, inchangé.
+
+- [ ] Données : `plans` passe en cases (`cases_per_month`, `devices`,
+      `parallel_jobs`) ; `colours` (`user_id`, `until`) ; `purchases`, une
+      ligne par achat (`user_id`, `line`, `cases`, `years`,
+      `stripe_session_id` unique, `payment_intent`, `refunded`), jamais
+      expirée ; `customers` ; `usage` gagne `source` (`month` | `credits`) ;
+      `jobs` par appareil. `subscriptions` ne sert plus qu'au Studio et aux
+      testeurs. Le solde des cases achetées = achats − `usage` en `credits` :
+      un registre, pas un compteur qu'on décrémente.
+- [ ] Quota en cases : chaque `POST /v1/panel` peint compte une case, relance
+      comprise (Raph, 2026-09-13 : « une case est une case »). D'abord les
+      cases du mois, puis les cases achetées. `start_panel`, `finish_panel`
+      et `my_status` réécrits ; le client n'a rien de plus à envoyer.
+- [ ] Studio : `jobs` par appareil, au plus `parallel_jobs` ; un seul email
+      pour les 3 postes en v1 (comptes d'équipe : C).
+- [ ] Webhook : `checkout.session.completed` pour les paiements uniques
+      (idempotent par `stripe_session_id`), `customer.subscription.*` pour le
+      Studio, `charge.refunded` retire le droit ou les cases.
+- [ ] Fondateur : 100 au plus, comptés par le serveur avant d'ouvrir le
+      Checkout.
+- [ ] `stripe_setup` : les six produits, leurs prix (`lookup_key`) et leur
+      code fiscal ; archive le prix à 15 €/mois et le coupon `testeur-3-mois`.
+- [ ] Prix régionaux : prix par devise (`currency_options`). Devises à
+      décider (BRL, MXN, IDR, PHP…).
+- [ ] App, Compte : cases restantes du mois, cases achetées, boutons d'achat.
+      Étape 5 : sélecteur Cobra / `distinct` (jamais de repli silencieux,
+      B2) ; au plafond, proposer un pack ou le Studio.
+- [ ] Mots : parler en cases partout, avec l'équivalent (« 1 000 cases ≈ 200
+      pages ≈ 14 épisodes »).
+- Fait quand : en mode test, un compte achète Luikki, génère, épuise son mois,
+  achète un pack et continue ; un compte Studio génère sur 3 machines à la
+  fois ; un fondateur revient après trois mois et retrouve ses cases.
 
 ### B6 — Production (4–6 j + délais externes)
 
@@ -479,7 +552,17 @@ fin : ce sont elles qui attendent.
       d'abonnements logiciels.
 - [ ] CGU/CGV : restrictions d'usage OpenRAIL++-M (Attachment A, héritées de
       PixArt), images supprimées après le job, aucun entraînement. Case à cocher
-      à l'inscription.
+      à l'inscription. « Aucun entraînement » est une clause du contrat, et le
+      premier écran du site (`business-plan.md` §2.3).
+- [ ] Mesurer le temps GPU d'une case **avant la vente publique** : le quota
+      de 1 000 cases/mois du pass à 39 € perd de l'argent au-delà de 10 s par
+      case (`business-plan.md` §4.6). Au-delà, baisser `cases_per_month` :
+      une ligne dans `plans`, sans nouvelle version.
+- [ ] Licence du code : le dépôt est public mais n'a **aucun fichier
+      `LICENSE`** (2026-09-13). Sans lui, le code n'est pas open source, et
+      « le code est ouvert, on vend le service » (`business-plan.md` §2.4)
+      n'est pas vrai. Choisir une licence compatible avec les dépendances
+      vendorisées (MIT) et avec OpenRAIL++-M.
 - [ ] **[€]** Sentry client + serveur, **aucune image** dans les événements.
 - [ ] **[€]** Apple Developer Program, 99 $/an, inscription en individuel (une
       micro-entreprise n'est pas une personne morale). Puis `codesign`
@@ -498,13 +581,17 @@ fin : ce sont elles qui attendent.
       (décidé 2026-09-12), lu dans l'en-tête PNG avant tout décodage. Protège
       le GPU partagé d'une image géante ou d'un PNG qui explose au décodage ;
       l'app n'envoie rien d'aussi grand.
-- Fait quand : un inconnu télécharge, s'abonne avec une vraie carte, génère
-  une page et reçoit sa facture.
+- Fait quand : un inconnu télécharge, achète Luikki avec une vraie carte,
+  génère des cases et reçoit sa facture.
 
 ## C — Après les tests : mesurer, durcir
 
-- [ ] Mesurer : s/case, cases/page, pic VRAM, démarrage à froid, coût réel par
-      page, relances par page → figer quota et prix.
+- [ ] Mesurer sur 10 comptes : s/case, cases/page, cases/mois, pic VRAM,
+      démarrage à froid, coût réel par case, relances par page → ajuster
+      `cases_per_month` et le plafond Studio (5 000, calculé à 20 s/case).
+- [ ] Comptes d'équipe Studio : plusieurs emails sous un seul paiement (v1 :
+      un email, 3 postes).
+- [ ] Ligne Production : devis, facture annuelle, SLA.
 - [ ] Région UE (Modal ×1,5, ou hébergeur UE) quand de vrais clients paient.
       Jamais d'hôtes tiers (type Community Cloud).
 - [ ] Non-rétention vérifiée chez Modal (entrées, sorties, logs) + DPA signé.
@@ -530,10 +617,11 @@ fin : ce sont elles qui attendent.
 - [ ] Démo longue 5–8 min sur vraie page, avec l'artiste, erreurs comprises.
 - [ ] Avant/après sur planche d'album réelle (autorisation écrite).
 - [ ] Bloc « vos couleurs, vos références » sur page tarifs : refs de l'artiste uniquement / sortie brute jamais montrée ni exportée / aucun trait dans l'export / aucun entraînement.
-- [ ] Page tarifs 2 colonnes (mini gratuit installé / abonnement cloud), même avant le cloud.
+- [ ] Page tarifs : Gratuit (`distinct`), Luikki 69 €, pass 39 €/an, packs, Studio, Production. Les plafonds en cases dans les conditions, pas sur la page (`business-plan.md` §4.4).
+- [ ] Site coréen pour les studios webtoon : une autre vente, pas une traduction. Formulaire de devis, cases montrées en épisodes.
 - [ ] **[€]** Hébergement vidéo : YouTube non répertorié au début, Bunny/Mux ensuite.
 - [x] **[€]** Email transactionnel : Resend, le même compte que le SMTP Supabase (B2). Compte et domaine du site faits (2026-09-12).
-- [ ] 3 emails liste d'attente : démo vidéo → codes fondateur → ouverture cloud.
+- [ ] 3 emails liste d'attente : démo vidéo → vente des 100 licences fondateur (le cloud existe déjà) → ouverture publique.
 
 ## ~~E — Lignes ouvertes (recherche, transverse)~~ — résolu (2026-09-11)
 

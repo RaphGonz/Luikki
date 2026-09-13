@@ -1,4 +1,4 @@
-"""Subscriptions: Stripe Checkout, the Customer Portal and Stripe's webhook (B5).
+"""Selling colours and panels: Stripe Checkout, the Customer Portal, Stripe's webhook (B5, B5b).
 
 A FastAPI of its own, on a Modal function without a GPU (`modal_app.py`).
 Opening a payment page or taking a webhook must never wake the L4, and a
@@ -6,23 +6,26 @@ webhook left waiting on a GPU cold start would time out.
 
 The app never pays inside its window: it asks here, with the artist's session,
 for a Stripe page, and opens it in the system browser (`luikki/billing.py`).
-What the account is then allowed is written by the webhook alone, into
-`subscriptions` (`schema.sql`), which `start_panel` reads. The client is never
-believed about a subscription.
+What the account is then allowed is written by the webhook alone, through the
+functions of `schema.sql` that `start_panel` reads. The client is never
+believed about a payment.
 
-A tester's code is a Stripe promotion code, typed on the payment page. With
-`payment_method_collection="if_required"`, a 100 % code asks for no card.
+What is sold is `LINES` (business-plan.md §4.3): colours for a year, bought
+once; panels that never expire; and Studio, the one subscription. A code is a
+Stripe promotion code, typed on the payment page.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
+from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from ..billing import CHECKOUT_ROUTE, PORTAL_ROUTE
@@ -32,14 +35,37 @@ logger = logging.getLogger("luikki.billing")
 
 WEBHOOK_ROUTE = "/v1/stripe/webhook"
 DONE_ROUTE = "/v1/done"
-# Found by this key rather than by id, so test and live mode run the same code.
-PRICE_LOOKUP_KEY = "luikki_cloud_monthly"
 PORTAL_METADATA = ("luikki", "portal")
-ACTIVE = ("active", "trialing")
 # A renewal arrives by webhook just after the period it extends has begun.
-# Access runs this long past the period's end, so a paying artist is never
+# Access runs this long past the period's end, so a paying studio is never
 # refused in between; a cancellation still ends it at once, through `status`.
 PERIOD_GRACE = timedelta(days=1)
+FOUNDERS = 100
+
+
+@dataclass(frozen=True)
+class Line:
+    """One thing Luikki sells. The server finds its price by `lookup_key`, so
+    test and live mode run the same code; `cents` is only what `stripe_setup`
+    creates the price with."""
+
+    lookup_key: str
+    product: str
+    name: str
+    cents: int
+    # Years of Cobra's colours, and bought panels, which never expire.
+    years: int = 0
+    cases: int = 0
+    monthly: bool = False
+
+
+LINES = {
+    "luikki": Line("luikki_colours_year", "luikki_colours", "Luikki", 6900, years=1),
+    "pass": Line("luikki_pass_year", "luikki_pass", "Luikki colour pass", 3900, years=1),
+    "pack": Line("luikki_pack_1000", "luikki_pack", "Luikki panel pack (1 000 panels)", 1900, cases=1000),
+    "founder": Line("luikki_founder", "luikki_founder", "Luikki founder licence", 24900, years=1, cases=5000),
+    "studio": Line("luikki_studio_monthly", "luikki_studio", "Luikki Studio", 14900, monthly=True),
+}
 
 DONE_PAGE = """<!doctype html>
 <html lang="fr">
@@ -58,81 +84,109 @@ DONE_PAGE = """<!doctype html>
 """
 
 
+class Purchase(BaseModel):
+    line: str
+
+
 def as_dict(stripe_object: Any) -> dict:
     """A Stripe object as plain dicts and lists: `subscription["items"]` is not `dict.items`."""
     return json.loads(str(stripe_object))
 
 
-def checkout_options(price: str, user: str, base_url: str, customer: str | None = None) -> dict:
-    """The Checkout Session a subscription starts from. `stripe_setup` opens one
-    with these same options, so what Stripe refuses shows at setup, not when a
-    tester presses Subscribe."""
-    options = {
-        "mode": "subscription",
+def checkout_options(line: str, price: str, user: str, base_url: str, customer: str | None = None) -> dict:
+    """The Checkout Session a purchase starts from. `stripe_setup` opens one
+    per line with these same options, so what Stripe refuses shows at setup,
+    not when an artist presses Buy."""
+    sold = LINES[line]
+    options: dict = {
+        "mode": "subscription" if sold.monthly else "payment",
         "line_items": [{"price": price, "quantity": 1}],
         "client_reference_id": user,
-        # Carried by every subscription event, so the webhook knows the
-        # account without looking anything up.
-        "subscription_data": {"metadata": {"user_id": user}},
+        # Read back by the webhook from the session Stripe holds, never from
+        # the event: what was bought, and for whom.
+        "metadata": {"user_id": user, "line": line},
         "allow_promotion_codes": True,
-        "payment_method_collection": "if_required",
         "success_url": base_url + DONE_ROUTE,
         "cancel_url": base_url + DONE_ROUTE,
     }
+    if sold.monthly:
+        options["subscription_data"] = {"metadata": {"user_id": user}}
+        options["payment_method_collection"] = "if_required"
+    else:
+        options["invoice_creation"] = {"enabled": True}
+        if not customer:
+            options["customer_creation"] = "always"
     if customer:
         options["customer"] = customer
     return options
+
+
+def refusal(line: str, buyer: dict) -> tuple[int, str] | None:
+    """Why this account may not buy this line now, or None."""
+    if line not in LINES:
+        return 400, "bad_line"
+    if line == "studio" and buyer.get("studio"):
+        return 409, "already_subscribed"
+    if line == "luikki" and buyer.get("bought"):
+        return 409, "already_bought"
+    if line == "pass" and not buyer.get("bought"):
+        # 39 € extends Luikki; it is not a cheaper way in.
+        return 409, "needs_luikki"
+    if line == "founder":
+        if buyer.get("founder"):
+            return 409, "already_bought"
+        if buyer.get("founders_sold", 0) >= FOUNDERS:
+            return 410, "sold_out"
+    return None
 
 
 def _refuse(status: int, code: str, **params) -> JSONResponse:
     return JSONResponse({"code": code, "params": params}, status_code=status)
 
 
-def _active(row: dict) -> bool:
-    return row.get("status") in ACTIVE and datetime.fromisoformat(row["period_end"]) > datetime.now(timezone.utc)
-
-
-class Subscriptions:
-    """The `subscriptions` table, over the Data API with the secret key."""
+class Store:
+    """The billing functions of `schema.sql`, over the Data API with the secret key."""
 
     def __init__(self, project_url: str, secret_key: str, client: Any = None):
         import httpx
 
-        self.base = project_url.rstrip("/") + "/rest/v1/subscriptions"
+        self.base = project_url.rstrip("/") + "/rest/v1/rpc/"
         self.headers = supabase_headers(secret_key)
         self.client = client or httpx.Client(timeout=15.0)
 
-    def get(self, user: str) -> dict | None:
-        response = self.client.get(
-            self.base,
-            params={"user_id": f"eq.{user}", "select": "status,plan,period_end,stripe_customer_id"},
-            headers=self.headers,
-        )
-        response.raise_for_status()
-        rows = response.json()
-        return rows[0] if rows else None
+    def buyer(self, user: str) -> dict:
+        return self._call("buyer_status", {"p_user": user}) or {}
 
-    def put(self, user: str, status: str, period_end: datetime, customer: str) -> None:
-        """The account's one row, replaced: a Stripe subscription makes the plan `paid`."""
-        response = self.client.post(
-            self.base,
-            params={"on_conflict": "user_id"},
-            json={
-                "user_id": user,
-                "status": status,
-                "plan": "paid",
-                "period_end": period_end.isoformat(),
-                "stripe_customer_id": customer,
-            },
-            headers=self.headers | {"prefer": "resolution=merge-duplicates,return=minimal"},
-        )
+    def purchase(self, user: str, line: str, session: str, payment_intent: str | None, customer: str | None) -> bool:
+        sold = LINES[line]
+        arguments = {
+            "p_user": user,
+            "p_line": line,
+            "p_session": session,
+            "p_payment_intent": payment_intent,
+            "p_customer": customer,
+            "p_cases": sold.cases,
+            "p_years": sold.years,
+        }
+        return bool(self._call("record_purchase", arguments))
+
+    def refund(self, payment_intent: str) -> bool:
+        return bool(self._call("record_refund", {"p_payment_intent": payment_intent}))
+
+    def studio(self, user: str, status: str, period_end: datetime, customer: str) -> None:
+        arguments = {"p_user": user, "p_status": status, "p_period_end": period_end.isoformat(), "p_customer": customer}
+        self._call("record_studio", arguments)
+
+    def _call(self, function: str, arguments: dict):
+        response = self.client.post(self.base + function, json=arguments, headers=self.headers)
         response.raise_for_status()
+        return response.json() if response.content else None
 
 
 def create_billing(
     stripe: Any,
     verifier: TokenVerifier,
-    subscriptions: Subscriptions,
+    store: Store,
     webhook_secret: str,
     base_url: str,
 ) -> FastAPI:
@@ -142,11 +196,11 @@ def create_billing(
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     found: dict[str, str | None] = {}
     if not webhook_secret:
-        logger.warning("STRIPE_WEBHOOK_SECRET is not set: no subscription will be recorded")
+        logger.warning("STRIPE_WEBHOOK_SECRET is not set: no purchase will be recorded")
 
     @app.exception_handler(Refused)
-    def _refused(_request, refusal: Refused):
-        return _refuse(refusal.status, refusal.code, **refusal.params)
+    def _refused(_request, refused: Refused):
+        return _refuse(refused.status, refused.code, **refused.params)
 
     def user_of(request: Request) -> str:
         supplied = request.headers.get("authorization", "")
@@ -154,11 +208,11 @@ def create_billing(
             raise Refused(401, "unauthorized")
         return verifier.user(supplied[len("Bearer ") :])
 
-    def row_of(user: str) -> dict:
+    def buyer_of(user: str) -> dict:
         try:
-            return subscriptions.get(user) or {}
+            return store.buyer(user)
         except httpx.HTTPError as exc:
-            logger.warning("subscriptions: %s", type(exc).__name__)
+            logger.warning("buyer_status: %s", type(exc).__name__)
             raise Refused(503, "accounts_unreachable") from exc
 
     def ask_stripe(call, **options):
@@ -169,14 +223,15 @@ def create_billing(
             logger.warning("stripe: %s", exc)
             raise Refused(502, "billing_unavailable") from exc
 
-    def price() -> str:
-        if "price" not in found:
-            prices = ask_stripe(stripe.Price.list, lookup_keys=[PRICE_LOOKUP_KEY], active=True, limit=1).data
+    def price(line: str) -> str:
+        if line not in found:
+            key = LINES[line].lookup_key
+            prices = ask_stripe(stripe.Price.list, lookup_keys=[key], active=True, limit=1).data
             if not prices:
-                logger.warning("no price %s in Stripe: run stripe_setup", PRICE_LOOKUP_KEY)
+                logger.warning("no price %s in Stripe: run stripe_setup", key)
                 raise Refused(503, "billing_unavailable")
-            found["price"] = prices[0].id
-        return found["price"]
+            found[line] = prices[0].id
+        return found[line]
 
     def portal_configuration() -> str | None:
         if "portal" not in found:
@@ -188,18 +243,18 @@ def create_billing(
         return found["portal"]
 
     @app.post(CHECKOUT_ROUTE)
-    def checkout(request: Request):
+    def checkout(request: Request, body: Purchase):
         user = user_of(request)
-        row = row_of(user)
-        customer = row.get("stripe_customer_id")
-        if customer and _active(row):
-            raise Refused(409, "already_subscribed")
-        options = checkout_options(price(), user, base_url, customer)
+        buyer = buyer_of(user)
+        refused = refusal(body.line, buyer)
+        if refused:
+            raise Refused(*refused)
+        options = checkout_options(body.line, price(body.line), user, base_url, buyer.get("customer"))
         return {"url": ask_stripe(stripe.checkout.Session.create, **options).url}
 
     @app.post(PORTAL_ROUTE)
     def portal(request: Request):
-        customer = row_of(user_of(request)).get("stripe_customer_id")
+        customer = buyer_of(user_of(request)).get("customer")
         if not customer:
             raise Refused(404, "no_customer")
         options = {"customer": customer, "return_url": base_url + DONE_ROUTE}
@@ -219,26 +274,56 @@ def create_billing(
         except (ValueError, stripe.SignatureVerificationError):
             return _refuse(400, "bad_signature")
         event = json.loads(payload)
-        if event["type"].startswith("customer.subscription."):
-            # A failure answers 500, and Stripe sends the event again.
-            await run_in_threadpool(record, event["data"]["object"]["id"])
+        kind, target = event["type"], event["data"]["object"]["id"]
+        # A failure answers 500, and Stripe sends the event again.
+        if kind in ("checkout.session.completed", "checkout.session.async_payment_succeeded"):
+            await run_in_threadpool(record_session, target)
+        elif kind.startswith("customer.subscription."):
+            await run_in_threadpool(record_subscription, target)
+        elif kind == "charge.refunded":
+            await run_in_threadpool(record_refund, target)
         return {"received": True}
 
-    def record(subscription_id: str) -> None:
-        """Write what Stripe holds now. Events arrive out of order and are sent
-        again, so the subscription is read afresh, not taken from the event."""
+    # Each reads what Stripe holds now rather than what the event says: events
+    # arrive out of order and are sent again, and only Stripe's copy is signed
+    # by nobody but Stripe.
+
+    def record_session(session_id: str) -> None:
+        session = as_dict(stripe.checkout.Session.retrieve(session_id))
+        if session.get("mode") != "payment":
+            return  # Studio arrives by its subscription's own events.
+        if session.get("payment_status") not in ("paid", "no_payment_required"):
+            return  # Paid later, by `async_payment_succeeded`, or never.
+        metadata = session.get("metadata") or {}
+        line, user = metadata.get("line"), metadata.get("user_id")
+        if line not in LINES or LINES[line].monthly or not user:
+            logger.warning("session %s names no Luikki purchase", session_id)
+            return
+        store.purchase(user, line, session["id"], session.get("payment_intent"), session.get("customer"))
+
+    def record_subscription(subscription_id: str) -> None:
         subscription = as_dict(stripe.Subscription.retrieve(subscription_id))
         user = subscription.get("metadata", {}).get("user_id")
         if not user:
             logger.warning("subscription %s names no account: not made by Luikki's checkout", subscription_id)
             return
         ends = max(item["current_period_end"] for item in subscription["items"]["data"])
-        subscriptions.put(
+        store.studio(
             user,
             subscription["status"],
             datetime.fromtimestamp(ends, timezone.utc) + PERIOD_GRACE,
             subscription["customer"],
         )
+
+    def record_refund(charge_id: str) -> None:
+        charge = as_dict(stripe.Charge.retrieve(charge_id))
+        if not charge.get("refunded"):
+            # Part of the payment: the purchase stands, and whoever refunded
+            # it decides by hand what it still gives.
+            logger.warning("charge %s partly refunded: nothing taken back", charge_id)
+            return
+        if charge.get("payment_intent"):
+            store.refund(charge["payment_intent"])
 
     @app.get(DONE_ROUTE, response_class=HTMLResponse)
     def done():

@@ -131,14 +131,14 @@ def billing():
 
     from luikki.billing import BILLING_URL
     from luikki.cloud.accounts import TokenVerifier
-    from luikki.cloud.billing import Subscriptions, create_billing
+    from luikki.cloud.billing import Store, create_billing
 
     stripe.api_key = os.environ["STRIPE_SECRET_KEY"]
     project = os.environ["SUPABASE_URL"]
     return create_billing(
         stripe,
         verifier=TokenVerifier(project),
-        subscriptions=Subscriptions(project, os.environ["SUPABASE_SECRET_KEY"]),
+        store=Store(project, os.environ["SUPABASE_SECRET_KEY"]),
         webhook_secret=os.environ.get("STRIPE_WEBHOOK_SECRET", ""),
         base_url=BILLING_URL,
     )

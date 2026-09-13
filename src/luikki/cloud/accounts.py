@@ -1,4 +1,4 @@
-"""Who is asking, and whether their account may spend GPU time (ROADMAP §B, B2).
+"""Who is asking, and whether their account may spend GPU time (ROADMAP §B: B2, B5b).
 
 Two halves, both on the server:
 
@@ -6,8 +6,8 @@ Two halves, both on the server:
   signs with an asymmetric key (ES256), so the check is local: the public key
   is fetched once from the project's JWKS and cached, and a panel never waits
   on Supabase to learn who sent it.
-- `Ledger` asks the database the rest — subscription, quota, devices, the
-  one-job lock — through `start_panel` and `finish_panel` (`schema.sql`), one
+- `Ledger` asks the database the rest — rights, panels left, seats, the job
+  lock — through `start_panel` and `finish_panel` (`schema.sql`), one
   transaction each, with the secret key. That key lives in the Modal secret
   `luikki-supabase` and nowhere else.
 
@@ -24,12 +24,7 @@ from typing import Any
 
 logger = logging.getLogger("luikki.cloud")
 
-# Stand-ins for a plan with no row in `plans` (`schema.sql`), which is where
-# the limits live. Provisional, fixed for good once measured (ROADMAP §C).
-PAGES_PER_MONTH = 100
-GENERATIONS_PER_PAGE = 10
-DEVICES = 2
-# A device unseen this long gives its place up to a new one.
+# A device unseen this long gives its seat up to a new one.
 DEVICE_DAYS = 30
 # Longer than any panel takes, waiting for the GPU included. A lock older than
 # this is a container that died holding it.
@@ -40,8 +35,7 @@ _STATUS = {
     "too_many_devices": 403,
     "job_running": 409,
     "job_elsewhere": 409,
-    "quota_pages": 429,
-    "quota_generations": 429,
+    "quota_cases": 429,
 }
 
 
@@ -124,8 +118,12 @@ class Ledger:
         self.client = client or httpx.Client(timeout=15.0)
         self.attempts = attempts
 
-    def start(self, user: str, page: str, generation: str, device: str, ip: str) -> None:
-        """Take the account's job lock, or raise `Refused` with the reason."""
+    def start(self, user: str, page: str, generation: str, device: str, ip: str) -> str:
+        """Take a job lock for this device, or raise `Refused` with the reason.
+
+        Returns what pays for the panel, `month` or `credits`; `finish` writes
+        it down. Every panel painted is one panel paid, a second try included.
+        """
         response = self._post(
             "start_panel",
             {
@@ -134,9 +132,6 @@ class Ledger:
                 "p_generation": generation,
                 "p_device": device,
                 "p_ip": ip,
-                "p_pages_per_month": PAGES_PER_MONTH,
-                "p_generations_per_page": GENERATIONS_PER_PAGE,
-                "p_devices": DEVICES,
                 "p_device_days": DEVICE_DAYS,
                 "p_job_seconds": JOB_SECONDS,
             },
@@ -144,21 +139,36 @@ class Ledger:
         if response is None:
             raise Refused(503, "accounts_unreachable")
         code = str(response.json())
-        if code == "ok":
-            return
+        if code.startswith("ok:"):
+            return code[len("ok:") :]
         if code == "job_elsewhere":
             # Refused either way; logged because it is what a shared login
             # looks like.
-            logger.warning("job_elsewhere: account %s, second request from %s", user, ip)
+            logger.warning("job_elsewhere: account %s, another request from %s", user, ip)
         raise Refused(_STATUS.get(code, 403), code)
 
-    def finish(self, user: str, page: str, generation: str, painted: bool) -> None:
-        """Lift the lock, and charge the panel if it was painted.
+    def finish(
+        self,
+        user: str,
+        page: str,
+        generation: str,
+        device: str,
+        source: str,
+        painted: bool,
+    ) -> None:
+        """Lift this device's lock, and charge the panel if it was painted.
 
         Never raises: the GPU time is already spent, and a lock left behind
         expires on its own after `JOB_SECONDS`.
         """
-        arguments = {"p_user": user, "p_page": page, "p_generation": generation, "p_succeeded": painted}
+        arguments = {
+            "p_user": user,
+            "p_page": page,
+            "p_generation": generation,
+            "p_device": device,
+            "p_source": source,
+            "p_succeeded": painted,
+        }
         for _ in range(self.attempts):
             if self._post("finish_panel", arguments) is not None:
                 return

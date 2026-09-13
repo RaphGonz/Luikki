@@ -164,6 +164,7 @@ class Session:
         proposer: ColourProposer | None = None,
         extractor: LineExtractor | None = None,
         account: Account | None = None,
+        proposers: dict[str, ColourProposer] | None = None,
     ):
         self.workdir = Path(workdir)
         # Who is signed in on this machine, for the rail. None where nothing
@@ -171,6 +172,9 @@ class Session:
         self.account = account
         self.workdir.mkdir(parents=True, exist_ok=True)
         self.proposer: ColourProposer = proposer or DistinctColourProposer()
+        # What the artist may choose between at step 5, by name. Never swapped
+        # behind their back: distinct colours are a choice, not a fallback.
+        self.proposers: dict[str, ColourProposer] = proposers or {self.proposer.name: self.proposer}
         # On onnxruntime, with a GPU when the installed build has one.
         self.extractor: LineExtractor = extractor or MangaLineExtractor()
         # Serialises the buttons. Segmentation takes seconds and the artist
@@ -1678,6 +1682,16 @@ class Session:
         self._zones_done = False
         self._flats_done = False
 
+    def set_proposer(self, name: str) -> dict:
+        """Cobra or distinct colours for the next press of step 5. Flats
+        already made stay as they are: regenerating them is the artist's call."""
+        with self.lock:
+            if name not in self.proposers:
+                raise StepError("proposer_unknown", name=name)
+            self.proposer = self.proposers[name]
+            project.save_project(self)
+        return self.state()
+
     def gpu_status(self) -> dict:
         """What step 5 knows before it is pressed, when it runs on the GPU server.
 
@@ -1799,6 +1813,7 @@ class Session:
                 "flats_stale": self._flats_done
                 and any(self.reference_store.get(ref) is None for ref in self._flats_references),
                 "proposer": self.proposer.name,
+                "proposers": sorted(self.proposers),
                 "extractor": self.extractor.name,
                 "leak_gap": self.leak_gap,
                 "export": {

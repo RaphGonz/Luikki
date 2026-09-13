@@ -130,6 +130,7 @@ function pseudoLocale(source) {
 }
 
 const fmt = {
+  date: (iso) => new Intl.DateTimeFormat(words.numbers, { dateStyle: "long" }).format(new Date(iso)),
   number: (value, digits = 0) =>
     new Intl.NumberFormat(words.numbers, {
       minimumFractionDigits: digits,
@@ -1109,6 +1110,7 @@ function stepBody(id) {
         askBlock("flats"),
         state.flats_stale ? note(t("flats.stale"), true) : null,
         note(done.flats ? t("flats.done", { count: state.segments.count }) : t("about.flats")),
+        colourMode(),
         ...gpuNotes(),
         runButton("flats", t("run.flats"), t("run.flats.again"), gpuBlock()),
       ];
@@ -1419,35 +1421,48 @@ function accountView() {
   ];
 }
 
-// The plan, as `my_status` tells it (`gpu.quota`). Unknown says nothing: the
-// GPU server decides at the press either way.
+// The account's rights, as `my_status` tells them (`gpu.quota`). Unknown says
+// nothing: the GPU server decides at the press either way.
 function planNotes() {
   const quota = gpu?.quota;
   if (!quota) return [];
-  if (!quota.active) return [note(t("account.plan_none")), note(t("account.code_hint"))];
-  return [note(quota.plan === "tester" ? t("account.plan_tester") : t("account.plan_paid"))];
+  let plan = note(t("account.plan_none"));
+  if (quota.plan === "tester") plan = note(t("account.plan_tester"));
+  if (quota.plan === "studio") plan = note(t("account.plan_studio"));
+  if (quota.plan === "luikki") plan = note(t("account.plan_luikki", { date: fmt.date(quota.colours_until) }));
+  return [plan, ...panelNotes(quota), quota.plan === "tester" ? null : note(t("account.code_hint"))];
 }
 
+// What this account can buy now. Stripe's page shows the price.
 function planButtons() {
   const quota = gpu?.quota;
-  if (!quota || (quota.active && quota.plan === "tester")) return [];
-  if (!quota.active) {
-    return [
-      button(t("account.subscribe"), {
-        kind: "primary",
-        key: "account-subscribe",
-        onclick: () => openBilling("/api/account/subscribe"),
-      }),
-    ];
+  if (!quota) return [];
+  const buy = (line, label, primary = false) =>
+    button(label, {
+      kind: primary ? "primary" : "",
+      key: `account-buy-${line}`,
+      onclick: () => openBilling("/api/account/buy", { line }),
+    });
+  const buttons = [];
+  if (quota.plan !== "tester") {
+    if (quota.plan !== "studio") {
+      buttons.push(quota.bought ? buy("pass", t("account.buy_pass"), !quota.plan) : buy("luikki", t("account.buy_luikki"), true));
+    }
+    buttons.push(buy("pack", t("account.buy_pack")));
+    if (quota.plan !== "studio") buttons.push(buy("studio", t("account.buy_studio")));
+    if (!quota.bought) buttons.push(buy("founder", t("account.buy_founder")));
   }
-  return [button(t("account.manage"), { key: "account-manage", onclick: () => openBilling("/api/account/manage") })];
+  if (quota.customer) {
+    buttons.push(button(t("account.manage"), { key: "account-manage", onclick: () => openBilling("/api/account/manage") }));
+  }
+  return buttons;
 }
 
 // Stripe's page opens in the browser. What it changes is read again when the
 // artist comes back to this window (the `focus` listener).
-async function openBilling(path) {
+async function openBilling(path, body) {
   try {
-    await accountCall(t("work.billing"), path, "POST");
+    await accountCall(t("work.billing"), path, "POST", body);
     say(t("status.billing_opened"));
   } catch (error) {
     say(error.message, true);
@@ -1480,40 +1495,66 @@ async function refreshGpu() {
   if (shelf === "account") renderInspector();
 }
 
-// Why the GPU server would refuse step 5, or null.
+// Why the GPU server would refuse step 5, or null. Running out of panels does
+// not block the button: the server refuses the panel, and says why.
 function gpuBlock() {
   if (!gpu || !gpu.remote) return null;
   if (gpu.needs_sign_in) return t("flats.sign_in");
-  const quota = gpu.quota;
-  if (!quota) return null;
-  if (!quota.active) return t("flats.no_subscription");
-  if (quota.pages_per_month === null) return null;
-  if (quota.page_counted) {
-    return quota.page_generations >= quota.generations_per_page ? t("flats.page_out") : null;
-  }
-  return quota.pages_used >= quota.pages_per_month ? t("flats.quota_out") : null;
+  if (gpu.quota && !gpu.quota.active) return t("flats.no_colours");
+  return null;
+}
+
+// What is left to paint with: the month's panels first, then bought ones.
+// Every panel generated is one panel, a second try included.
+function panelNotes(quota) {
+  const left = Math.max(0, quota.cases_per_month - quota.cases_used);
+  return [
+    quota.cases_per_month > 0 ? note(t("flats.cases_left", { count: left, limit: quota.cases_per_month })) : null,
+    quota.credits > 0 ? note(t("flats.credits", { count: quota.credits })) : null,
+    quota.active && left === 0 && quota.credits <= 0 ? note(t("flats.cases_out"), true) : null,
+  ];
 }
 
 function gpuNotes() {
   if (!gpu || !gpu.remote) return [];
   const blocked = gpuBlock();
   if (blocked) {
-    return [
-      note(blocked, true),
-      gpu.needs_sign_in
-        ? h("div", { class: "row" }, button(t("account.sign_in"), { key: "flats-sign-in", onclick: openAccount }))
-        : null,
-    ];
+    const next = gpu.needs_sign_in ? t("account.sign_in") : t("account.buy");
+    return [note(blocked, true), h("div", { class: "row" }, button(next, { key: "flats-account", onclick: openAccount }))];
   }
-  const quota = gpu.quota;
-  if (gpu.signed_in && !quota) return [note(t("flats.quota_unknown"))];
-  if (!quota || quota.pages_per_month === null) return [];
-  if (quota.page_counted) {
-    return [note(t("flats.page_counted", { count: quota.generations_per_page - quota.page_generations }))];
+  if (gpu.signed_in && !gpu.quota) return [note(t("flats.quota_unknown"))];
+  return gpu.quota ? panelNotes(gpu.quota) : [];
+}
+
+// Cobra or distinct colours, chosen by the artist and never swapped behind
+// their back (ROADMAP B2). Offered only where the app has both.
+function colourMode() {
+  if (!state.proposers || state.proposers.length < 2) return null;
+  return h(
+    "label",
+    { class: "field" },
+    h("span", {}, t("flats.mode")),
+    h(
+      "select",
+      { "data-key": "colour-mode", onchange: (event) => chooseColours(event.target.value) },
+      h("option", { value: "remote", selected: state.proposer === "remote" }, t("flats.mode_remote")),
+      h("option", { value: "distinct", selected: state.proposer === "distinct" }, t("flats.mode_distinct")),
+    ),
+  );
+}
+
+async function chooseColours(name) {
+  try {
+    state = await call("/api/proposer", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+  } catch (error) {
+    say(error.message, true);
   }
-  return [
-    note(t("flats.pages_left", { count: quota.pages_per_month - quota.pages_used, limit: quota.pages_per_month })),
-  ];
+  await refreshGpu();
+  renderAll();
 }
 
 function accountCall(label, path, method, body) {

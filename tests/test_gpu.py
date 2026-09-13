@@ -52,7 +52,7 @@ def _zoned(client: TestClient, tmp_path) -> None:
         ("no_subscription", "gpu_no_subscription", 402),
         ("too_many_devices", "gpu_too_many_devices", 403),
         ("job_elsewhere", "gpu_job_elsewhere", 409),
-        ("quota_pages", "gpu_quota_pages", 429),
+        ("quota_cases", "gpu_quota_cases", 429),
         ("unreachable", "gpu_unreachable", 503),
     ],
 )

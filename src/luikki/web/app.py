@@ -76,6 +76,18 @@ class Pick(BaseModel):
     rgb: tuple[int, int, int]
 
 
+class Purchase(BaseModel):
+    """One line of `cloud/billing.py`'s `LINES`."""
+
+    line: str
+
+
+class Colours(BaseModel):
+    """The proposer step 5 uses, by name: `remote` or `distinct`."""
+
+    name: str
+
+
 class Email(BaseModel):
     """Where to send a sign-in code."""
 
@@ -156,10 +168,8 @@ def _gpu_refusal(exc: RemoteUnavailable) -> StepError:
             return StepError("gpu_job_running")
         case "job_elsewhere":
             return StepError("gpu_job_elsewhere")
-        case "quota_pages":
-            return StepError("gpu_quota_pages", status=429)
-        case "quota_generations":
-            return StepError("gpu_quota_generations", status=429)
+        case "quota_cases":
+            return StepError("gpu_quota_cases", status=429)
         case "protocol_unsupported":
             return StepError("gpu_update", status=426)
         case "proposer_refused":
@@ -180,11 +190,20 @@ def create_app(
     app = FastAPI(title="Luikki")
     workdir = Path(workdir) if workdir else default_workdir()
     account = account or Account()
+    chosen = proposer or _build_proposer(account)
+    # Cobra on the GPU, or distinct colours: where the app runs Cobra remotely
+    # it offers both, and the artist chooses at step 5 (ROADMAP B2, B5b).
+    proposers = {chosen.name: chosen}
+    if chosen.name == "remote":
+        from ..colour.proposer import DistinctColourProposer
+
+        proposers["distinct"] = DistinctColourProposer()
     session = Session(
         workdir,
-        proposer=proposer or _build_proposer(account),
+        proposer=chosen,
         extractor=extractor or _build_extractor(),
         account=account,
+        proposers=proposers,
     )
     app.state.session = session
     updater = updater or Updater()
@@ -253,15 +272,20 @@ def create_app(
     # Stripe's pages open in the system browser, asked for from here: this
     # process holds the session they are asked for with.
 
-    @app.post("/api/account/subscribe")
-    def subscribe():
-        billing.subscribe(session.account)
+    @app.post("/api/account/buy")
+    def buy(body: Purchase):
+        billing.buy(session.account, body.line)
         return {}
 
     @app.post("/api/account/manage")
     def manage_subscription():
         billing.manage(session.account)
         return {}
+
+    @app.put("/api/proposer")
+    def choose_proposer(body: Colours):
+        """Cobra or distinct colours for the next press of step 5."""
+        return session.set_proposer(body.name)
 
     @app.get("/api/account/status")
     def gpu_status():

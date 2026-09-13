@@ -13,18 +13,17 @@ une fois. C'est attendu.
 ## Se connecter et générer
 
 Dans l'application : **Compte** (en bas à gauche), votre adresse e-mail, puis
-le code reçu par e-mail. L'étape 5 (les aplats) a besoin de ce compte ; les
-autres étapes marchent sans.
+le code reçu par e-mail. Donnez cette adresse à Raph : il passe votre compte
+en compte testeur, et l'étape 5 génère alors avec Cobra sans rien acheter.
 
-Générer demande un abonnement. Raph vous donne un code `TESTEUR-XXXXXX` :
-dans **Compte**, cliquez **S'abonner** ; la page de paiement s'ouvre dans votre
-navigateur. Saisissez-y le code (« Ajouter un code promotionnel ») : aucune
-carte n'est demandée, les trois premiers mois sont offerts. Revenez ensuite
-dans Luikki. Vous pouvez résilier quand vous voulez depuis **Compte → Gérer
-l'abonnement**.
+À l'étape 5, **Couleurs** choisit entre Cobra (d'après vos références) et les
+couleurs distinctes, gratuites, sans GPU. Cobra compte en cases : chaque case
+générée en consomme une, deuxième essai compris. **Compte** et l'étape 5
+disent ce qu'il reste.
 
-Pendant les tests, Stripe tourne en mode test : aucune somme ne peut être
-prélevée, même avec une vraie carte.
+Les boutons d'achat de **Compte** ouvrent la page de paiement Stripe dans votre
+navigateur. Pendant les tests, Stripe tourne en mode test : aucune somme ne
+peut être prélevée, même avec une vraie carte.
 
 ## Où vont vos planches
 

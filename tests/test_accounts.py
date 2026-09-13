@@ -63,7 +63,7 @@ class _Painter:
 class _Database:
     """Answers `start_panel` with `answer`, and remembers every call."""
 
-    answer: str = "ok"
+    answer: str = "ok:month"
     down: bool = False
     calls: list = field(default_factory=list)
 
@@ -120,11 +120,30 @@ def test_a_signed_in_artist_is_charged_once_the_panel_is_painted():
         GENERATION,
         DEVICE,
     )
-    assert database.calls[1][1]["p_succeeded"] is True
+    finished = database.calls[1][1]
+    # The lock is this device's, and the panel is charged to what paid for it.
+    assert (finished["p_device"], finished["p_source"]) == (DEVICE, "month")
+    assert finished["p_succeeded"] is True
     assert len(painter.seen) == 1
 
 
-@pytest.mark.parametrize("answer", ["no_subscription", "quota_pages", "job_elsewhere", "too_many_devices"])
+@pytest.mark.parametrize("paid_from", ["month", "credits"])
+def test_the_panel_is_charged_to_what_start_panel_said(paid_from):
+    database = _Database(answer=f"ok:{paid_from}")
+    _send(_gate(database, _Painter()), _token())
+    assert database.calls[1][1]["p_source"] == paid_from
+
+
+def test_painting_the_same_panel_again_costs_a_panel_again():
+    database, painter = _Database(), _Painter()
+    client = _gate(database, painter)
+    _send(client, _token())
+    _send(client, _token())
+    assert [call[0] for call in database.calls] == ["start_panel", "finish_panel"] * 2
+    assert len(painter.seen) == 2
+
+
+@pytest.mark.parametrize("answer", ["no_subscription", "quota_cases", "job_elsewhere", "too_many_devices"])
 def test_a_refusal_never_reaches_the_gpu(answer):
     database, painter = _Database(answer=answer), _Painter()
     with pytest.raises(RemoteUnavailable) as caught:
