@@ -440,7 +440,7 @@ fin : ce sont elles qui attendent.
 - [x] Customer Portal activé : résiliation, carte, factures. Résiliation
       immédiate en mode test (le test doit voir l'accès tomber), en fin de
       période en live.
-- [ ] Webhooks → `subscriptions` ; tester résiliation et paiement refusé.
+- [x] Webhooks → `subscriptions` ; tester résiliation et paiement refusé.
       Code déployé (2026-09-13) : `customer.subscription.*`, l'abonnement est
       relu chez Stripe avant d'écrire (les événements arrivent dans le
       désordre), `period_end` + 1 jour de grâce pour un renouvellement en
@@ -448,8 +448,8 @@ fin : ce sont elles qui attendent.
       bout le même jour sur le second PC : code `TESTEUR-…` sans carte, compte
       « actif » au retour dans l'app, planche jusqu'au PSD. Premier essai en
       502 : Managed Payments exigeait un code fiscal (voir B6). Résiliation
-      par le portail réussie le même jour. Reste : paiement refusé (sans code,
-      carte de test `4000 0000 0000 0341`).
+      par le portail réussie le même jour, accès coupé ; paiement refusé
+      (sans code, carte de test `4000 0000 0000 0341`) : jamais actif.
 - [x] Codes testeurs : coupon 100 %, `duration=repeating` (3 mois) ; Promotion
       Codes `TESTEUR-XXXX` avec `max_redemptions` et `expires_at`. Pas de carte
       demandée grâce à `payment_method_collection="if_required"`.
@@ -458,6 +458,8 @@ fin : ce sont elles qui attendent.
       « licences fondateur »). Conditions à décider.
 - Fait quand : un testeur s'abonne avec un code sans carte, résilie via le
   portail, et perd l'accès.
+  Validé le 2026-09-13 par Raph sur le second PC. Seule reste l'offre
+  fondateur, dont les conditions ne sont pas fixées.
 
 ### B6 — Production (4–6 j + délais externes)
 
