@@ -4,7 +4,7 @@
 --
 -- Only the Modal server touches these tables, with the `service_role` key,
 -- which bypasses RLS. The client holds the public key and reads its plan and
--- quota through `GET /v1/me`, never here: RLS is on with no policy, so `anon`
+-- quota through `my_status` (below), never from the tables: RLS is on with no policy, so `anon`
 -- and `authenticated` get nothing, and the grants are revoked as well in case
 -- RLS is ever switched off by hand.
 

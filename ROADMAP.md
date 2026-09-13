@@ -248,7 +248,7 @@ fin : ce sont elles qui attendent.
 - [x] Projet Supabase UE (2026-09-12).
 - [x] SMTP Supabase → Resend (2026-09-12) : l'envoi intégré de Supabase
       bride les codes OTP.
-- [ ] Tables ci-dessus, RLS sur toutes : `src/luikki/cloud/schema.sql`, collé
+- [x] Tables ci-dessus, RLS sur toutes : `src/luikki/cloud/schema.sql`, collé
       dans l'éditeur SQL. Aucune policy : seul le serveur (`service_role`) lit
       et écrit.
 - [x] Un uuid par page dans `page.json` (et un par appui sur l'étape 5) :
@@ -363,9 +363,8 @@ fin : ce sont elles qui attendent.
       CPU) et tintin (12 cases, 12 bulles, 659 segments, 15 s) ; la fenêtre
       s'ouvre, lit le compte dans le trousseau, se ferme proprement. Reste
       l'icône : l'exécutable a celle de PyInstaller.
-- [ ] Projet d'exemple embarqué : 1 page + character sheet + palette → PSD au
-      premier lancement. Planche dessinée par Raph (2026-09-12) : les
-      `test_pages` sont sous copyright et ne peuvent pas être distribuées.
+- ~~Projet d'exemple embarqué~~ : retiré de B4 (2026-09-13). Il viendra avec
+  un tutoriel interactif, quand l'app sera vendue (section C).
 - [x] Windows : Inno Setup. Non signé pendant les tests (« Informations
       complémentaires → Exécuter quand même »).
       Fait (2026-09-12) : `packaging/luikki.iss` (Inno Setup 6.7), installeur
@@ -377,39 +376,77 @@ fin : ce sont elles qui attendent.
       raccourci créé, tintin jusqu'au PSD dans l'app installée (47 s),
       désinstallation qui retire exe et raccourci et laisse le projet de
       `%LOCALAPPDATA%\Luikki` intact. Pas encore fait : une VM Windows vierge.
-- [ ] Mac : build sur runner macOS GitHub Actions (PyInstaller ne compile pas
+- [x] Mac : build sur runner macOS GitHub Actions (PyInstaller ne compile pas
       en croisé). Signature ad hoc seulement (`codesign -s -`, que PyInstaller
       pose par défaut ; vérifier `codesign -dv` sur le `.app`) : sans aucune
       signature, un binaire arm64 ne se lance pas. DMG. arm64. Notarisation : B6.
+      Fait (2026-09-13), du premier coup : `macos-14`, `Luikki.app`
+      (`BUNDLE` dans `luikki.spec`), `codesign -dv` → `Signature=adhoc`, DMG
+      de 446 Mo. Le test de fumée passe dans le `.app` (4 cases, PSD, 167 s).
+      Reste l'ouverture de la fenêtre sur un vrai Mac (item plus bas).
 - [x] Mode d'emploi testeur, une ligne par OS. Fait (2026-09-12) :
       `packaging/TESTEURS.md`, avec la connexion et où trouver `luikki.log`. Windows : « Informations
       complémentaires → Exécuter quand même ». Mac : ouvrir une fois, puis
       Réglages → Confidentialité et sécurité → « Ouvrir quand même » (depuis
       macOS 15, clic droit → Ouvrir ne suffit plus).
-- [ ] CI : tag `v*` → build Win + Mac → GitHub Releases (gratuit, dépôt
+- [x] CI : tag `v*` → build Win + Mac → GitHub Releases (gratuit, dépôt
       public). Secrets de signature : B6.
-- [ ] Mise à jour : au lancement, la dernière release GitHub (API publique)
+      Fait (2026-09-13) : `.github/workflows/release.yml`. Dépôt passé public
+      le même jour, après un scan de l'historique (aucun secret, aucune image
+      jamais commitée). Les modèles ne sont plus exportés au build :
+      `manga_line.onnx` est l'asset de la release `models-1` (sha256 épinglé
+      dans `models.py`), donc `luikki models` n'a plus besoin de torch. Le test
+      de fumée tourne sur `packaging/synthetic_page.py`, une page dessinée par
+      le code : les `test_pages` sont sous droits et la CI est publique. Lancé
+      à la main, le workflow garde les installeurs en artefacts sans publier.
+- [x] Mise à jour : au lancement, la dernière release GitHub (API publique)
       → bandeau avec le lien. Décidé le 2026-09-12 à la place de
       `GET /v1/version` : sur Modal, la route vit dans le conteneur GPU et
       chaque lancement le réveillerait.
+      Fait (2026-09-13), un cran au-dessus du bandeau : `web/update.py` lit
+      `releases/latest/download/latest.json` (écrit par la CI, hors limite de
+      l'API). Sous Windows, dans la fenêtre, le bouton télécharge
+      l'installeur, vérifie son sha256, le lance en silencieux et ferme
+      l'app ; `luikki.iss` la rouvre. Sur Mac et dans `luikki serve`, le bouton
+      ouvre le téléchargement dans le navigateur. Une copie des sources ne
+      propose rien. Reste à l'éprouver entre deux vraies releases.
 - [ ] Un Mac pour tester : un testeur, ou un Mac loué à l'heure. En attente
       (2026-09-12) : Raph ne peut pas tester sur Mac en direct pour l'instant.
+      Un testeur a le DMG de la CI (2026-09-13) : il vérifie le build, pas
+      l'app.
 - Fait quand : installation sur une VM Windows vierge et sur un vrai Mac, une
   page va jusqu'au PSD.
 
 ### B5 — Stripe, mode test (3–4 j)
 
 - [x] Compte Stripe en mode test (2026-09-12).
-- [ ] Produit « Luikki Cloud », prix mensuel.
-- [ ] Bouton « S'abonner » → `POST /v1/checkout` → `webbrowser.open(url)`,
-      jamais dans pywebview.
-- [ ] Customer Portal activé : résiliation, carte, factures.
+- [x] Produit « Luikki Cloud », prix mensuel. Fait (2026-09-13) : 15 €/mois,
+      provisoire comme le quota ; retrouvé par `lookup_key`
+      (`luikki_cloud_monthly`), pour que test et live lancent le même code.
+      Créé par `cloud/stripe_setup.py`, **dans Modal**
+      (`modal run -m luikki.cloud.modal_app::stripe_setup --testers N`) : la
+      clé ne quitte pas le secret `luikki-stripe`.
+- [x] Bouton « S'abonner » → `POST /v1/checkout` → `webbrowser.open(url)`,
+      jamais dans pywebview. Fait (2026-09-13) : entrée Compte, avec « Gérer
+      l'abonnement » quand il y en a un ; le plan se relit quand la fenêtre
+      reprend le focus. Serveur : `cloud/billing.py`, sur une fonction Modal
+      **sans GPU** (`billing`), pour que ni une page de paiement ni un webhook
+      ne réveillent la L4.
+- [x] Customer Portal activé : résiliation, carte, factures. Résiliation
+      immédiate en mode test (le test doit voir l'accès tomber), en fin de
+      période en live.
 - [ ] Webhooks → `subscriptions` ; tester résiliation et paiement refusé.
-- [ ] Codes testeurs : coupon 100 %, `duration=repeating` (3 mois) ; Promotion
+      Code déployé (2026-09-13) : `customer.subscription.*`, l'abonnement est
+      relu chez Stripe avant d'écrire (les événements arrivent dans le
+      désordre), `period_end` + 1 jour de grâce pour un renouvellement en
+      retard. Reste : l'endpoint dans le dashboard, `STRIPE_WEBHOOK_SECRET`
+      dans le secret, puis le test de bout en bout.
+- [x] Codes testeurs : coupon 100 %, `duration=repeating` (3 mois) ; Promotion
       Codes `TESTEUR-XXXX` avec `max_redemptions` et `expires_at`. Pas de carte
       demandée grâce à `payment_method_collection="if_required"`.
+      Fait (2026-09-13) : 5 codes à usage unique, 60 jours pour s'en servir.
 - [ ] Offre fondateur : un autre coupon, même mécanique (remplace les
-      « licences fondateur »).
+      « licences fondateur »). Conditions à décider.
 - Fait quand : un testeur s'abonne avec un code sans carte, résilie via le
   portail, et perd l'accès.
 
@@ -464,7 +501,10 @@ fin : ce sont elles qui attendent.
       à jour du modèle doit pouvoir dire pourquoi elle a changé.
 - [ ] Retrieval CLIP côté client (ONNX) seulement si « vos références ne
       quittent pas votre machine » devient un argument de vente.
-- [ ] Mise à jour automatique à la place du bandeau.
+- [ ] Mise à jour sur Mac sans passer par le navigateur, une fois l'app
+      notarisée (B6). Windows l'a déjà (B4).
+- [ ] Tutoriel interactif sur une planche d'exemple dessinée par Raph (retiré
+      de B4 le 2026-09-13).
 - [ ] **[€]** Stockage objet (R2 / Scaleway) si GitHub Releases ne suffit plus.
 
 ## D — Site + vidéos (parallèle, dès maintenant)
