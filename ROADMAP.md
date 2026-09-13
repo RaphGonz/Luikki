@@ -457,6 +457,11 @@ fin : ce sont elles qui attendent.
       fraude, litiges ; logiciels et SaaS admissibles) **si** la France est dans
       les pays éligibles — la liste ne s'affiche qu'au navigateur, vérifier dans
       le dashboard. Sinon Stripe Tax.
+      Constaté en test (2026-09-13) : Managed Payments est activé par défaut
+      sur le compte, et refuse un Checkout dont le produit n'a pas de code
+      fiscal éligible. `stripe_setup` pose `txcd_10103101` (SaaS,
+      téléchargement, usage pro) et essaie une session avant de finir. Reste à
+      le confirmer en live.
 - [x] ~~**[€]** Comptable~~ — pas besoin, vérifié par Raph (2026-09-11) : franchise en base de TVA ; seuil de 10 000 € de
       ventes B2C à des particuliers UE hors France, au-delà duquel la TVA du pays
       client s'applique (guichet OSS) ; activité déclarée qui couvre la vente
