@@ -5,7 +5,9 @@
 Run in Modal with the `luikki-stripe` secret, so the key never sits on a
 laptop. Safe to rerun: each object is looked up before it is made, except the
 testers' promotion codes, of which every run makes `--testers` new ones. Live
-mode (B6) is the same run once the secret holds the live key.
+mode (B6) is the same run once the secret holds the live key. Last, it opens a
+checkout with the server's own options and closes it again, so whatever Stripe
+refuses shows here and not when a tester presses Subscribe.
 
 Not made here: the webhook endpoint. Its signing secret is shown once, and
 belongs in the Modal secret (`STRIPE_WEBHOOK_SECRET`), not in a run's log.
@@ -18,9 +20,17 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from .billing import PORTAL_METADATA, PRICE_LOOKUP_KEY, as_dict
+from ..billing import BILLING_URL
+from .billing import PORTAL_METADATA, PRICE_LOOKUP_KEY, as_dict, checkout_options
 
 PRODUCT_ID = "luikki_cloud"
+# What Luikki Cloud is, for tax: a downloaded app whose generation runs as a
+# service in the cloud, sold to professionals ("SaaS - electronic download -
+# business use"). Managed Payments, on by default on the account, refuses a
+# checkout for a product without an eligible code
+# (docs.stripe.com/payments/managed-payments/eligibility). Business or personal
+# use only matters for sales in the US.
+TAX_CODE = "txcd_10103101"
 # Provisional, like the quota: fixed once a page's real cost is measured (ROADMAP C).
 MONTHLY_CENTS = 1500
 CURRENCY = "eur"
@@ -33,11 +43,14 @@ CODE_DAYS = 60
 def ensure(stripe: Any, testers: int = 0, log: Callable[[str], None] = print) -> list[str]:
     """Make whatever is missing; return the new testers' codes."""
     product = _product(stripe)
-    log(f"product {product.id} ({'live' if product.livemode else 'test'} mode)")
-    log(f"price {_price(stripe).id} ({PRICE_LOOKUP_KEY})")
+    log(f"product {product.id} ({'live' if product.livemode else 'test'} mode, tax code {product.tax_code})")
+    price = _price(stripe)
+    log(f"price {price.id} ({PRICE_LOOKUP_KEY})")
     log(f"portal {_portal(stripe, live=product.livemode).id}")
     coupon = _coupon(stripe)
     log(f"coupon {coupon.id}")
+    _try_checkout(stripe, price.id)
+    log("checkout accepted")
     codes = [_code(stripe, coupon.id) for _ in range(testers)]
     for code in codes:
         log(f"code {code}")
@@ -46,9 +59,12 @@ def ensure(stripe: Any, testers: int = 0, log: Callable[[str], None] = print) ->
 
 def _product(stripe: Any):
     try:
-        return stripe.Product.retrieve(PRODUCT_ID)
+        product = stripe.Product.retrieve(PRODUCT_ID)
     except stripe.InvalidRequestError:
-        return stripe.Product.create(id=PRODUCT_ID, name="Luikki Cloud")
+        return stripe.Product.create(id=PRODUCT_ID, name="Luikki Cloud", tax_code=TAX_CODE)
+    if product.tax_code != TAX_CODE:
+        product = stripe.Product.modify(PRODUCT_ID, tax_code=TAX_CODE)
+    return product
 
 
 def _price(stripe: Any):
@@ -94,6 +110,12 @@ def _coupon(stripe: Any):
             duration="repeating",
             duration_in_months=TESTER_MONTHS,
         )
+
+
+def _try_checkout(stripe: Any, price: str) -> None:
+    """Open a checkout the way the server does, then expire it unused."""
+    session = stripe.checkout.Session.create(**checkout_options(price, "stripe-setup-check", BILLING_URL))
+    stripe.checkout.Session.expire(session.id)
 
 
 def _code(stripe: Any, coupon: str) -> str:

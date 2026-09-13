@@ -63,6 +63,27 @@ def as_dict(stripe_object: Any) -> dict:
     return json.loads(str(stripe_object))
 
 
+def checkout_options(price: str, user: str, base_url: str, customer: str | None = None) -> dict:
+    """The Checkout Session a subscription starts from. `stripe_setup` opens one
+    with these same options, so what Stripe refuses shows at setup, not when a
+    tester presses Subscribe."""
+    options = {
+        "mode": "subscription",
+        "line_items": [{"price": price, "quantity": 1}],
+        "client_reference_id": user,
+        # Carried by every subscription event, so the webhook knows the
+        # account without looking anything up.
+        "subscription_data": {"metadata": {"user_id": user}},
+        "allow_promotion_codes": True,
+        "payment_method_collection": "if_required",
+        "success_url": base_url + DONE_ROUTE,
+        "cancel_url": base_url + DONE_ROUTE,
+    }
+    if customer:
+        options["customer"] = customer
+    return options
+
+
 def _refuse(status: int, code: str, **params) -> JSONResponse:
     return JSONResponse({"code": code, "params": params}, status_code=status)
 
@@ -173,20 +194,7 @@ def create_billing(
         customer = row.get("stripe_customer_id")
         if customer and _active(row):
             raise Refused(409, "already_subscribed")
-        options = {
-            "mode": "subscription",
-            "line_items": [{"price": price(), "quantity": 1}],
-            "client_reference_id": user,
-            # Carried by every subscription event, so the webhook knows the
-            # account without looking anything up.
-            "subscription_data": {"metadata": {"user_id": user}},
-            "allow_promotion_codes": True,
-            "payment_method_collection": "if_required",
-            "success_url": base_url + DONE_ROUTE,
-            "cancel_url": base_url + DONE_ROUTE,
-        }
-        if customer:
-            options["customer"] = customer
+        options = checkout_options(price(), user, base_url, customer)
         return {"url": ask_stripe(stripe.checkout.Session.create, **options).url}
 
     @app.post(PORTAL_ROUTE)
