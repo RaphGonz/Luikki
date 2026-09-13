@@ -1113,6 +1113,7 @@ function stepBody(id) {
         colourMode(),
         ...gpuNotes(),
         runButton("flats", t("run.flats"), t("run.flats.again"), gpuBlock()),
+        gpu?.remote ? monthLeft(gpu.quota) : null,
       ];
     case "snap": {
       const snappable = state.segments.snappable;
@@ -1430,7 +1431,7 @@ function planNotes() {
   if (quota.plan === "tester") plan = note(t("account.plan_tester"));
   if (quota.plan === "studio") plan = note(t("account.plan_studio"));
   if (quota.plan === "luikki") plan = note(t("account.plan_luikki", { date: fmt.date(quota.colours_until) }));
-  return [plan, ...panelNotes(quota), quota.plan === "tester" ? null : note(t("account.code_hint"))];
+  return [plan, totalCases(quota), monthLeft(quota), quota.plan === "tester" ? null : note(t("account.code_hint"))];
 }
 
 // What this account can buy now. Stripe's page shows the price.
@@ -1504,15 +1505,18 @@ function gpuBlock() {
   return null;
 }
 
-// What is left to paint with: the month's panels first, then bought ones.
-// Every panel generated is one panel, a second try included.
-function panelNotes(quota) {
-  const left = Math.max(0, quota.cases_per_month - quota.cases_used);
-  return [
-    quota.cases_per_month > 0 ? note(t("flats.cases_left", { count: left, limit: quota.cases_per_month })) : null,
-    quota.credits > 0 ? note(t("flats.credits", { count: quota.credits })) : null,
-    quota.active && left === 0 && quota.credits <= 0 ? note(t("flats.cases_out"), true) : null,
-  ];
+// Counts, not sentences: the month's panels left, and every panel the account
+// can still generate (the month's, then bought ones). Every panel generated is
+// one panel, a second try included.
+const monthCases = (quota) => (quota.plan ? Math.max(0, quota.cases_per_month - quota.cases_used) : 0);
+
+function monthLeft(quota) {
+  if (!quota || !quota.plan) return null;
+  return note(t("flats.month_left", { left: fmt.number(monthCases(quota)), limit: fmt.number(quota.cases_per_month) }));
+}
+
+function totalCases(quota) {
+  return note(t("account.total_cases", { total: fmt.number(monthCases(quota) + Math.max(0, quota.credits)) }));
 }
 
 function gpuNotes() {
@@ -1522,8 +1526,7 @@ function gpuNotes() {
     const next = gpu.needs_sign_in ? t("account.sign_in") : t("account.buy");
     return [note(blocked, true), h("div", { class: "row" }, button(next, { key: "flats-account", onclick: openAccount }))];
   }
-  if (gpu.signed_in && !gpu.quota) return [note(t("flats.quota_unknown"))];
-  return gpu.quota ? panelNotes(gpu.quota) : [];
+  return gpu.signed_in && !gpu.quota ? [note(t("flats.quota_unknown"))] : [];
 }
 
 // Cobra or distinct colours, chosen by the artist and never swapped behind

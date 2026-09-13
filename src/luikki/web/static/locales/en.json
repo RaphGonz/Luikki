@@ -27,6 +27,7 @@
   "account.plan_none": "No colours on this account. Step 5 can still use distinct colours, for free.",
   "account.plan_studio": "Luikki Studio subscription active.",
   "account.plan_tester": "Tester account: flats on the GPU are on us.",
+  "account.total_cases": "Total panels available: {total}",
 
   "ask.bubbles": "Detect bubbles",
   "ask.delete_page": "Delete the page",
@@ -181,15 +182,7 @@
     "one": "{count} segment, with a proposed colour.",
     "other": "{count} segments, each with a proposed colour."
   },
-  "flats.cases_left": {
-    "one": "{count} panel left this month, out of {limit}. Each generated panel counts, a second try included.",
-    "other": "{count} panels left this month, out of {limit}. Each generated panel counts, a second try included."
-  },
-  "flats.cases_out": "No panels left: the GPU will refuse. Buy a pack from Account, or choose distinct colours.",
-  "flats.credits": {
-    "one": "{count} bought panel, which never expires.",
-    "other": "{count} bought panels, which never expire."
-  },
+  "flats.month_left": "Panels left this month: {left}/{limit}",
   "flats.mode": "Colours",
   "flats.mode_distinct": "Distinct colours, free",
   "flats.mode_remote": "Cobra, from your references",

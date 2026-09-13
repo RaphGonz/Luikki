@@ -27,6 +27,7 @@
   "account.plan_none": "Aucune couleur sur ce compte. L'étape 5 peut toujours utiliser les couleurs distinctes, gratuites.",
   "account.plan_studio": "Abonnement Luikki Studio actif.",
   "account.plan_tester": "Compte testeur : les aplats sur le GPU sont offerts.",
+  "account.total_cases": "Total de cases disponibles : {total}",
 
   "ask.bubbles": "Détecter les bulles",
   "ask.delete_page": "Supprimer la planche",
@@ -178,15 +179,7 @@
     "one": "{count} segment, avec une couleur proposée.",
     "other": "{count} segments, chacun avec une couleur proposée."
   },
-  "flats.cases_left": {
-    "one": "{count} case restante ce mois-ci, sur {limit}. Chaque case générée compte, relance comprise.",
-    "other": "{count} cases restantes ce mois-ci, sur {limit}. Chaque case générée compte, relance comprise."
-  },
-  "flats.cases_out": "Plus de cases : le GPU refusera. Achetez un pack depuis Compte, ou choisissez les couleurs distinctes.",
-  "flats.credits": {
-    "one": "{count} case achetée, qui n'expire jamais.",
-    "other": "{count} cases achetées, qui n'expirent jamais."
-  },
+  "flats.month_left": "Cases restantes ce mois-ci : {left}/{limit}",
   "flats.mode": "Couleurs",
   "flats.mode_distinct": "Couleurs distinctes, gratuites",
   "flats.mode_remote": "Cobra, d'après vos références",
