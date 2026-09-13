@@ -60,6 +60,9 @@ Name: "{autodesktop}\Luikki"; Filename: "{app}\Luikki.exe"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\Luikki.exe"; Description: "{cm:LaunchProgram,Luikki}"; Flags: nowait postinstall skipifsilent
+; An update pressed in the app runs silently, and the app closed for it
+; (`web/update.py`): open it again.
+Filename: "{app}\Luikki.exe"; Flags: nowait; Check: WizardSilent
 
 [Code]
 // WebView2 comes with Windows 11 and, through Windows Update, with most of

@@ -133,6 +133,10 @@ button, input, select { font: inherit; color: inherit; }
   text-overflow: ellipsis;
 }
 .header .btn.icon { margin-inline-start: auto; }
+/* A new version, offered once at launch: it takes the free space, and the
+   inspector toggle sits right after it. */
+.header .update { margin-inline-start: auto; }
+.header .update:not([hidden]) + .btn.icon { margin-inline-start: 0; }
 
 .rail {
   overflow-y: auto;

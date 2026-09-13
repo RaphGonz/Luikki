@@ -100,7 +100,11 @@ def run(app, debug: bool = False) -> None:
     # The PSD export is a download. Allowed, it opens the system's Save dialog;
     # pywebview's default cancels it without a word.
     webview.settings["ALLOW_DOWNLOADS"] = True
-    webview.create_window("Luikki", server.url, maximized=True, text_select=True)
+    window = webview.create_window("Luikki", server.url, maximized=True, text_select=True)
+    updater = getattr(app.state, "updater", None)
+    if updater is not None:
+        # An update replaces this very program: the app closes for its installer.
+        updater.quit = window.destroy
     try:
         webview.start(
             debug=debug,

@@ -116,6 +116,9 @@
   "error.gpu_unauthorized": "Le serveur GPU n'a pas accepté la session de cet ordinateur. Déconnectez-vous, puis reconnectez-vous.",
   "error.gpu_unreachable": "Le serveur GPU ne répond pas. Vérifiez la connexion et réessayez.",
   "error.gpu_update": "Cette version de Luikki est trop ancienne pour le serveur GPU. Mettez l'app à jour.",
+  "error.update_corrupt": "Le fichier téléchargé n'est pas la mise à jour publiée : il n'a pas été installé. Réessayez.",
+  "error.update_download": "La mise à jour n'a pas pu être téléchargée. Vérifiez la connexion et réessayez.",
+  "error.update_none": "Aucune version plus récente à installer.",
   "error.granularity_unknown": "{value} n'est pas une façon d'empiler les calques du PSD.",
   "error.image_empty": "Cette image n'a aucune couleur à prendre.",
   "error.image_unreadable": "Impossible de lire cette image : {detail}",
@@ -351,6 +354,8 @@
   "status.snapped": "Zone {zone} calée.",
   "status.start": "Chargez une planche pour commencer.",
   "status.unsnapped": "La zone {zone} reprend sa couleur proposée.",
+  "status.update_opened": "Luikki {version} se télécharge dans votre navigateur. Ouvrez le fichier pour l'installer.",
+  "status.updating": "Luikki {version} s'installe. L'app se ferme, puis se rouvre toute seule.",
   "status.zone_selected": { "one": "{count} zone sélectionnée.", "other": "{count} zones sélectionnées." },
 
   "toggle.left": "Reste à caler",
@@ -364,6 +369,9 @@
   "upload.hint": "Une planche de trait, en fichier image.",
   "upload.page": "{name}, {width} × {height} pixels",
   "upload.run": "Charger la planche",
+
+  "update.download": "Télécharger Luikki {version}",
+  "update.install": "Mettre à jour ({version})",
 
   "work.bubbles": "Détection des bulles",
   "work.delete_page": "Suppression de la planche",
@@ -379,6 +387,7 @@
   "work.sign_in": "Connexion",
   "work.sign_out": "Déconnexion",
   "work.snap_all": "Calage de toutes les zones",
+  "work.update": "Téléchargement de la mise à jour",
   "work.zones": "Segmentation des zones",
 
   "zones.gap": "Plus grand trou à couper, en % d'une bordure",

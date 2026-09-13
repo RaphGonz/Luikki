@@ -119,6 +119,9 @@
   "error.gpu_unauthorized": "The GPU server did not accept this computer's session. Sign out, then sign in again.",
   "error.gpu_unreachable": "The GPU server does not answer. Check the connection and try again.",
   "error.gpu_update": "This version of Luikki is too old for the GPU server. Update the app.",
+  "error.update_corrupt": "The file downloaded is not the published update, so it was not installed. Try again.",
+  "error.update_download": "The update could not be downloaded. Check the connection and try again.",
+  "error.update_none": "There is no newer version to install.",
   "error.granularity_unknown": "{value} is not a way to stack the PSD layers.",
   "error.image_empty": "That image has no colours to take.",
   "error.image_unreadable": "That image could not be read: {detail}",
@@ -354,6 +357,8 @@
   "status.snapped": "Zone {zone} snapped.",
   "status.start": "Upload a page to start.",
   "status.unsnapped": "Zone {zone} is back to its proposed colour.",
+  "status.update_opened": "Luikki {version} is downloading in your browser. Open the file to install it.",
+  "status.updating": "Luikki {version} is installing. The app closes, then opens again by itself.",
   "status.zone_selected": { "one": "{count} zone selected.", "other": "{count} zones selected." },
 
   "toggle.left": "Left to snap",
@@ -367,6 +372,9 @@
   "upload.hint": "One page of line art, as an image file.",
   "upload.page": "{name}, {width} × {height} pixels",
   "upload.run": "Upload page",
+
+  "update.download": "Download Luikki {version}",
+  "update.install": "Update to {version}",
 
   "work.bubbles": "Detecting bubbles",
   "work.delete_page": "Deleting the page",
@@ -382,6 +390,7 @@
   "work.sign_in": "Signing in",
   "work.sign_out": "Signing out",
   "work.snap_all": "Snapping every zone",
+  "work.update": "Downloading the update",
   "work.zones": "Segmenting zones",
 
   "zones.gap": "Largest gap to cut across, in % of a border",

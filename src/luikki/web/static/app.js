@@ -952,6 +952,45 @@ function renderAll() {
 function renderHeader() {
   $("page-name").textContent = state.page ? state.page.name : t("header.no_page");
   document.title = state.page ? t("header.title", { page: state.page.name }) : "Luikki";
+  renderUpdate();
+}
+
+// A new version, asked once at launch (`/api/update`) and offered in the
+// header. Nothing is installed without a press, and a check that fails
+// offers nothing: the app works the same without it.
+let update = null;
+
+async function checkUpdate() {
+  try {
+    update = await call("/api/update");
+  } catch {
+    update = null;
+  }
+  renderUpdate();
+}
+
+function renderUpdate() {
+  const slot = $("update");
+  slot.hidden = !update?.available;
+  if (slot.hidden) return;
+  const label = update.install
+    ? t("update.install", { version: update.version })
+    : t("update.download", { version: update.version });
+  slot.replaceChildren(button(label, { kind: "primary", key: "update", onclick: installUpdate }));
+}
+
+async function installUpdate() {
+  if (work.timer) return;
+  try {
+    await working(t("work.update"), true, () => call("/api/update", { method: "POST" }));
+    say(
+      update.install
+        ? t("status.updating", { version: update.version })
+        : t("status.update_opened", { version: update.version }),
+    );
+  } catch (error) {
+    say(error.message, true);
+  }
 }
 
 function renderRail() {
@@ -3100,4 +3139,5 @@ new ResizeObserver(resize).observe(stage);
   renderAll();
   say(state.page ? t("status.ready") : t("status.start"));
   refreshGpu();
+  checkUpdate();
 })();

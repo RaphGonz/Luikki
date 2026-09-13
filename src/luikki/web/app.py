@@ -32,6 +32,7 @@ from pydantic import BaseModel
 
 from .project import default_workdir
 from .session import Session, StepError
+from .update import Updater
 
 
 class Shape(BaseModel):
@@ -173,6 +174,7 @@ def create_app(
     proposer=None,
     extractor=None,
     account: Account | None = None,
+    updater: Updater | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Luikki")
     workdir = Path(workdir) if workdir else default_workdir()
@@ -184,6 +186,8 @@ def create_app(
         account=account,
     )
     app.state.session = session
+    updater = updater or Updater()
+    app.state.updater = updater
 
     def _png(rgba: np.ndarray) -> Response:
         buffer = io.BytesIO()
@@ -210,6 +214,20 @@ def create_app(
         holds the session lock for its whole run, and this route answers
         while it does."""
         return session.progress.snapshot()
+
+    # -- updates ---------------------------------------------------------
+    #
+    # Here and not in the browser: the installer is downloaded, checked and
+    # started by this process, which is the one it replaces.
+
+    @app.get("/api/update")
+    def update_check():
+        return updater.check()
+
+    @app.post("/api/update")
+    def update_install():
+        updater.install(session.progress)
+        return {}
 
     # -- the account -----------------------------------------------------
     #
