@@ -59,9 +59,11 @@ def test_two_servers_each_take_a_free_port_and_stop(tmp_path):
 
 def test_the_window_opens_on_the_server_and_closing_it_stops_the_server(tmp_path, monkeypatch):
     seen = {}
+    window = types.SimpleNamespace(destroy=lambda: None)
 
     def create_window(title, url, **options):
         seen["url"] = url
+        return window
 
     def start(**options):
         # The window is open for as long as this runs.
@@ -70,9 +72,12 @@ def test_the_window_opens_on_the_server_and_closing_it_stops_the_server(tmp_path
 
     fake = types.SimpleNamespace(settings={}, create_window=create_window, start=start)
     monkeypatch.setitem(sys.modules, "webview", fake)
+    app = _app(tmp_path)
 
-    desktop.run(_app(tmp_path))
+    desktop.run(app)
 
+    # An update closes this window for its installer (`web/update.py`).
+    assert app.state.updater.quit == window.destroy
     assert seen["url"].startswith("http://127.0.0.1:")
     assert seen["answer"] == 200
     # The PSD export is a download, which pywebview cancels unless told otherwise.
