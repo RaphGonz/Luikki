@@ -23,6 +23,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
+from .. import billing
 from ..account import Account, AccountError
 from ..colour.extract import EmptyImageError
 from ..colour.references import UnknownKind
@@ -248,6 +249,19 @@ def create_app(
     def sign_out():
         session.account.sign_out()
         return session.state()
+
+    # Stripe's pages open in the system browser, asked for from here: this
+    # process holds the session they are asked for with.
+
+    @app.post("/api/account/subscribe")
+    def subscribe():
+        billing.subscribe(session.account)
+        return {}
+
+    @app.post("/api/account/manage")
+    def manage_subscription():
+        billing.manage(session.account)
+        return {}
 
     @app.get("/api/account/status")
     def gpu_status():

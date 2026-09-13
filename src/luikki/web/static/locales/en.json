@@ -15,6 +15,12 @@
   "account.signed_in": "Signed in as {email}.",
   "account.stays": "This computer stays signed in until you sign out.",
   "account.why": "Sign in to generate flats on the GPU. You type a code once on this computer, and it stays signed in.",
+  "account.code_hint": "Have a tester code? Type it on the payment page, and no card is asked for.",
+  "account.manage": "Manage the subscription",
+  "account.plan_none": "This account has no subscription. Flats on the GPU need one.",
+  "account.plan_paid": "Luikki Cloud subscription active.",
+  "account.plan_tester": "Tester account: flats on the GPU are on us.",
+  "account.subscribe": "Subscribe",
 
   "ask.bubbles": "Detect bubbles",
   "ask.delete_page": "Delete the page",
@@ -122,6 +128,9 @@
   "error.update_corrupt": "The file downloaded is not the published update, so it was not installed. Try again.",
   "error.update_download": "The update could not be downloaded. Check the connection and try again.",
   "error.update_none": "There is no newer version to install.",
+  "error.already_subscribed": "This account already has a subscription. Manage it from Account.",
+  "error.billing_unreachable": "The payment server does not answer. Check the connection and try again.",
+  "error.no_customer": "This account has no subscription to manage.",
   "error.granularity_unknown": "{value} is not a way to stack the PSD layers.",
   "error.image_empty": "That image has no colours to take.",
   "error.image_unreadable": "That image could not be read: {detail}",
@@ -359,6 +368,7 @@
   "status.unsnapped": "Zone {zone} is back to its proposed colour.",
   "status.update_opened": "Luikki {version} is downloading in your browser. Open the file to install it.",
   "status.updating": "Luikki {version} is installing. The app closes, then opens again by itself.",
+  "status.billing_opened": "The page opened in your browser. Come back here once you are done.",
   "status.zone_selected": { "one": "{count} zone selected.", "other": "{count} zones selected." },
 
   "toggle.left": "Left to snap",
@@ -391,6 +401,7 @@
   "work.sign_out": "Signing out",
   "work.snap_all": "Snapping every zone",
   "work.update": "Downloading the update",
+  "work.billing": "Opening Stripe",
   "work.zones": "Segmenting zones",
 
   "zones.gap": "Largest gap to cut across, in % of a border",

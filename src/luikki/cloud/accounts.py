@@ -69,6 +69,15 @@ def client_ip(forwarded: str | None, peer: str | None) -> str:
     return "0.0.0.0"
 
 
+def supabase_headers(secret_key: str) -> dict:
+    """A secret key (`sb_secret_…`) is not a JWT and goes on `apikey` alone;
+    a legacy `service_role` key is one, and goes on both."""
+    headers = {"apikey": secret_key}
+    if not secret_key.startswith("sb_"):
+        headers["authorization"] = f"Bearer {secret_key}"
+    return headers
+
+
 class TokenVerifier:
     def __init__(self, project_url: str, signing_key: Callable[[str], Any] | None = None):
         """`signing_key` maps a token to the key that must have signed it; tests
@@ -111,11 +120,7 @@ class Ledger:
         import httpx
 
         self.base = project_url.rstrip("/") + "/rest/v1/rpc/"
-        # A secret key (`sb_secret_…`) is not a JWT and goes on `apikey` alone;
-        # a legacy `service_role` key is one, and goes on both.
-        self.headers = {"apikey": secret_key}
-        if not secret_key.startswith("sb_"):
-            self.headers["authorization"] = f"Bearer {secret_key}"
+        self.headers = supabase_headers(secret_key)
         self.client = client or httpx.Client(timeout=15.0)
         self.attempts = attempts
 

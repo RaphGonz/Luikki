@@ -1,11 +1,14 @@
-"""Cobra on Modal: `cloud/server.py` on an L4, the weights in a Volume.
+"""Luikki on Modal: Cobra on an L4, and the billing endpoint on a CPU.
 
-    # in the dashboard: luikki-supabase, SUPABASE_URL + SUPABASE_SECRET_KEY
-    modal run -m luikki.cloud.modal_app::download    # once: weights into the Volume
-    modal deploy -m luikki.cloud.modal_app           # prints the endpoint URL
+    # in the dashboard: luikki-supabase (SUPABASE_URL, SUPABASE_SECRET_KEY)
+    #                   luikki-stripe (STRIPE_SECRET_KEY, then STRIPE_WEBHOOK_SECRET)
+    modal run -m luikki.cloud.modal_app::download        # once: weights into the Volume
+    modal run -m luikki.cloud.modal_app::stripe_setup    # once per Stripe mode, --testers N for codes
+    modal deploy -m luikki.cloud.modal_app               # prints both endpoint URLs
 
-Then write that URL into `REMOTE_URL` (`colour/remote.py`), or set
-`LUIKKI_REMOTE_URL` to try another deployment, and sign in from Account.
+Then write the URLs into `REMOTE_URL` (`colour/remote.py`) and `BILLING_URL`
+(`billing.py`), or set `LUIKKI_REMOTE_URL` / `LUIKKI_BILLING_URL` to try another
+deployment, and sign in from Account.
 
 Only the standard library and `modal` at module level: Modal imports this file
 again inside the container, before anything is known about what it holds.
@@ -24,6 +27,8 @@ WEIGHTS_DIR = "/weights"
 
 app = modal.App("luikki-cobra")
 weights = modal.Volume.from_name("luikki-weights", create_if_missing=True)
+supabase = modal.Secret.from_name("luikki-supabase", required_keys=["SUPABASE_URL", "SUPABASE_SECRET_KEY"])
+stripe_keys = modal.Secret.from_name("luikki-stripe", required_keys=["STRIPE_SECRET_KEY"])
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
@@ -58,6 +63,13 @@ image = (
     .add_local_python_source("luikki")
 )
 
+# The billing endpoint's: no torch and no GPU, so a cold start takes seconds.
+billing_image = (
+    modal.Image.debian_slim(python_version="3.11")
+    .pip_install("fastapi", "httpx", "pyjwt[crypto]", "stripe==15.6.1")
+    .add_local_python_source("luikki")
+)
+
 
 @app.function(image=image, volumes={WEIGHTS_DIR: weights}, timeout=3600)
 def download() -> None:
@@ -75,7 +87,7 @@ def download() -> None:
     image=image,
     gpu="L4",
     volumes={WEIGHTS_DIR: weights},
-    secrets=[modal.Secret.from_name("luikki-supabase", required_keys=["SUPABASE_URL", "SUPABASE_SECRET_KEY"])],
+    secrets=[supabase],
     # Serving reads the Volume and nothing else: a missing file fails the
     # load instead of quietly downloading on a paid GPU.
     env={"HF_HUB_OFFLINE": "1"},
@@ -84,8 +96,9 @@ def download() -> None:
     # (teddy, 3 panels) held the container 6 min: ~1 min of cold start and
     # generation, 5 min idle — ~$0.08 on an L4, five sixths of it waiting.
     scaledown_window=120,
-    # The quota caps each account; one GPU caps the whole bill.
-    max_containers=1,
+    # The quota caps each account; the GPUs cap the whole bill. Two, so a
+    # tester is not left waiting behind another's whole page.
+    max_containers=2,
     timeout=600,
     startup_timeout=900,
 )
@@ -109,3 +122,33 @@ class Cobra:
             verifier=TokenVerifier(project),
             ledger=Ledger(project, os.environ["SUPABASE_SECRET_KEY"]),
         )
+
+
+@app.function(image=billing_image, secrets=[supabase, stripe_keys])
+@modal.asgi_app()
+def billing():
+    import stripe
+
+    from luikki.billing import BILLING_URL
+    from luikki.cloud.accounts import TokenVerifier
+    from luikki.cloud.billing import Subscriptions, create_billing
+
+    stripe.api_key = os.environ["STRIPE_SECRET_KEY"]
+    project = os.environ["SUPABASE_URL"]
+    return create_billing(
+        stripe,
+        verifier=TokenVerifier(project),
+        subscriptions=Subscriptions(project, os.environ["SUPABASE_SECRET_KEY"]),
+        webhook_secret=os.environ.get("STRIPE_WEBHOOK_SECRET", ""),
+        base_url=BILLING_URL,
+    )
+
+
+@app.function(image=billing_image, secrets=[stripe_keys])
+def stripe_setup(testers: int = 0) -> None:
+    import stripe
+
+    from luikki.cloud.stripe_setup import ensure
+
+    stripe.api_key = os.environ["STRIPE_SECRET_KEY"]
+    ensure(stripe, testers)

@@ -15,6 +15,12 @@
   "account.signed_in": "Connecté en tant que {email}.",
   "account.stays": "Cet ordinateur reste connecté jusqu'à ce que vous vous déconnectiez.",
   "account.why": "Connectez-vous pour générer les aplats sur le GPU. Le code se tape une seule fois sur cet ordinateur, qui reste connecté.",
+  "account.code_hint": "Un code testeur ? Saisissez-le sur la page de paiement : aucune carte n'est demandée.",
+  "account.manage": "Gérer l'abonnement",
+  "account.plan_none": "Ce compte n'a pas d'abonnement. Les aplats sur le GPU en demandent un.",
+  "account.plan_paid": "Abonnement Luikki Cloud actif.",
+  "account.plan_tester": "Compte testeur : les aplats sur le GPU sont offerts.",
+  "account.subscribe": "S'abonner",
 
   "ask.bubbles": "Détecter les bulles",
   "ask.delete_page": "Supprimer la planche",
@@ -119,6 +125,9 @@
   "error.update_corrupt": "Le fichier téléchargé n'est pas la mise à jour publiée : il n'a pas été installé. Réessayez.",
   "error.update_download": "La mise à jour n'a pas pu être téléchargée. Vérifiez la connexion et réessayez.",
   "error.update_none": "Aucune version plus récente à installer.",
+  "error.already_subscribed": "Ce compte a déjà un abonnement. Gérez-le depuis Compte.",
+  "error.billing_unreachable": "Le serveur de paiement ne répond pas. Vérifiez la connexion et réessayez.",
+  "error.no_customer": "Ce compte n'a pas d'abonnement à gérer.",
   "error.granularity_unknown": "{value} n'est pas une façon d'empiler les calques du PSD.",
   "error.image_empty": "Cette image n'a aucune couleur à prendre.",
   "error.image_unreadable": "Impossible de lire cette image : {detail}",
@@ -356,6 +365,7 @@
   "status.unsnapped": "La zone {zone} reprend sa couleur proposée.",
   "status.update_opened": "Luikki {version} se télécharge dans votre navigateur. Ouvrez le fichier pour l'installer.",
   "status.updating": "Luikki {version} s'installe. L'app se ferme, puis se rouvre toute seule.",
+  "status.billing_opened": "La page s'est ouverte dans votre navigateur. Revenez ici une fois terminé.",
   "status.zone_selected": { "one": "{count} zone sélectionnée.", "other": "{count} zones sélectionnées." },
 
   "toggle.left": "Reste à caler",
@@ -388,6 +398,7 @@
   "work.sign_out": "Déconnexion",
   "work.snap_all": "Calage de toutes les zones",
   "work.update": "Téléchargement de la mise à jour",
+  "work.billing": "Ouverture de Stripe",
   "work.zones": "Segmentation des zones",
 
   "zones.gap": "Plus grand trou à couper, en % d'une bordure",

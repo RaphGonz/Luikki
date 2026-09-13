@@ -1364,8 +1364,9 @@ function accountView() {
         heading(t("book.account")),
         note(t("account.signed_in", { email: state.account.email })),
         note(t("account.stays")),
+        ...planNotes(),
       ],
-      [button(t("account.sign_out"), { key: "account-out", onclick: signOut })],
+      [...planButtons(), button(t("account.sign_out"), { key: "account-out", onclick: signOut })],
     ];
   }
   const input = (name, label, props) =>
@@ -1418,6 +1419,41 @@ function accountView() {
   ];
 }
 
+// The plan, as `my_status` tells it (`gpu.quota`). Unknown says nothing: the
+// GPU server decides at the press either way.
+function planNotes() {
+  const quota = gpu?.quota;
+  if (!quota) return [];
+  if (!quota.active) return [note(t("account.plan_none")), note(t("account.code_hint"))];
+  return [note(quota.plan === "tester" ? t("account.plan_tester") : t("account.plan_paid"))];
+}
+
+function planButtons() {
+  const quota = gpu?.quota;
+  if (!quota || (quota.active && quota.plan === "tester")) return [];
+  if (!quota.active) {
+    return [
+      button(t("account.subscribe"), {
+        kind: "primary",
+        key: "account-subscribe",
+        onclick: () => openBilling("/api/account/subscribe"),
+      }),
+    ];
+  }
+  return [button(t("account.manage"), { key: "account-manage", onclick: () => openBilling("/api/account/manage") })];
+}
+
+// Stripe's page opens in the browser. What it changes is read again when the
+// artist comes back to this window (the `focus` listener).
+async function openBilling(path) {
+  try {
+    await accountCall(t("work.billing"), path, "POST");
+    say(t("status.billing_opened"));
+  } catch (error) {
+    say(error.message, true);
+  }
+}
+
 function openAccount() {
   shelf = "account";
   renderRail();
@@ -1441,6 +1477,7 @@ async function refreshGpu() {
     gpu = null;
   }
   renderRail();
+  if (shelf === "account") renderInspector();
 }
 
 // Why the GPU server would refuse step 5, or null.
@@ -3140,4 +3177,6 @@ new ResizeObserver(resize).observe(stage);
   say(state.page ? t("status.ready") : t("status.start"));
   refreshGpu();
   checkUpdate();
+  // Back from a Stripe page in the browser: read the plan again.
+  window.addEventListener("focus", () => refreshGpu());
 })();
