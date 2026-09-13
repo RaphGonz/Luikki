@@ -447,8 +447,9 @@ fin : ce sont elles qui attendent.
       retard. Endpoint et `STRIPE_WEBHOOK_SECRET` posés, validé de bout en
       bout le même jour sur le second PC : code `TESTEUR-…` sans carte, compte
       « actif » au retour dans l'app, planche jusqu'au PSD. Premier essai en
-      502 : Managed Payments exigeait un code fiscal (voir B6). Reste :
-      résiliation par le portail et paiement refusé.
+      502 : Managed Payments exigeait un code fiscal (voir B6). Résiliation
+      par le portail réussie le même jour. Reste : paiement refusé (sans code,
+      carte de test `4000 0000 0000 0341`).
 - [x] Codes testeurs : coupon 100 %, `duration=repeating` (3 mois) ; Promotion
       Codes `TESTEUR-XXXX` avec `max_redemptions` et `expires_at`. Pas de carte
       demandée grâce à `payment_method_collection="if_required"`.
