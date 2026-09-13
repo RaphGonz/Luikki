@@ -409,13 +409,18 @@ fin : ce sont elles qui attendent.
       l'installeur, vérifie son sha256, le lance en silencieux et ferme
       l'app ; `luikki.iss` la rouvre. Sur Mac et dans `luikki serve`, le bouton
       ouvre le téléchargement dans le navigateur. Une copie des sources ne
-      propose rien. Reste à l'éprouver entre deux vraies releases.
+      propose rien. Éprouvé le même jour sur un second PC (Windows 11) : la
+      0.2.0 installée a proposé la 0.2.1, l'a installée et s'est rouverte,
+      planche intacte.
 - [ ] Un Mac pour tester : un testeur, ou un Mac loué à l'heure. En attente
       (2026-09-12) : Raph ne peut pas tester sur Mac en direct pour l'instant.
       Un testeur a le DMG de la CI (2026-09-13) : il vérifie le build, pas
       l'app.
 - Fait quand : installation sur une VM Windows vierge et sur un vrai Mac, une
   page va jusqu'au PSD.
+  Windows validé le 2026-09-13 sur un second PC Windows 11 (pas une VM, choix
+  de Raph) : installation de la 0.2.0 depuis la release, page jusqu'au PSD,
+  mise à jour 0.2.1 depuis l'app. Reste le Mac.
 
 ### B5 — Stripe, mode test (3–4 j)
 
@@ -439,8 +444,11 @@ fin : ce sont elles qui attendent.
       Code déployé (2026-09-13) : `customer.subscription.*`, l'abonnement est
       relu chez Stripe avant d'écrire (les événements arrivent dans le
       désordre), `period_end` + 1 jour de grâce pour un renouvellement en
-      retard. Reste : l'endpoint dans le dashboard, `STRIPE_WEBHOOK_SECRET`
-      dans le secret, puis le test de bout en bout.
+      retard. Endpoint et `STRIPE_WEBHOOK_SECRET` posés, validé de bout en
+      bout le même jour sur le second PC : code `TESTEUR-…` sans carte, compte
+      « actif » au retour dans l'app, planche jusqu'au PSD. Premier essai en
+      502 : Managed Payments exigeait un code fiscal (voir B6). Reste :
+      résiliation par le portail et paiement refusé.
 - [x] Codes testeurs : coupon 100 %, `duration=repeating` (3 mois) ; Promotion
       Codes `TESTEUR-XXXX` avec `max_redemptions` et `expires_at`. Pas de carte
       demandée grâce à `payment_method_collection="if_required"`.
