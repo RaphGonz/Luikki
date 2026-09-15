@@ -502,7 +502,7 @@ travaillent par vagues. Le serveur prend d'abord les cases du mois, puis les
 cases achetées ; les cases achetées marchent sans pass. Testeurs :
 `plan='tester'` posé à la main, inchangé.
 
-- [ ] Données : `plans` passe en cases (`cases_per_month`, `devices`,
+- [x] Données : `plans` passe en cases (`cases_per_month`, `devices`,
       `parallel_jobs`) ; `colours` (`user_id`, `until`) ; `purchases`, une
       ligne par achat (`user_id`, `line`, `cases`, `years`,
       `stripe_session_id` unique, `payment_intent`, `refunded`), jamais
@@ -510,29 +510,30 @@ cases achetées ; les cases achetées marchent sans pass. Testeurs :
       `jobs` par appareil. `subscriptions` ne sert plus qu'au Studio et aux
       testeurs. Le solde des cases achetées = achats − `usage` en `credits` :
       un registre, pas un compteur qu'on décrémente.
-- [ ] Quota en cases : chaque `POST /v1/panel` peint compte une case, relance
+- [x] Quota en cases : chaque `POST /v1/panel` peint compte une case, relance
       comprise (Raph, 2026-09-13 : « une case est une case »). D'abord les
       cases du mois, puis les cases achetées. `start_panel`, `finish_panel`
       et `my_status` réécrits ; le client n'a rien de plus à envoyer.
-- [ ] Studio : `jobs` par appareil, au plus `parallel_jobs` ; un seul email
+- [x] Studio : `jobs` par appareil, au plus `parallel_jobs` ; un seul email
       pour les 3 postes en v1 (comptes d'équipe : C).
-- [ ] Webhook : `checkout.session.completed` pour les paiements uniques
+- [x] Webhook : `checkout.session.completed` pour les paiements uniques
       (idempotent par `stripe_session_id`), `customer.subscription.*` pour le
       Studio, `charge.refunded` retire le droit ou les cases.
-- [ ] Fondateur : 100 au plus, comptés par le serveur avant d'ouvrir le
+- [x] Fondateur : 100 au plus, comptés par le serveur avant d'ouvrir le
       Checkout.
-- [ ] `stripe_setup` : les six produits, leurs prix (`lookup_key`) et leur
+- [x] `stripe_setup` : les six produits, leurs prix (`lookup_key`) et leur
       code fiscal ; archive le prix à 15 €/mois et le coupon `testeur-3-mois`.
-- [ ] Prix régionaux : prix par devise (`currency_options`). Devises à
+- [ ] Prix régionaux (optionnel, ne bloque pas B6) : prix par devise (`currency_options`). Devises à
       décider (BRL, MXN, IDR, PHP…).
-- [ ] App, Compte : cases restantes du mois, cases achetées, boutons d'achat.
+- [x] App, Compte : cases restantes du mois, cases achetées, boutons d'achat.
       Étape 5 : sélecteur Cobra / `distinct` (jamais de repli silencieux,
       B2) ; au plafond, proposer un pack ou le Studio.
-- [ ] Mots : parler en cases partout, avec l'équivalent (« 1 000 cases ≈ 200
+- [x] Mots : parler en cases partout, avec l'équivalent (« 1 000 cases ≈ 200
       pages ≈ 14 épisodes »).
 - Fait quand : en mode test, un compte achète Luikki, génère, épuise son mois,
   achète un pack et continue ; un compte Studio génère sur 3 machines à la
   fois ; un fondateur revient après trois mois et retrouve ses cases.
+  Validé par Raph (confirmé le 2026-09-15). Reste les prix régionaux, optionnels.
 
 ### B6 — Production (4–6 j + délais externes)
 
