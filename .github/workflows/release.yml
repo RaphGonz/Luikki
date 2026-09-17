@@ -121,10 +121,13 @@ jobs:
           path: out
           merge-multiple: true
 
-      # Uploaded one asset at a time, into a draft, with retries. `gh release
-      # create` with the files on it discards the whole release when one
-      # upload fails, and the installers are 400 MB each: 0.4.1 lost two runs
-      # to a 500 and a 400 from GitHub's own upload host, half an hour apart.
+      # Uploaded one asset at a time, into a draft, each attempt under a
+      # deadline. `gh release create` with the files on it discards the whole
+      # release when one upload fails, and the installers are 400 MB each:
+      # 0.4.1 lost two runs to a 500 and a 400 from GitHub's own upload host.
+      # The deadline is what the retries were missing — 0.4.2 then hung for an
+      # hour with no error at all, and a loop that waits for a command to fail
+      # never runs when the command simply never returns.
       # A draft is invisible, so `latest.json` cannot reach an installed app
       # before the installer it names is actually there.
       - name: Publish
@@ -136,11 +139,11 @@ jobs:
           for asset in out/*; do
             sent=""
             for attempt in 1 2 3 4 5; do
-              if gh release upload "$GITHUB_REF_NAME" "$asset" --clobber; then
+              if timeout --signal=KILL 600 gh release upload "$GITHUB_REF_NAME" "$asset" --clobber; then
                 sent=1
                 break
               fi
-              echo "upload of $asset failed, attempt $attempt"
+              echo "upload of $asset failed or stalled, attempt $attempt"
               sleep 30
             done
             if [ -z "$sent" ]; then
