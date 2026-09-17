@@ -6,8 +6,12 @@ and matches what studios already pass around.
 
 Two rules from the spec are enforced here rather than trusted:
 
-- **No line art in any export** (rule 7). The artist keeps their own ink layer
-  and drops it on top; nothing in this module ever receives the line mask.
+- **No line art in an export the artist did not ask for** (rule 7). The flats
+  never carry ink: the artist keeps their own layer and drops it on top, and
+  every layer written by `_write_by_panel` and `_write_by_colour` is colour.
+  The one exception is `support_grey`, asked for by name at the press — see
+  `_write_support` — because the thing a printer needs cannot be built without
+  the ink, and building it by hand is what the colourist was doing instead.
 - **Colour comes from the palette, by id** (rule 1). A layer is built from the
   set of zones sharing one `palette_entry_id`, and its RGB is looked up from
   the palette at write time. Change the entry, re-export, everything moves —
@@ -38,6 +42,10 @@ from ..model.entities import PaletteEntry
 from ..model.masks import UNASSIGNED
 
 GRANULARITIES = ("colour", "panel")
+
+# What the ink is tinted to for the supporting layer: 20 % grey, the value
+# print colourists lay under a line to keep it from breaking up on paper.
+SUPPORT_GREY = (204, 204, 204)
 
 # Past this many layers the artist is exporting the model's guesses rather than
 # their own palette — one private entry per segment is what makes the count
@@ -109,6 +117,8 @@ def write_psd(
     panels: list[PanelFlats],
     palette: dict[int, PaletteEntry],
     granularity: str = "colour",
+    line_mask: np.ndarray | None = None,
+    support_grey: bool = False,
 ) -> Path:
     """Write the flats to `path`. Returns the path.
 
@@ -116,6 +126,10 @@ def write_psd(
     are written in reading order, so the group stack matches the order the
     artist reads them; under `"colour"` there is nothing to order but the
     palette itself, and entries go out by id.
+
+    `support_grey` adds the two ink layers a printer wants on top of the
+    stack — see `_write_support`. It is the only thing that puts line art in
+    an export, it is off unless asked for, and it needs `line_mask`.
     """
     from psd_tools import PSDImage
 
@@ -135,6 +149,11 @@ def write_psd(
         _write_by_colour(psd, page_size, panels, palette)
     else:
         _write_by_panel(psd, panels, palette)
+
+    if support_grey:
+        if line_mask is None:
+            raise ValueError("support_grey needs the line mask")
+        _write_support(psd, line_mask)
 
     _set_preview(psd, page_size, panels, palette)
     psd.save(str(path))
@@ -161,6 +180,51 @@ def _layer(psd, mask: np.ndarray, entry: PaletteEntry, top: int = 0, left: int =
         name=entry.label,
         top=top + y0,
         left=left + x0,
+    )
+
+
+def _write_support(psd, line_mask: np.ndarray) -> None:
+    """The supporting grey, on top of the flats: the ink, twice.
+
+    What print colourists build by hand. **Lines** is the artist's ink set to
+    Multiply, so it darkens the flats instead of covering them. **Support
+    grey** underneath is the same ink at 20 % grey with its transparency
+    locked, which turns it into a stencil of the drawing: paint into it and
+    the paint can only land on the line, which is how a line is kept from
+    breaking up at print size.
+
+    Written last, so both sit above every colour group.
+    """
+    from psd_tools.constants import BlendMode, ProtectedFlags, Tag
+    from psd_tools.psd.tagged_blocks import ProtectedSetting
+
+    ink = np.asarray(line_mask).astype(bool)
+    if not ink.any():
+        return
+
+    grey = _ink_layer(psd, ink, SUPPORT_GREY, "Support grey")
+    # The tagged block directly, not `Layer.lock`: that helper reads the block
+    # back before it has written one, so the flag never reaches the file
+    # (psd-tools 1.18). Checked by the test, which reopens what was saved.
+    grey.tagged_blocks.set_data(
+        Tag.PROTECTED_SETTING, ProtectedSetting(int(ProtectedFlags.TRANSPARENCY))
+    )
+    _ink_layer(psd, ink, (0, 0, 0), "Lines").blend_mode = BlendMode.MULTIPLY
+
+
+def _ink_layer(psd, ink: np.ndarray, colour: tuple[int, int, int], name: str):
+    """One layer of ink, one flat colour, cropped to the drawing."""
+    rows = np.flatnonzero(ink.any(axis=1))
+    cols = np.flatnonzero(ink.any(axis=0))
+    y0, y1 = int(rows[0]), int(rows[-1]) + 1
+    x0, x1 = int(cols[0]), int(cols[-1]) + 1
+    patch = ink[y0:y1, x0:x1]
+
+    rgba = np.zeros((*patch.shape, 4), dtype=np.uint8)
+    rgba[patch, :3] = colour
+    rgba[patch, 3] = 255
+    return psd.create_pixel_layer(
+        Image.fromarray(rgba, mode="RGBA"), name=name, top=y0, left=x0
     )
 
 

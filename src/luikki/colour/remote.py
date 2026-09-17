@@ -61,6 +61,9 @@ class RemoteProposer:
     # `luikki.account.Account`, whose session every panel goes up with.
     account: Any = None
 
+    # Cobra runs at the other end of this. See `CobraProposer`.
+    needs_references: bool = True
+
     @property
     def name(self) -> str:
         return "remote"

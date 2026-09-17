@@ -1,9 +1,13 @@
 """The app's icon, drawn from `favicon.svg`, so the logo has one source.
 
-Pillow does not read SVG, and this one is two shapes: a path of straight lines
-and one cubic curve, and a circle. That much is drawn here rather than adding
-an SVG renderer to the build. Anything else in the file is refused, so a new
-logo cannot be drawn wrong without a word.
+Pillow does not read SVG, and this one is three shapes: the violet ground, a
+path of straight lines and one cubic curve, and a circle. That much is drawn
+here rather than adding an SVG renderer to the build. Anything else in the file
+is refused, so a new logo cannot be drawn wrong without a word.
+
+The file carries its own padding — its viewBox is square and the ground fills
+it — so nothing is inset here. A mark on a transparent square was what the
+first tester could not pick out of a desktop.
 """
 
 from __future__ import annotations
@@ -17,7 +21,7 @@ from PIL import Image, ImageDraw
 SIZES = [16, 24, 32, 48, 64, 128, 256]
 # Drawn this large, then reduced for each size: the reduction is the antialiasing.
 _CANVAS = 1024
-_MARGIN = 0.03
+_MARGIN = 0.0
 _CURVE_POINTS = 48
 
 
@@ -69,6 +73,14 @@ def draw(svg: Path) -> Image.Image:
         fill = element.get("fill")
         if tag == "path":
             pen.polygon([(x * scale + dx, y * scale + dy) for x, y in _path_points(element.get("d"))], fill=fill)
+        elif tag == "rect":
+            x, y, w, hgt = (float(element.get(name)) for name in ("x", "y", "width", "height"))
+            radius = float(element.get("rx", 0)) * scale
+            box = [x * scale + dx, y * scale + dy, (x + w) * scale + dx, (y + hgt) * scale + dy]
+            if radius:
+                pen.rounded_rectangle(box, radius=radius, fill=fill)
+            else:
+                pen.rectangle(box, fill=fill)
         elif tag == "circle":
             cx, cy, r = (float(element.get(name)) for name in ("cx", "cy", "r"))
             pen.ellipse(

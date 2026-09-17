@@ -45,8 +45,41 @@ def _start(workdir):
     return Session(workdir, extractor=PassthroughExtractor())
 
 
+class _NeedsReferences:
+    """A proposer that colours *from* reference images, like Cobra."""
+
+    needs_references = True
+
+    @property
+    def name(self) -> str:
+        return "needy"
+
+    def propose(self, request):  # pragma: no cover - never reached
+        raise AssertionError("asked to colour with no references")
+
+
 def _zones(labels):
     return sorted(int(label) for label in np.unique(labels) if label != UNASSIGNED)
+
+
+def test_colours_made_from_references_say_so_before_they_run(tmp_path):
+    """The refusal used to come out of Cobra as an English sentence wrapped in
+    a 503 — the one refusal in the app with no phrase of its own. Most artists
+    have no reference sheets at all, so this is the common path, and it has to
+    be sayable in their language."""
+    session = _start(tmp_path / "work")
+    session.proposer = _NeedsReferences()
+    session.load_page(_page(tmp_path / "page.png"), original_name="page.png")
+    session.detect_panels()
+    session.segment_zones()
+
+    with pytest.raises(StepError) as refused:
+        session.generate_flats()
+    assert refused.value.code == "flats_no_reference"
+
+    # And the way on is the same press with the other end of the step.
+    session.generate_flats(plain=True)
+    assert session.state()["done"]["flats"] is True
 
 
 def _through_flats(session, page):
@@ -72,7 +105,12 @@ def test_a_page_reopens_exactly_as_it_was_left(tmp_path):
 
     second = _start(work)
 
-    assert second.state() == first.state()
+    # Everything but what the artist can still take back. The step-4 undo
+    # stack is the memory of this run of the app, not a property of the page:
+    # a merge made before a restart is as permanent as one made before the
+    # flats, and the reopened session says so by having nothing to undo.
+    assert {**second.state(), "undo": 0} == {**first.state(), "undo": 0}
+    assert second.state()["undo"] == 0
     np.testing.assert_array_equal(second.zones_rgba(), first.zones_rgba())
     np.testing.assert_array_equal(second.flats_rgba(), first.flats_rgba())
     np.testing.assert_array_equal(second.unsnapped_mask(), first.unsnapped_mask())

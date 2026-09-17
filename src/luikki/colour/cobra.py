@@ -481,6 +481,11 @@ class CobraProposer:
 
     _loaded: bool = False
 
+    # Cobra colours *from* references. Step 5 reads this before it runs, so
+    # an artist with none is told before the press rather than refused after
+    # it — most of them have none, which is what the first test taught us.
+    needs_references: bool = True
+
     @property
     def name(self) -> str:
         return "cobra"

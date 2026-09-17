@@ -114,6 +114,61 @@ _NOMINAL_TARGET = 1024
 # smear than drawing. 2.0 is where `reports/10-retrieval` measured the fall,
 # on one page — treat it as calibrated, not derived.
 _MAX_UPSCALE = 2.0
+# How many merges and cuts step 4 can take back. Each one holds one panel's
+# label map, and a merge or a cut touches exactly one panel.
+_UNDO_DEPTH = 20
+
+
+# How finely a curve is sampled, in page pixels between two samples. Half a
+# pixel is below what the rasteriser can tell apart, so the flattened shape and
+# the curve cover exactly the same pixels.
+_CURVE_STEP = 0.5
+
+
+def flatten_polygon(polygon) -> list[tuple[int, int]]:
+    """A polygon of straight edges, from one whose nodes may carry handles.
+
+    A node is `(x, y)` — a corner — or `(x, y, hx, hy)`, where `(hx, hy)` is
+    the tangent the artist pulled out of it. Nothing downstream of here knows
+    what a Bézier is: `cv2.fillPoly` and `cv2.polylines` take points, so the
+    curve is sampled into points *once*, here, at the moment of use. The nodes
+    and their handles stay the stored truth, so the artist can grab a handle
+    again after reopening the page — which is the whole reason they are kept.
+    """
+    nodes = [tuple(node) for node in polygon]
+    if not any(len(node) > 2 for node in nodes):
+        return [(int(node[0]), int(node[1])) for node in nodes]
+
+    points: list[tuple[int, int]] = []
+    for index, node in enumerate(nodes):
+        after = nodes[(index + 1) % len(nodes)]
+        x0, y0 = float(node[0]), float(node[1])
+        x3, y3 = float(after[0]), float(after[1])
+        # A handle points the way out of its node; the far end of the edge is
+        # entered against its own, which is what makes the joint smooth.
+        ox, oy = (float(node[2]), float(node[3])) if len(node) > 2 else (0.0, 0.0)
+        ix, iy = (float(after[2]), float(after[3])) if len(after) > 2 else (0.0, 0.0)
+        if not (ox or oy or ix or iy):
+            points.append((int(round(x0)), int(round(y0))))
+            continue
+        x1, y1 = x0 + ox, y0 + oy
+        x2, y2 = x3 - ix, y3 - iy
+        # Sampled against the control polygon's length, which is never shorter
+        # than the curve — so the step is at worst finer than asked for.
+        span = (
+            abs(x1 - x0) + abs(y1 - y0) + abs(x2 - x1) + abs(y2 - y1) + abs(x3 - x2) + abs(y3 - y2)
+        )
+        steps = max(2, min(400, int(span / _CURVE_STEP) + 1))
+        for step in range(steps):
+            t = step / steps
+            u = 1.0 - t
+            points.append(
+                (
+                    int(round(u * u * u * x0 + 3 * u * u * t * x1 + 3 * u * t * t * x2 + t * t * t * x3)),
+                    int(round(u * u * u * y0 + 3 * u * u * t * y1 + 3 * u * t * t * y2 + t * t * t * y3)),
+                )
+            )
+    return points
 
 
 def _overshoot(points: np.ndarray, margin: int) -> np.ndarray:
@@ -204,6 +259,10 @@ class Session:
         # and so is how they stack a PSD.
         self.leak_gap = LeakParams().max_open_share
         self.granularity = "colour"
+        # The two ink layers a printer wants over the flats (`_write_support`).
+        # Off unless asked for: it is the one thing that puts line art in an
+        # export. Book-scoped, like the stack it sits on.
+        self.support_grey = False
         self.reset()
         # page id -> name and stage, for the page list. Kept here rather than
         # read off disk by `state()`, which runs after every press.
@@ -251,6 +310,9 @@ class Session:
         self._bubbles_done = False
         self._zones_done = False
         self._flats_done = False
+        # Step 4 only: the label maps as they stood before the last merges and
+        # cuts, oldest first. One panel per entry — see `_remember_zones`.
+        self._undo: list[tuple[int, np.ndarray]] = []
         # Which page of the project is open, and which references its flats
         # were proposed from: one deleted since is a warning, never a reason
         # to throw the flats away — the artist's snaps are built on them.
@@ -374,6 +436,27 @@ class Session:
             self._save()
             return self.protected
 
+    def skip_bubbles(self) -> list[list[tuple[int, int]]]:
+        """Say there are no balloons on this page, without looking for any.
+
+        Professionals ink first and letter afterwards, so the page that
+        reaches Luikki often has no balloon on it at all — the first tester's
+        did not. Detection would answer the same empty list after loading 161
+        megabytes of weights and reading the whole page; this says it in one
+        call. The step still *ran*: `_bubbles_done` is what step 4 waits on,
+        and an empty `protected` is a legitimate outcome of pressing either
+        button.
+        """
+        with self.lock:
+            self._require_page()
+            if not self.panels:
+                raise StepError("panels_first")
+            self.protected = []
+            self._invalidate_from_panels()
+            self._bubbles_done = True
+            self._save()
+            return self.protected
+
     # -- 2b/3b. the artist's corrections ---------------------------------
     #
     # Detection proposes geometry; these accept the artist's version of it.
@@ -389,13 +472,17 @@ class Session:
         Clamped to the page because a corner dragged past the edge is a
         corner the artist meant to put at the edge, not a mistake to refuse.
         """
-        cleaned: list[tuple[int, int]] = []
+        cleaned: list[tuple[int, ...]] = []
         for point in polygon:
             x = max(0, min(self.width - 1, int(point[0])))
             y = max(0, min(self.height - 1, int(point[1])))
-            if not cleaned or cleaned[-1] != (x, y):
-                cleaned.append((x, y))
-        if len(cleaned) > 1 and cleaned[0] == cleaned[-1]:
+            # A node may carry the tangent the artist pulled out of it. It is
+            # not clamped: a handle reaching off the page is how a curve
+            # bulges against the edge, and it draws nothing by itself.
+            node = (x, y, int(point[2]), int(point[3])) if len(point) > 2 else (x, y)
+            if not cleaned or cleaned[-1][:2] != (x, y):
+                cleaned.append(node)
+        if len(cleaned) > 1 and cleaned[0][:2] == cleaned[-1][:2]:
             cleaned.pop()
         if len(cleaned) < 3:
             raise StepError("corners_too_few")
@@ -427,7 +514,7 @@ class Session:
 
         carriers = [
             Panel(
-                polygon=panel.polygon,
+                polygon=flatten_polygon(panel.polygon),
                 box=PanelBox(panel.x, panel.y, panel.width, panel.height),
             )
             for panel in self.panels
@@ -489,8 +576,9 @@ class Session:
         """The crop box follows the outline. `panels.Panel` keeps both for the
         same reason: the polygon says which pixels are the panel's, the box
         says where to cut the page."""
-        xs = [x for x, _ in panel.polygon]
-        ys = [y for _, y in panel.polygon]
+        drawn = flatten_polygon(panel.polygon)
+        xs = [x for x, _ in drawn]
+        ys = [y for _, y in drawn]
         panel.x, panel.y = min(xs), min(ys)
         panel.width = max(xs) - panel.x + 1
         panel.height = max(ys) - panel.y + 1
@@ -672,6 +760,7 @@ class Session:
                     progress.tick(megapixels * cost["expand"])
 
             self._learn(measured)
+            self._undo = []
             self._zones_done = True
             self._flats_done = False
             self._save(maps="all")
@@ -698,13 +787,17 @@ class Session:
     # need colouring by hand.
     #
     # Merge and cut are the two corrections that follow, and they are the last
-    # thing the artist does before the colours arrive. **They are permanent.**
-    # There is no unmerge and no history: keeping one would mean carrying the
-    # segmenter's original map beside the artist's, and every later stage
-    # would have to say which of the two it meant. The stage boundary is the
-    # protection instead — this is step 4's work, it happens before a single
-    # colour is proposed, and pressing Segment zones again starts the page
-    # over.
+    # thing the artist does before the colours arrive.
+    #
+    # They are **undoable inside the step and permanent once it is left**. The
+    # first tester lost a forty-piece merge to one cut and had to rebuild it by
+    # hand, so `_undo` keeps the last few label maps and `undo_zones` puts one
+    # back. That is not the same thing as carrying the segmenter's original map
+    # beside the artist's — the objection that ruled history out before. A
+    # snapshot is a state this panel was in, not a second opinion about what
+    # the page is, and nothing downstream ever reads one. The stage boundary
+    # stays the real protection: the stack dies with the step, and pressing
+    # Segment zones again starts the page over.
 
     def _require_zone_stage(self) -> None:
         self._require_page()
@@ -784,6 +877,28 @@ class Session:
                 ).items()
             }
 
+    def _remember_zones(self, panel: PanelState) -> None:
+        """Keep this panel's zones as they are, so the next edit can be undone.
+
+        Called by the mutators once they know they will write — a refused merge
+        or a cut that separates nothing must not push a state nothing changed.
+        """
+        assert panel.label_map is not None
+        self._undo.append((panel.order, panel.label_map.copy()))
+        del self._undo[:-_UNDO_DEPTH]
+
+    def undo_zones(self) -> dict:
+        """Put back the zones as they were before the last merge or cut."""
+        with self.lock:
+            self._require_zone_stage()
+            if not self._undo:
+                raise StepError("nothing_to_undo")
+            order, label_map = self._undo.pop()
+            panel = self._panel_for(order)
+            panel.label_map = label_map
+            self._save(maps=[panel.order])
+            return {"panel": order, "left": len(self._undo)}
+
     def merge_zones(self, panel_order: int, labels) -> dict:
         """Make several zones one zone. One address, one colour, one click.
 
@@ -812,6 +927,7 @@ class Session:
 
             survivor = max(present, key=lambda label: present[label])
             others = [label for label in present if label != survivor]
+            self._remember_zones(panel)
             panel.label_map[np.isin(panel.label_map, others)] = survivor
             self._save(maps=[panel.order])
             return {
@@ -856,18 +972,47 @@ class Session:
             cv2.polylines(wall, [points.reshape(-1, 1, 2)], False, 1, max(1, width))
             remaining = mask & (wall == 0)
 
+            # **A cut divides only what the stroke crossed.** A zone the artist
+            # merged is several disconnected pieces already, so reading the cut
+            # off the pieces that remain handed every one of them a label of
+            # its own and undid the merge — the first tester lost a forty-piece
+            # garment to one stroke. What the stroke crossed is knowable: the
+            # pieces before the wall, against the pieces after it. A piece that
+            # came through whole keeps the zone's label, whatever else happened
+            # elsewhere on the page.
+            _, whole = cv2.connectedComponents(mask.astype(np.uint8), connectivity=8)
             count, pieces = cv2.connectedComponents(
                 remaining.astype(np.uint8), connectivity=8
             )
-            if count - 1 < 2:
+
+            # Which piece each surviving fragment came from, and how big it is,
+            # in two passes rather than one mask per fragment.
+            fragments = pieces[remaining]
+            came_from = np.zeros(count, np.int32)
+            came_from[fragments] = whole[remaining]
+            areas = np.bincount(fragments, minlength=count)
+
+            broken: dict[int, list[int]] = {}
+            for fragment in range(1, count):
+                broken.setdefault(int(came_from[fragment]), []).append(fragment)
+            broken = {
+                piece: parts for piece, parts in broken.items() if len(parts) > 1
+            }
+            if not broken:
                 raise StepError("cut_no_split")
 
+            self._remember_zones(panel)
+
+            # In each piece the stroke broke, the largest part keeps the label,
+            # for the reason the largest zone survives a merge: the anchor
+            # stays in the body of the trousers rather than in a scrap.
             next_label = int(panel.label_map.max()) + 1
             made = [int(label)]
-            for piece in range(2, count):
-                panel.label_map[pieces == piece] = next_label
-                made.append(next_label)
-                next_label += 1
+            for parts in broken.values():
+                for fragment in sorted(parts, key=lambda part: -areas[part])[1:]:
+                    panel.label_map[pieces == fragment] = next_label
+                    made.append(next_label)
+                    next_label += 1
 
             # The stroke's own pixels: give each to the nearest piece, so a cut
             # never leaves a seam of unassigned pixels for the flats to fringe
@@ -1024,10 +1169,14 @@ class Session:
         means: never coloured.
         """
         protected = rasterize_protected_for_panel(
-            self.protected, panel.x, panel.y, panel.width, panel.height
+            [flatten_polygon(polygon) for polygon in self.protected],
+            panel.x,
+            panel.y,
+            panel.width,
+            panel.height,
         )
         inside = rasterize_protected_for_panel(
-            [panel.polygon], panel.x, panel.y, panel.width, panel.height
+            [flatten_polygon(panel.polygon)], panel.x, panel.y, panel.width, panel.height
         )
         return protected | ~inside
 
@@ -1246,6 +1395,29 @@ class Session:
             self._save_palette()
             return entry
 
+    def add_colour(self, rgb, label: str = "") -> PaletteEntry:
+        """A colour the artist mixed, straight into the palette.
+
+        Until this existed a colour could only come out of an image — a
+        reference's candidates or a palette image — and the first tester had a
+        page, a palette in their head, and no way to put one in the other. The
+        id is taken from the same counter and never reused, so a colour mixed
+        here is a palette entry like any other: zones point at it, and changing
+        it repaints every one of them (rule 1).
+        """
+        with self.lock:
+            wanted = _rgb(rgb)
+            entry = PaletteEntry(
+                project_id=0,
+                rgb=wanted,
+                label=label.strip() or f"colour {self._next_entry_id}",
+                id=self._next_entry_id,
+            )
+            self._next_entry_id += 1
+            self._palette.append(entry)
+            self._save_palette()
+            return entry
+
     def set_palette_colour(self, entry_id: int, rgb) -> PaletteEntry:
         """Change what one palette entry *is*.
 
@@ -1372,11 +1544,23 @@ class Session:
 
     # -- 5. generate flats -----------------------------------------------
 
-    def generate_flats(self) -> dict[str, int]:
+    def generate_flats(self, plain: bool = False) -> dict[str, int]:
+        """Colour every zone. `plain` is the artist saying they will do it
+        themselves: one distinct colour per zone, no model, no GPU, nothing
+        bought. It is the same pass either way, because what step 5 really
+        writes is one palette entry per zone — without that, steps 6 and 7
+        have nothing to work on.
+        """
         with self.lock:
             self._require_page()
             if not self._zones_done:
                 raise StepError("zones_first")
+
+            proposer = DistinctColourProposer() if plain else self.proposer
+            # Said here, in a sentence the artist's language has, rather than
+            # left to the proposer to refuse in English halfway through.
+            if getattr(proposer, "needs_references", False) and not self.reference_images():
+                raise StepError("flats_no_reference")
 
             # `threshold=None` unconditionally: **flats never snap**. Every
             # zone's modal colour becomes its own entry and stays that way
@@ -1407,7 +1591,7 @@ class Session:
                         page_id=self.page_uid,
                         generation_id=generation_id,
                     )
-                    proposal = self.proposer.propose(request)
+                    proposal = proposer.propose(request)
 
                     assignments, created = assign_zones(
                         proposal,
@@ -1596,7 +1780,10 @@ class Session:
         ]
 
     def export_psd(
-        self, path: str | Path | None = None, granularity: str | None = None
+        self,
+        path: str | Path | None = None,
+        granularity: str | None = None,
+        support_grey: bool | None = None,
     ) -> Path:
         with self.lock:
             if not self._flats_done:
@@ -1606,6 +1793,9 @@ class Session:
                     raise StepError("granularity_unknown", value=granularity)
                 self.granularity = granularity
                 project.save_project(self)
+            if support_grey is not None and support_grey != self.support_grey:
+                self.support_grey = support_grey
+                project.save_project(self)
             target = Path(path) if path else self.workdir / f"{Path(self.original_name).stem}_flats.psd"
             return write_psd(
                 target,
@@ -1613,6 +1803,8 @@ class Session:
                 self._panel_flats(),
                 self.palette_by_id,
                 self.granularity,
+                line_mask=self.line_mask if self.support_grey else None,
+                support_grey=self.support_grey,
             )
 
     def flats_rgba(self) -> np.ndarray:
@@ -1679,6 +1871,7 @@ class Session:
             panel.flagged = set()
         self.segments = []
         self._auto_entry = {}
+        self._undo = []
         self._zones_done = False
         self._flats_done = False
 
@@ -1816,8 +2009,11 @@ class Session:
                 "proposers": sorted(self.proposers),
                 "extractor": self.extractor.name,
                 "leak_gap": self.leak_gap,
+                # How many merges and cuts step 4 can still take back.
+                "undo": len(self._undo),
                 "export": {
                     "granularity": self.granularity,
+                "support_grey": self.support_grey,
                     "warn_at": EXPORT_LAYER_WARNING,
                     "layers": {
                         name: layer_count(self._panel_flats(), self.palette_by_id, name)

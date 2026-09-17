@@ -176,6 +176,41 @@ def test_previews_exist_for_every_stage_that_renders_one(client, page):
 SQUARE = [[100, 100], [300, 100], [300, 300], [100, 300]]
 
 
+def test_a_page_can_say_it_has_no_bubbles(client, page):
+    """Professionals ink first and letter afterwards, so the page that reaches
+    Luikki often has no balloon on it. Saying so is a press of step 3, not a
+    step left unrun: zones wait on the step, not on the balloons."""
+    upload(client, "/api/page", page)
+    client.post("/api/panels")
+
+    skipped = client.post("/api/bubbles/skip")
+    assert skipped.status_code == 200
+    assert skipped.json()["protected"] == []
+    assert skipped.json()["done"]["bubbles"] is True
+
+    assert client.post("/api/zones").status_code == 200
+
+
+def test_saying_there_are_no_bubbles_still_needs_panels(client, page):
+    upload(client, "/api/page", page)
+    refused = client.post("/api/bubbles/skip")
+    assert refused.status_code == 409
+    assert refused.json()["code"] == "panels_first"
+
+
+def test_step_five_has_a_second_end_that_costs_nothing(client, page):
+    """"Continue without generating" is not a step skipped: it writes one
+    palette entry per zone, which is what steps 6 and 7 read."""
+    _zoned(client, page)
+    plain = client.post("/api/flats?plain=true")
+    assert plain.status_code == 200
+    assert plain.json()["done"]["flats"] is True
+    assert plain.json()["segments"]["count"] > 0
+    # Every zone holds a colour by id, so step 6 has something to snap.
+    assert plain.json()["result"]["segments"] == plain.json()["segments"]["count"]
+    assert client.post("/api/export").status_code == 200
+
+
 def test_bubbles_wait_for_panels(client, page):
     """The steps run in one order. A balloon traced onto a page whose panels
     are about to be re-detected is work the artist cannot get back."""
@@ -262,6 +297,42 @@ def test_correcting_a_panel_invalidates_what_was_cut_from_it(client, page):
     # Detecting panels again reopens it, exactly as the message says.
     client.post("/api/panels")
     assert client.get("/api/state").json()["editable"]["panels"] is True
+
+
+def test_a_curve_is_sampled_where_it_is_rasterised():
+    """Nothing downstream of `flatten_polygon` knows what a Bezier is. The
+    nodes and their handles are the stored truth — so a handle can be grabbed
+    again after reopening a page — and the points are made at the moment of
+    use, half a pixel apart, which is below what the rasteriser can tell
+    apart."""
+    from luikki.web.session import flatten_polygon
+
+    square = [(0, 0), (100, 0), (100, 100), (0, 100)]
+    assert flatten_polygon(square) == square
+
+    # One node pulled straight up: the edge leaving it has to bulge off the
+    # straight line between the two corners.
+    drawn = flatten_polygon([(0, 0, 0, -50), (100, 0), (100, 100), (0, 100)])
+    assert len(drawn) > 4
+    assert min(y for _, y in drawn) < 0
+    assert (0, 0) in drawn and (100, 100) in drawn
+
+
+def test_a_bubble_keeps_the_curve_it_was_drawn_with(client, page):
+    """A balloon is round, and the tester drew it with the handles every
+    drawing program has. What comes back is the nodes, handles included."""
+    upload(client, "/api/page", page)
+    client.post("/api/panels")
+    client.post("/api/bubbles")
+
+    curved = [[100, 100, 30, 0], [200, 100, 0, 30], [200, 200, -30, 0], [100, 200, 0, -30]]
+    added = client.post("/api/bubble", json={"polygon": curved})
+    assert added.status_code == 200
+    assert added.json()["protected"][-1] == curved
+
+    # And the panel it sits in still segments: the shape reaches the
+    # rasteriser as points, whatever the artist drew it with.
+    assert client.post("/api/zones").status_code == 200
 
 
 def test_a_bubble_can_be_traced_corrected_and_removed(client, page):
@@ -434,6 +505,122 @@ def test_a_cut_splits_a_zone_and_keeps_every_pixel(client, page):
     assert _painted_pixels(client) == painted, "a cut lost pixels to the seam"
 
 
+def _stacked_pair(client):
+    """Two zones of one panel that do not touch and do not share a row.
+
+    The sweep runs down the panel, so what it meets is stacked: a horizontal
+    stroke across one of them cannot reach the other.
+    """
+    swept = client.post(
+        "/api/zones/along",
+        json={"points": [[100, 60], [100, 340]]},
+    ).json()["zones"]
+    zones = [zone for zone in swept if zone["panel"] == 0]
+    for first in zones:
+        for second in zones:
+            if second["label"] == first["label"]:
+                continue
+            if first["bounds"][3] < second["bounds"][1]:
+                return first, second
+    raise AssertionError("the sweep met no two zones stacked one above the other")
+
+
+def test_a_cut_keeps_the_rest_of_a_merged_zone_together(client, page):
+    """A merged zone is several disconnected pieces, and a cut divides only
+    the piece the stroke crossed.
+
+    Reading the cut off the pieces that remained gave every one of them a
+    label of its own — one stroke undid the whole merge, and the first tester
+    had to build a forty-piece garment again by hand.
+    """
+    _zoned(client, page)
+    before = client.get("/api/state").json()["panels"][0]["zones"]
+
+    crossed, untouched = _stacked_pair(client)
+    merged = client.post(
+        "/api/zones/merge",
+        json={"panel": 0, "labels": [crossed["label"], untouched["label"]]},
+    )
+    assert merged.status_code == 200
+    survivor = merged.json()["result"]["label"]
+    assert merged.json()["panels"][0]["zones"] == before - 1
+
+    left, top, right, bottom = crossed["bounds"]
+    cut = client.post(
+        "/api/zones/cut",
+        json={
+            "panel": 0,
+            "label": survivor,
+            "stroke": [[left - 5, (top + bottom) // 2], [right + 5, (top + bottom) // 2]],
+        },
+    )
+    assert cut.status_code == 200
+    # One stroke, one new zone. The piece it never reached is still the
+    # survivor's, not a label the artist would have to merge back in.
+    assert cut.json()["panels"][0]["zones"] == before
+    assert len(cut.json()["result"]["labels"]) == 2
+
+
+def test_a_merge_and_a_cut_can_be_taken_back(client, page):
+    """Step 4 is undoable inside itself. The stage boundary is still what
+    makes the corrections permanent — the stack dies with the step."""
+    _zoned(client, page)
+    before = client.get("/api/state").json()["panels"][0]["zones"]
+    assert client.get("/api/state").json()["undo"] == 0
+
+    crossed, untouched = _stacked_pair(client)
+    merged = client.post(
+        "/api/zones/merge",
+        json={"panel": 0, "labels": [crossed["label"], untouched["label"]]},
+    )
+    assert merged.json()["panels"][0]["zones"] == before - 1
+    assert merged.json()["undo"] == 1
+
+    survivor = merged.json()["result"]["label"]
+    left, top, right, bottom = crossed["bounds"]
+    cut = client.post(
+        "/api/zones/cut",
+        json={
+            "panel": 0,
+            "label": survivor,
+            "stroke": [[left - 5, (top + bottom) // 2], [right + 5, (top + bottom) // 2]],
+        },
+    )
+    assert cut.json()["panels"][0]["zones"] == before
+    assert cut.json()["undo"] == 2
+
+    assert client.post("/api/zones/undo").json()["panels"][0]["zones"] == before - 1
+    assert client.post("/api/zones/undo").json()["panels"][0]["zones"] == before
+
+    nothing = client.post("/api/zones/undo")
+    assert nothing.status_code == 409
+    assert nothing.json()["code"] == "nothing_to_undo"
+
+
+def test_taking_back_a_zone_edit_stops_at_the_stage_boundary(client, page):
+    """Segmenting again, or colouring, ends the stack: an undo across either
+    would put back zones the page no longer describes."""
+    _zoned(client, page)
+    crossed, untouched = _stacked_pair(client)
+    client.post(
+        "/api/zones/merge",
+        json={"panel": 0, "labels": [crossed["label"], untouched["label"]]},
+    )
+    assert client.get("/api/state").json()["undo"] == 1
+
+    assert client.post("/api/zones").json()["undo"] == 0
+
+    crossed, untouched = _stacked_pair(client)
+    client.post(
+        "/api/zones/merge",
+        json={"panel": 0, "labels": [crossed["label"], untouched["label"]]},
+    )
+    client.post("/api/flats")
+    refused = client.post("/api/zones/undo")
+    assert refused.status_code == 409
+    assert refused.json()["code"] == "zones_closed"
+
+
 def test_a_stroke_that_separates_nothing_changes_nothing(client, page):
     _zoned(client, page)
     target = client.get("/api/zone?x=40&y=40").json()
@@ -490,6 +677,33 @@ def test_changing_a_palette_colour_repaints_every_zone_holding_it(
     # Still snapped, still the same segments — only the colour moved.
     assert recoloured.json()["segments"]["snapped"] == snapped["segments"]["snapped"]
     assert client.get("/api/flats.png").content != before
+
+
+def test_a_colour_can_come_from_no_image_at_all(client, page):
+    """Until this existed a colour could only be taken out of a reference or a
+    palette image, and the first tester had a palette in their head and no way
+    to put it in the app. A mixed colour is a palette entry like any other: it
+    takes an id that is never reused, and zones point at it."""
+    _zoned(client, page)
+    mixed = client.post("/api/palette/colour", json={"rgb": [12, 200, 90]})
+    assert mixed.status_code == 200
+    entry_id = mixed.json()["entry_id"]
+    chosen = [e for e in mixed.json()["palette"] if e["source"] == "palette"]
+    assert [e["rgb"] for e in chosen if e["id"] == entry_id] == [[12, 200, 90]]
+
+    # And it is a colour step 6 can snap a zone to.
+    client.post("/api/flats?plain=true")
+    zone = client.get("/api/segment?x=40&y=40").json()
+    snapped = client.post(
+        f"/api/segment/{zone['panel']}/{zone['label']}/snap?entry_id={entry_id}"
+    )
+    assert snapped.status_code == 200
+    assert snapped.json()["palette_entry_id"] == entry_id
+
+    # Deleting it never hands its id to the next colour.
+    client.delete(f"/api/palette/{entry_id}")
+    again = client.post("/api/palette/colour", json={"rgb": [1, 2, 3]})
+    assert again.json()["entry_id"] > entry_id
 
 
 def test_a_colour_that_is_not_a_colour_is_refused(client, page, tmp_path):

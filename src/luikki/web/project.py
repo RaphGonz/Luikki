@@ -146,6 +146,7 @@ def save_project(session) -> None:
             "current": session.page_id,
             "leak_gap": session.leak_gap,
             "granularity": session.granularity,
+        "support_grey": session.support_grey,
             "colours": session.proposer.name,
         },
     )
@@ -158,6 +159,7 @@ def load_project(session) -> int | None:
         return None
     session.leak_gap = float(record.get("leak_gap", session.leak_gap))
     session.granularity = record.get("granularity", session.granularity)
+    session.support_grey = bool(record.get("support_grey", session.support_grey))
     # The artist's choice at step 5, where this app still offers it.
     colours = record.get("colours")
     if colours in session.proposers:

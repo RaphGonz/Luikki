@@ -274,6 +274,7 @@ const controls = {
   threshold: 12,
   ignoreGuard: true,
   granularity: "colour",
+  supportGrey: false,
   refKind: "sheet",
   lines: false,
   neutral: false,
@@ -644,6 +645,15 @@ const RUNS = {
     label: () => t("work.bubbles"),
     done: (next) => t("done.bubbles", { count: next.protected.length }),
   },
+  // The other end of step 3. Professionals ink first and letter afterwards,
+  // so a page with no balloon on it is the common case, not the odd one.
+  bubbles_skip: {
+    step: "bubbles",
+    path: () => "/api/bubbles/skip",
+    polling: false,
+    label: () => t("work.bubbles_skip"),
+    done: () => t("done.bubbles_skip"),
+  },
   zones: {
     // The gap allowance rides along with the press that uses it: turning the
     // dial changes nothing on its own, because the zones on screen were cut
@@ -659,17 +669,26 @@ const RUNS = {
     label: () => t("work.flats"),
     done: (next) => t("done.flats", { count: next.result.segments }),
   },
+  // The other end of step 5: one colour per zone, no model and no GPU, for
+  // the artist who is going to choose the colours themselves. It runs the
+  // same pass, because what step 5 writes is a palette entry per zone — skip
+  // that and steps 6 and 7 have nothing to work on.
+  flats_plain: {
+    step: "flats",
+    path: () => "/api/flats?plain=true",
+    polling: true,
+    label: () => t("work.flats_plain"),
+    done: (next) => t("done.flats", { count: next.result.segments }),
+  },
 };
 
+// A row click opens the step and never runs it. Every step has something to
+// decide before it runs — the gap allowance, the colours, the layers — and a
+// click that ran the step hid the decision behind it. Opening a step that has
+// not run yet is how the artist gets at those controls; the button inside is
+// what presses. Locked steps stay shut (R6).
 function pressRow(step, status) {
   if (status === "locked" || status === "current") return;
-  if (status === "next") {
-    if (step.id === "upload") return choosePage();
-    // Step 5 that the GPU would refuse opens instead, where it says why.
-    if (RUNS[step.id] && !(step.id === "flats" && gpuBlock())) return requestRun(step.id);
-    // Export and snap only open: each has a choice to make first (the layers,
-    // the guard), and a row click that skipped it hid the choice entirely.
-  }
   open(step.id);
 }
 
@@ -752,7 +771,7 @@ function askFor(id, sentence) {
 }
 
 function requestRun(id) {
-  const sentence = rerunSentence(id);
+  const sentence = rerunSentence((RUNS[id] && RUNS[id].step) || id);
   if (sentence) return askFor(id, sentence);
   runStep(id);
 }
@@ -800,18 +819,21 @@ function askBlock(id) {
 async function runStep(id) {
   asking = null;
   const run = RUNS[id];
+  // Some steps have two ends (detect balloons or say there are none; generate
+  // the colours or continue without). Both are presses of the same step.
+  const step = run.step || id;
   renderRail();
   try {
     const next = await working(run.label(), run.polling, () => call(run.path(), { method: "POST" }));
     forgetCanvasSelection();
     traces.clear();
-    if (id === "panels" || id === "bubbles") edits[id] = 0;
+    if (step === "panels" || step === "bubbles") edits[step] = 0;
     // Flats leave the zones as they were, merges and cuts included.
-    if (id !== "flats") edits.zones = { merges: 0, cuts: 0 };
+    if (step !== "flats") edits.zones = { merges: 0, cuts: 0 };
     state = next;
     // A correction stage opens on itself: detecting is what moves the artist
     // onto the geometry. Colours open on snapping, which is what comes next.
-    current = id === "flats" ? "snap" : id;
+    current = step === "flats" ? "snap" : step;
     shelf = null;
     await reloadLayers();
     renderAll();
@@ -822,7 +844,7 @@ async function runStep(id) {
   }
   // A press of step 5 spends a page or a generation, or was refused for a reason
   // that may have changed: either way the line above the button is stale.
-  if (id === "flats") refreshGpu();
+  if (step === "flats") refreshGpu();
 }
 
 // Uploading adds a page: the one on screen stays in the project as it was
@@ -833,10 +855,15 @@ function choosePage() {
 
 async function uploadFile(input, path, label, extra = {}) {
   if (!input.files.length) return null;
-  const form = new FormData();
-  form.append("file", input.files[0]);
-  for (const [name, value] of Object.entries(extra)) form.append(name, value);
+  const file = input.files[0];
   input.value = "";
+  return uploadBlob(file, path, label, extra);
+}
+
+async function uploadBlob(file, path, label, extra = {}) {
+  const form = new FormData();
+  form.append("file", file);
+  for (const [name, value] of Object.entries(extra)) form.append(name, value);
   try {
     return await working(label, false, () => send(path, form));
   } catch (error) {
@@ -844,6 +871,55 @@ async function uploadFile(input, path, label, extra = {}) {
     return null;
   }
 }
+
+// ---- dropping a file on the window ------------------------------------------
+//
+// The file dialog is still there; this is the gesture an artist reaches for
+// first, and the tester did. What a drop means is read off the step the artist
+// is in — a page on step 1, a reference or a palette while that book is open —
+// so a drop never has to be aimed at a particular strip of the window.
+function dropTarget() {
+  if (shelf === "references") return { path: "/api/reference", label: t("work.reference"), extra: { kind: "sheet" } };
+  if (shelf === "palette") return { path: "/api/palette/image", label: t("work.palette"), extra: {} };
+  return { path: "/api/page", label: t("work.page"), extra: {} };
+}
+
+async function dropFile(file) {
+  if (!file || !file.type.startsWith("image/")) return say(t("error.not_an_image"), true);
+  const { path, label, extra } = dropTarget();
+  const next = await uploadBlob(file, path, label, extra);
+  if (!next) return;
+  if (path === "/api/page") {
+    await enterPage(next);
+    say(t("done.page", { name: next.page.name }));
+    return;
+  }
+  await adopt(next);
+  if (path !== "/api/reference") return say(t("done.palette"));
+  say(
+    next.result.panels
+      ? t("done.reference.page", { count: next.result.panels })
+      : t("done.reference", { kind: kindName(next.result.kind) }),
+  );
+}
+
+for (const name of ["dragenter", "dragover"]) {
+  document.addEventListener(name, (event) => {
+    if (!event.dataTransfer || !event.dataTransfer.types.includes("Files")) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    document.body.classList.add("dropping");
+  });
+}
+document.addEventListener("dragleave", (event) => {
+  if (!event.relatedTarget) document.body.classList.remove("dropping");
+});
+document.addEventListener("drop", (event) => {
+  if (!event.dataTransfer || !event.dataTransfer.files.length) return;
+  event.preventDefault();
+  document.body.classList.remove("dropping");
+  dropFile(event.dataTransfer.files[0]);
+});
 
 // Another page on screen: nothing selected, drawn or zoomed carries over. The
 // corrections a reopened page already holds were made in another sitting, so
@@ -922,7 +998,10 @@ async function exportPsd() {
   const count = exportLayers();
   try {
     const blob = await working(t("work.export"), false, async () => {
-      const response = await fetch(`/api/export?granularity=${granularity}`, { method: "POST" });
+      const response = await fetch(
+        `/api/export?granularity=${granularity}&support_grey=${controls.supportGrey}`,
+        { method: "POST" },
+      );
       if (!response.ok) throw failure(await response.json().catch(() => ({})), response.statusText);
       return response.blob();
     });
@@ -1081,7 +1160,20 @@ function stepBody(id) {
       return [
         askBlock("bubbles"),
         note(state.editable.bubbles ? t("hint.bubbles") : done.bubbles ? t("closed.bubbles") : t("about.bubbles")),
-        runButton("bubbles", t("run.bubbles"), t("run.bubbles.again")),
+        h(
+          "div",
+          { class: "row" },
+          button(done.bubbles ? t("run.bubbles.again") : t("run.bubbles"), {
+            kind: done.bubbles ? "" : "primary",
+            key: "run-bubbles",
+            onclick: () => requestRun("bubbles"),
+          }),
+          button(t("run.bubbles.skip"), {
+            kind: "quiet",
+            key: "skip-bubbles",
+            onclick: () => requestRun("bubbles_skip"),
+          }),
+        ),
       ];
     case "zones":
       return [
@@ -1110,9 +1202,26 @@ function stepBody(id) {
         askBlock("flats"),
         state.flats_stale ? note(t("flats.stale"), true) : null,
         note(done.flats ? t("flats.done", { count: state.segments.count }) : t("about.flats")),
-        colourMode(),
+        // Said before the press, never as a refusal after it. Most artists
+        // have no reference sheets at all — the way on is right beside it.
+        wantsReferences() ? note(t("flats.no_reference"), true) : null,
         ...gpuNotes(),
-        runButton("flats", t("run.flats"), t("run.flats.again"), gpuBlock()),
+        h(
+          "div",
+          { class: "row" },
+          button(done.flats ? t("run.flats.again") : t("run.flats"), {
+            kind: done.flats ? "" : "primary",
+            key: "run-flats",
+            disabled: Boolean(gpuBlock()),
+            why: gpuBlock(),
+            onclick: () => requestRun("flats"),
+          }),
+          button(t("run.flats.plain"), {
+            kind: "quiet",
+            key: "run-flats-plain",
+            onclick: () => requestRun("flats_plain"),
+          }),
+        ),
         gpu?.remote ? monthLeft(gpu.quota) : null,
       ];
     case "snap": {
@@ -1184,7 +1293,23 @@ function stepBody(id) {
           ),
         ),
         heavy ? note(t("export.warning", { count }), true) : note(t("export.count", { count })),
-        note(t("export.note")),
+        // The one thing that puts the artist's ink in an export, asked for by
+        // name. Off by default: the flats carry no line (rule 7).
+        h(
+          "label",
+          { class: "check" },
+          h("input", {
+            type: "checkbox",
+            checked: controls.supportGrey,
+            "data-key": "support-grey",
+            onchange: (event) => {
+              controls.supportGrey = event.target.checked;
+              renderRail();
+            },
+          }),
+          h("span", {}, t("export.support_grey")),
+        ),
+        note(controls.supportGrey ? t("export.support_grey_note") : t("export.note")),
         h(
           "div",
           { class: "row" },
@@ -1269,6 +1394,7 @@ function renderInspector() {
     $("inspector-body").replaceChildren(...body.filter(Boolean));
     $("inspector-footer").replaceChildren(...footer.filter(Boolean));
   });
+  renderNear();
 }
 
 const heading = (text) => h("h2", { class: "ins-title" }, text);
@@ -1529,35 +1655,15 @@ function gpuNotes() {
   return gpu.signed_in && !gpu.quota ? [note(t("flats.quota_unknown"))] : [];
 }
 
-// Cobra or distinct colours, chosen by the artist and never swapped behind
-// their back (ROADMAP B2). Offered only where the app has both.
-function colourMode() {
-  if (!state.proposers || state.proposers.length < 2) return null;
-  return h(
-    "label",
-    { class: "field" },
-    h("span", {}, t("flats.mode")),
-    h(
-      "select",
-      { "data-key": "colour-mode", onchange: (event) => chooseColours(event.target.value) },
-      h("option", { value: "remote", selected: state.proposer === "remote" }, t("flats.mode_remote")),
-      h("option", { value: "distinct", selected: state.proposer === "distinct" }, t("flats.mode_distinct")),
-    ),
-  );
-}
-
-async function chooseColours(name) {
-  try {
-    state = await call("/api/proposer", {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name }),
-    });
-  } catch (error) {
-    say(error.message, true);
-  }
-  await refreshGpu();
-  renderAll();
+// "Distinct" was a word on screen and nobody knew what it meant — and the
+// picture it made was the one step 4 had already drawn, so pressing it looked
+// like nothing happening. Step 5 offers two ends instead, named for what the
+// artist gets: generate the colours, or continue without. The proposer is a
+// setting of the machine now, not a choice in the interface (ROADMAP B2 still
+// holds: nothing falls back to distinct behind the artist's back — they press
+// the other button themselves).
+function wantsReferences() {
+  return state.proposer !== "distinct" && !state.references.length;
 }
 
 function accountCall(label, path, method, body) {
@@ -1645,10 +1751,25 @@ function zonesView() {
   if (cutting) {
     return [
       [note(t("inspect.zones.cutting"))],
-      [button(t("inspect.zones.stop_cut"), { kind: "quiet", key: "stop-cut", onclick: stopCut })],
+      [
+        button(t("inspect.zones.finish_cut"), {
+          key: "finish-cut",
+          disabled: cutting.stroke.length < 2,
+          why: t("inspect.zones.finish_why"),
+          onclick: applyCut,
+        }),
+        button(t("inspect.zones.stop_cut"), { kind: "quiet", key: "stop-cut", onclick: stopCut }),
+      ],
     ];
   }
-  if (!picked.size) return [[note(t("inspect.zones.empty"))], []];
+  if (!picked.size) {
+    return [
+      [note(t("inspect.zones.empty"))],
+      state.undo
+        ? [button(t("inspect.zones.undo"), { kind: "quiet", key: "undo", onclick: undoZones })]
+        : [],
+    ];
+  }
   const zones = [...picked.values()];
   const measured = zones.every((zone) => zone.trace);
   const area = zones.reduce((sum, zone) => sum + (zone.trace ? zone.trace.area : 0), 0);
@@ -1671,6 +1792,13 @@ function zonesView() {
         onclick: startCut,
       }),
       button(t("inspect.zones.clear"), { kind: "quiet", key: "clear", onclick: clearPicked }),
+      button(t("inspect.zones.undo"), {
+        kind: "quiet",
+        key: "undo",
+        disabled: !state.undo,
+        why: t("inspect.zones.undo_why"),
+        onclick: undoZones,
+      }),
     ],
   ];
 }
@@ -1691,9 +1819,26 @@ function flatsView() {
 // Choosing a colour other than the suggestion opens the palette under it.
 let choosing = false;
 
+// Step 6's inspector keeps the count and nothing else. What belongs to the
+// zone under the pointer goes next to the zone, in `renderNear` below: the
+// tester could not find the buttons, and they were right — the zone was under
+// their hand and the decision about it was at the other end of the screen.
 function snapView() {
+  const { count, snapped } = state.segments;
   if (!state.done.flats) return [[note(t("inspect.flats.not_run"))], []];
-  if (!selected) return [[note(t("inspect.snap.empty"))], []];
+  return [
+    [
+      heading(t("inspect.snap.title_all")),
+      h("div", { class: "ins-row num" }, t("inspect.snap.left", { count: count - snapped })),
+      h("div", { class: "ins-row num" }, t("inspect.flats.segments", { count })),
+      selected ? null : note(t("inspect.snap.empty")),
+    ],
+    [],
+  ];
+}
+
+function snapPanel() {
+  if (!state.done.flats || !selected) return null;
 
   const holding = paletteById().get(selected.palette_entry_id);
   const suggestion = selected.suggestion;
@@ -1772,10 +1917,12 @@ function snapView() {
     );
   }
 
-  return [
-    body,
-    [
+  body.push(
+    h(
+      "div",
+      { class: "row" },
       button(t("inspect.snap.snap"), {
+        kind: "primary",
         key: "snap",
         disabled: !suggestion || taken,
         why: taken ? t("inspect.snap.taken") : t("inspect.snap.no_suggestion"),
@@ -1788,7 +1935,7 @@ function snapView() {
         pressed: choosing,
         onclick: () => {
           choosing = !choosing;
-          renderInspector();
+          renderNear();
         },
       }),
       button(t("inspect.snap.unsnap"), {
@@ -1798,8 +1945,37 @@ function snapView() {
         why: t("inspect.snap.not_snapped"),
         onclick: unsnapSelected,
       }),
-    ],
-  ];
+    ),
+  );
+  return body;
+}
+
+// The window that follows the zone. Placed beside the zone's own box, then
+// kept inside the canvas — a panel clipped by the edge hides the button it
+// exists to offer. It covers artwork, which `UI.md` R7 forbade: the rule was
+// written against pop-ups that interrupt, and this one is the opposite, the
+// decision brought to where the artist is already looking. Recorded as a
+// deviation in `UI.md`, with the logo and the zoom.
+function renderNear() {
+  const panel = $("near");
+  const body = current === "snap" ? snapPanel() : null;
+  if (!body) {
+    panel.hidden = true;
+    panel.replaceChildren();
+    return;
+  }
+  keepFocus(() => panel.replaceChildren(...body.filter(Boolean)));
+  panel.hidden = false;
+  const [left, top, right, bottom] = selected.bounds;
+  const [sx, sy] = view.toScreen(right, top);
+  const [bx] = view.toScreen(left, bottom);
+  const width = panel.offsetWidth;
+  const height = panel.offsetHeight;
+  // To the right of the zone when there is room, to its left when there is
+  // not: the window never sits on top of what it is describing.
+  const x = sx + 12 + width <= stage.clientWidth - 4 ? sx + 12 : bx - 12 - width;
+  panel.style.left = `${Math.max(4, Math.min(x, stage.clientWidth - width - 4))}px`;
+  panel.style.top = `${Math.max(4, Math.min(sy, stage.clientHeight - height - 4))}px`;
 }
 
 function exportView() {
@@ -1902,6 +2078,282 @@ function chip(reference, candidate) {
   );
 }
 
+// ---- the colour box ---------------------------------------------------------
+//
+// Until this existed a colour could only come out of an image, and the first
+// tester had a palette in their head and no way to put it in the app. Four
+// ways in, because colourists do not all think in the same numbers: the wheel,
+// RGB, HSL and a hexadecimal field. CMYK is shown too, and is *arithmetic* —
+// no profile, no colour management, so it is marked as indicative rather than
+// pretending to be a press. The eyedropper reads the artwork itself.
+//
+// One box serves both doors: mixing a new colour, and changing one the palette
+// already holds. `mixing.target` says which.
+
+let mixing = null; // {target: "new" | entryId, rgb: [r, g, b], picking: bool}
+
+const WHEEL = 152; // px across, the inspector's usable width
+
+function toHsv([r, g, b]) {
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const span = max - min;
+  let hue = 0;
+  if (span) {
+    if (max === r) hue = ((g - b) / span + 6) % 6;
+    else if (max === g) hue = (b - r) / span + 2;
+    else hue = (r - g) / span + 4;
+    hue *= 60;
+  }
+  return [hue, max ? span / max : 0, max / 255];
+}
+
+function fromHsv(hue, saturation, value) {
+  const c = value * saturation;
+  const x = c * (1 - Math.abs(((hue / 60) % 2) - 1));
+  const m = value - c;
+  const sixth = Math.floor(hue / 60) % 6;
+  const [r, g, b] = [
+    [c, x, 0],
+    [x, c, 0],
+    [0, c, x],
+    [0, x, c],
+    [x, 0, c],
+    [c, 0, x],
+  ][sixth];
+  return [r, g, b].map((part) => Math.round((part + m) * 255));
+}
+
+function toHsl([r, g, b]) {
+  const [hue, , value] = toHsv([r, g, b]);
+  const min = Math.min(r, g, b) / 255;
+  const light = (value + min) / 2;
+  const span = value - min;
+  const saturation = span === 0 ? 0 : span / (1 - Math.abs(2 * light - 1));
+  return [Math.round(hue), Math.round(saturation * 100), Math.round(light * 100)];
+}
+
+function fromHsl(hue, saturation, light) {
+  const s = saturation / 100;
+  const l = light / 100;
+  const value = l + s * Math.min(l, 1 - l);
+  return fromHsv(hue, value ? 2 * (1 - l / value) : 0, value);
+}
+
+// Arithmetic, and only arithmetic. No profile is embedded and none is meant:
+// these numbers are a way of *thinking* about a colour, not a way of printing
+// it, and the line under them says so.
+function toCmyk([r, g, b]) {
+  const k = 1 - Math.max(r, g, b) / 255;
+  if (k === 1) return [0, 0, 0, 100];
+  const at = (part) => Math.round(((1 - part / 255 - k) / (1 - k)) * 100);
+  return [at(r), at(g), at(b), Math.round(k * 100)];
+}
+
+// The wheel: hue around, saturation out from the middle, at the value the
+// slider holds. Drawn once per render into a detached canvas, which costs one
+// pass over 152² pixels and saves a dependency (R9).
+function wheelCanvas(value) {
+  const canvas = document.createElement("canvas");
+  canvas.width = WHEEL;
+  canvas.height = WHEEL;
+  canvas.className = "wheel";
+  const paint = canvas.getContext("2d");
+  const image = paint.createImageData(WHEEL, WHEEL);
+  const middle = WHEEL / 2;
+  for (let y = 0; y < WHEEL; y++) {
+    for (let x = 0; x < WHEEL; x++) {
+      const dx = x - middle + 0.5;
+      const dy = y - middle + 0.5;
+      const radius = Math.hypot(dx, dy);
+      const at = (y * WHEEL + x) * 4;
+      if (radius > middle) continue;
+      const [r, g, b] = fromHsv((Math.atan2(dy, dx) * 180) / Math.PI + 180, Math.min(1, radius / middle), value);
+      image.data[at] = r;
+      image.data[at + 1] = g;
+      image.data[at + 2] = b;
+      // One pixel of feather on the rim, so the disc has no staircase edge.
+      image.data[at + 3] = Math.round(255 * Math.min(1, middle - radius));
+    }
+  }
+  paint.putImageData(image, 0, 0);
+  return canvas;
+}
+
+function wheelPick(canvas, event) {
+  const rect = canvas.getBoundingClientRect();
+  const middle = WHEEL / 2;
+  const dx = ((event.clientX - rect.left) / rect.width) * WHEEL - middle;
+  const dy = ((event.clientY - rect.top) / rect.height) * WHEEL - middle;
+  const [, , value] = toHsv(mixing.rgb);
+  const hue = (Math.atan2(dy, dx) * 180) / Math.PI + 180;
+  setMixed(fromHsv(hue, Math.min(1, Math.hypot(dx, dy) / middle), value));
+}
+
+function setMixed(rgb) {
+  mixing.rgb = rgb.map((part) => Math.max(0, Math.min(255, Math.round(part))));
+  renderInspector();
+}
+
+function numberField(label, value, min, max, onset) {
+  return h(
+    "label",
+    { class: "part" },
+    h("span", {}, label),
+    h("input", {
+      type: "number",
+      min,
+      max,
+      step: 1,
+      value: String(value),
+      onchange: (event) => onset(Number(event.target.value)),
+    }),
+  );
+}
+
+function colourBox() {
+  const rgb = mixing.rgb;
+  const [hue, saturation, value] = toHsv(rgb);
+  const hsl = toHsl(rgb);
+  const cmyk = toCmyk(rgb);
+  const wheel = wheelCanvas(value || 1);
+  wheel.addEventListener("pointerdown", (event) => {
+    wheel.setPointerCapture(event.pointerId);
+    wheelPick(wheel, event);
+  });
+  wheel.addEventListener("pointermove", (event) => {
+    if (wheel.hasPointerCapture(event.pointerId)) wheelPick(wheel, event);
+  });
+
+  const middle = WHEEL / 2;
+  const angle = ((hue - 180) * Math.PI) / 180;
+  return h(
+    "div",
+    { class: "box" },
+    h(
+      "div",
+      { class: "wheel-wrap" },
+      wheel,
+      // Where the colour sits on the disc. A ring, not a dot: §11 keeps hue
+      // off anything drawn over what is being judged.
+      h("i", {
+        class: "wheel-mark",
+        style: {
+          left: `${((middle + Math.cos(angle) * saturation * middle) / WHEEL) * 100}%`,
+          top: `${((middle + Math.sin(angle) * saturation * middle) / WHEEL) * 100}%`,
+        },
+      }),
+    ),
+    h(
+      "label",
+      { class: "field" },
+      h("span", {}, t("palette.value")),
+      h("input", {
+        type: "range",
+        min: 0,
+        max: 100,
+        value: String(Math.round(value * 100)),
+        oninput: (event) => setMixed(fromHsv(hue, saturation, Number(event.target.value) / 100)),
+      }),
+    ),
+    h(
+      "div",
+      { class: "parts" },
+      numberField(t("palette.r"), rgb[0], 0, 255, (n) => setMixed([n, rgb[1], rgb[2]])),
+      numberField(t("palette.g"), rgb[1], 0, 255, (n) => setMixed([rgb[0], n, rgb[2]])),
+      numberField(t("palette.b"), rgb[2], 0, 255, (n) => setMixed([rgb[0], rgb[1], n])),
+    ),
+    h(
+      "div",
+      { class: "parts" },
+      numberField(t("palette.h"), hsl[0], 0, 360, (n) => setMixed(fromHsl(n, hsl[1], hsl[2]))),
+      numberField(t("palette.s"), hsl[1], 0, 100, (n) => setMixed(fromHsl(hsl[0], n, hsl[2]))),
+      numberField(t("palette.l"), hsl[2], 0, 100, (n) => setMixed(fromHsl(hsl[0], hsl[1], n))),
+    ),
+    h(
+      "label",
+      { class: "field" },
+      h("span", {}, t("palette.hex")),
+      h("input", {
+        type: "text",
+        value: hex(rgb),
+        spellcheck: "false",
+        onchange: (event) => {
+          const read = /^#?([0-9a-f]{6})$/i.exec(event.target.value.trim());
+          if (!read) return renderInspector();
+          setMixed([0, 2, 4].map((at) => parseInt(read[1].slice(at, at + 2), 16)));
+        },
+      }),
+    ),
+    h("div", { class: "ins-row num" }, t("palette.cmyk", { c: cmyk[0], m: cmyk[1], y: cmyk[2], k: cmyk[3] })),
+    note(t("palette.cmyk_note")),
+    h(
+      "div",
+      { class: "row" },
+      button(mixing.picking ? t("palette.picking") : t("palette.pick"), {
+        kind: "quiet",
+        key: "pick-colour",
+        onclick: () => {
+          mixing.picking = !mixing.picking;
+          renderInspector();
+          render();
+        },
+      }),
+      button(mixing.target === "new" ? t("palette.keep_new") : t("palette.keep"), {
+        kind: "primary",
+        key: "keep-colour",
+        onclick: keepMixed,
+      }),
+      button(t("palette.cancel"), {
+        kind: "quiet",
+        key: "cancel-colour",
+        onclick: () => {
+          mixing = null;
+          renderInspector();
+          render();
+        },
+      }),
+    ),
+  );
+}
+
+async function keepMixed() {
+  const { target, rgb } = mixing;
+  mixing = null;
+  try {
+    if (target === "new") {
+      const next = await call("/api/palette/colour", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ rgb }),
+      });
+      entrySelected = next.entry_id;
+      await adopt(next);
+      say(t("status.colour_added"));
+    } else {
+      await recolour(target, hex(rgb));
+    }
+  } catch (error) {
+    say(error.message, true);
+  }
+  render();
+}
+
+// The eyedropper reads the artwork as it is on screen — the page, and the
+// colours already laid on it. One offscreen canvas, redrawn from the layer the
+// step is showing, so what the artist points at is what they get.
+function sampleAt(x, y) {
+  const source = layers.flats && shows().flats ? layers.flats : layers.page;
+  if (!source) return null;
+  const sheet = document.createElement("canvas");
+  sheet.width = 1;
+  sheet.height = 1;
+  const paint = sheet.getContext("2d", { willReadFrequently: true });
+  paint.drawImage(source, x, y, 1, 1, 0, 0, 1, 1);
+  const [r, g, b, a] = paint.getImageData(0, 0, 1, 1).data;
+  return a ? [r, g, b] : null;
+}
+
 // The id under a swatch never changes, whatever colour it holds — that is what
 // makes "change the hair colour everywhere" one row (rule 1), and the
 // interface shows it.
@@ -1937,25 +2389,36 @@ function paletteView() {
     );
   }
   const entry = colours.find((candidate) => candidate.id === entrySelected);
-  if (entry) {
+  if (mixing) {
+    body.push(
+      h(
+        "div",
+        { class: "editor" },
+        h("h3", { class: "ins-sub" }, mixing.target === "new" ? t("palette.new") : t("palette.colour", { id: String(mixing.target) })),
+        colourBox(),
+      ),
+    );
+  } else if (entry) {
     body.push(
       h(
         "div",
         { class: "editor" },
         h(
-          "label",
-          { class: "field" },
+          "div",
+          { class: "ins-row" },
+          h("i", { class: "ins-swatch", style: { background: rgb(entry.rgb) } }),
           h("span", {}, t("palette.colour", { id: String(entry.id) })),
-          h("input", {
-            type: "color",
-            value: hex(entry.rgb),
-            "data-key": "recolour",
-            onchange: (event) => recolour(entry.id, event.target.value),
-          }),
         ),
         h(
           "div",
           { class: "row" },
+          button(t("palette.change"), {
+            key: "change-colour",
+            onclick: () => {
+              mixing = { target: entry.id, rgb: entry.rgb, picking: false };
+              renderInspector();
+            },
+          }),
           button(t("palette.remove"), {
             kind: "destructive",
             key: "remove-colour",
@@ -1997,7 +2460,21 @@ function paletteView() {
       ),
     );
   }
-  return [body, [button(t("palette.add_image"), { key: "add-palette", onclick: () => $("pal-file").click() })]];
+  return [
+    body,
+    [
+      button(t("palette.mix"), {
+        kind: "primary",
+        key: "mix-colour",
+        onclick: () => {
+          entrySelected = null;
+          mixing = { target: "new", rgb: [228, 162, 128], picking: false };
+          renderInspector();
+        },
+      }),
+      button(t("palette.add_image"), { key: "add-palette", onclick: () => $("pal-file").click() }),
+    ],
+  ];
 }
 
 // ---- the palette and the references, over the wire --------------------------
@@ -2174,6 +2651,8 @@ function render() {
   drawDraft(editing);
   if (editing === "zones") drawPicked();
   if (picking()) drawSegment();
+  // The window beside the zone moves with the picture it is pinned to.
+  renderNear();
   startMarching();
 }
 
@@ -2200,12 +2679,32 @@ function strokeTwice(dash = [], offset = 0, under = 3, over = 1.5, colours = [to
   ctx.restore();
 }
 
+// A node is [x, y] — a corner — or [x, y, hx, hy], where [hx, hy] is the
+// tangent the artist pulled out of it when they placed it. The handle points
+// the way out of its node and the next node is entered against its own, which
+// is what makes the joint smooth. The server is never told what a Bézier is:
+// it samples the same curve into points at the moment it rasterises one.
+const pulled = (node) => node.length > 2 && (node[2] || node[3]);
+
 function tracePath(points, close) {
-  points.forEach(([px, py], index) => {
-    const [x, y] = view.toScreen(px, py);
-    if (index === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
-  });
+  if (!points.some(pulled)) {
+    points.forEach(([px, py], index) => {
+      const [x, y] = view.toScreen(px, py);
+      if (index === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    if (close) ctx.closePath();
+    return;
+  }
+  ctx.moveTo(...view.toScreen(points[0][0], points[0][1]));
+  const edges = close ? points.length : points.length - 1;
+  for (let index = 0; index < edges; index++) {
+    const from = points[index];
+    const to = points[(index + 1) % points.length];
+    const out = pulled(from) ? view.toScreen(from[0] + from[2], from[1] + from[3]) : view.toScreen(from[0], from[1]);
+    const into = pulled(to) ? view.toScreen(to[0] - to[2], to[1] - to[3]) : view.toScreen(to[0], to[1]);
+    ctx.bezierCurveTo(out[0], out[1], into[0], into[1], ...view.toScreen(to[0], to[1]));
+  }
   if (close) ctx.closePath();
 }
 
@@ -2249,15 +2748,35 @@ function handle(x, y, under) {
 
 let hover = null; // {index, corner} — the corner under the pointer
 
+// The tangent of one node: a thin line out of it and a round grip at the end,
+// drawn only on the selected shape so a page of panels is not a field of dots.
+function drawTangent(node) {
+  if (!pulled(node)) return;
+  const [x, y] = view.toScreen(node[0], node[1]);
+  const [hx, hy] = view.toScreen(node[0] + node[2], node[1] + node[3]);
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.lineTo(hx, hy);
+  strokeTwice([], 0, 2, 1);
+  ctx.beginPath();
+  ctx.arc(hx, hy, 4, 0, Math.PI * 2);
+  ctx.fillStyle = tokens.light;
+  ctx.fill();
+  ctx.strokeStyle = tokens.dark;
+  ctx.lineWidth = 1;
+  ctx.stroke();
+}
+
 function drawHandles(editing) {
   if (!editing || editing === "zones" || draft) return;
   ctx.save();
-  shapes().forEach((polygon, index) =>
-    polygon.forEach(([px, py], corner) => {
-      const [x, y] = view.toScreen(px, py);
+  shapes().forEach((polygon, index) => {
+    polygon.forEach((node, corner) => {
+      const [x, y] = view.toScreen(node[0], node[1]);
       handle(x, y, Boolean(hover) && hover.index === index && hover.corner === corner);
-    }),
-  );
+    });
+    if (shapeSelected === index) polygon.forEach(drawTangent);
+  });
   ctx.restore();
 }
 
@@ -2270,9 +2789,10 @@ function drawDraft(editing) {
   tracePath(points, false);
   strokeTwice();
   ctx.save();
-  for (const [px, py] of draft.points) {
-    const [x, y] = view.toScreen(px, py);
+  for (const node of draft.points) {
+    const [x, y] = view.toScreen(node[0], node[1]);
     handle(x, y, false);
+    drawTangent(node);
   }
   ctx.restore();
   if (draft.points.length >= 3) {
@@ -2454,6 +2974,22 @@ function onPage([x, y]) {
   ];
 }
 
+// The grip at the end of a tangent, tested before the node itself: it sits
+// away from the node, so the two never overlap, and reaching for the curve is
+// the commoner gesture once a shape is drawn.
+function hitGrip(sx, sy) {
+  if (shapeSelected === null) return null;
+  const polygon = shapes()[shapeSelected];
+  if (!polygon) return null;
+  for (let corner = 0; corner < polygon.length; corner++) {
+    const node = polygon[corner];
+    if (!pulled(node)) continue;
+    const [x, y] = view.toScreen(node[0] + node[2], node[1] + node[3]);
+    if (Math.hypot(x - sx, y - sy) <= HANDLE) return { index: shapeSelected, corner };
+  }
+  return null;
+}
+
 function hitCorner(sx, sy) {
   const polygons = shapes();
   // Last first: the shape drawn on top is the one the artist sees on top.
@@ -2546,6 +3082,12 @@ async function saveShape(index) {
     await adopt(await call("/api/state"));
     say(error.message, true);
   }
+}
+
+async function straighten({ index, corner }) {
+  const polygon = shapes()[index];
+  polygon[corner] = [polygon[corner][0], polygon[corner][1]];
+  await saveShape(index);
 }
 
 async function deleteCorner({ index, corner }) {
@@ -2684,9 +3226,18 @@ function drawPicked() {
     strokeTwice(DASH.selected, -marching);
   }
   if (cutting && cutting.stroke.length) {
+    // The same gesture as a panel or a bubble: placed points, a rubber band to
+    // the pointer, a handle on every node. A cut is aimed, not sketched — the
+    // first tester could not hit a leak by dragging a mouse across it.
     ctx.beginPath();
-    tracePath(cutting.stroke, false);
+    tracePath(cursor ? [...cutting.stroke, cursor] : cutting.stroke, false);
     strokeTwice(DASH.cut, 0, 4, 2);
+    ctx.save();
+    for (const [px, py] of cutting.stroke) {
+      const [x, y] = view.toScreen(px, py);
+      handle(x, y, false);
+    }
+    ctx.restore();
   }
 }
 
@@ -2713,15 +3264,29 @@ async function mergePicked() {
   }
 }
 
+async function undoZones() {
+  try {
+    const next = await call("/api/zones/undo", { method: "POST" });
+    picked.clear();
+    traces.clear();
+    await adopt(next);
+    say(t("status.undone"));
+  } catch (error) {
+    say(error.message, true);
+  }
+}
+
 function startCut() {
   const [zone] = [...picked.values()];
   cutting = { panel: zone.panel, label: zone.label, stroke: [] };
+  cursor = null;
   renderInspector();
   say(t("status.cut_draw"));
 }
 
 function stopCut() {
   cutting = null;
+  cursor = null;
   renderInspector();
   render();
   say(t("status.cut_stopped"));
@@ -2730,6 +3295,7 @@ function stopCut() {
 async function applyCut() {
   const { panel, label, stroke } = cutting;
   cutting = null;
+  cursor = null;
   try {
     const next = await call("/api/zones/cut", {
       method: "POST",
@@ -2826,12 +3392,12 @@ stage.addEventListener("pointerdown", (event) => {
   const point = onPage(view.toImage(sx, sy));
 
   if (which === "zones") {
-    stage.setPointerCapture(event.pointerId);
     if (cutting) {
-      cutting.stroke = [point];
+      cutting.stroke.push(point);
       render();
       return;
     }
+    stage.setPointerCapture(event.pointerId);
     // The press itself selects; the sweep that may follow only adds.
     sweep = { points: [point], sent: 0 };
     pressZone(point[0], point[1]);
@@ -2844,8 +3410,21 @@ stage.addEventListener("pointerdown", (event) => {
       closeDraft();
     } else {
       draft.points.push(point);
+      // Holding the click and moving pulls a tangent out of the node just
+      // placed — the gesture every drawing program has, and the one the
+      // tester asked for by name.
+      drag = { index: -1, corner: draft.points.length - 1, grip: true, dirty: false };
+      stage.setPointerCapture(event.pointerId);
       render();
     }
+    return;
+  }
+
+  // A grip belongs to the node it hangs off, so it is tested first.
+  const grip = hitGrip(sx, sy);
+  if (grip) {
+    drag = { ...grip, grip: true, dirty: false };
+    stage.setPointerCapture(event.pointerId);
     return;
   }
 
@@ -2884,9 +3463,10 @@ stage.addEventListener("pointermove", (event) => {
   const [sx, sy] = local(event);
 
   if (which === "zones") {
-    if (cutting && cutting.stroke.length) {
-      cutting.stroke.push(onPage(view.toImage(sx, sy)));
-      render();
+    if (cutting) {
+      // Only the rubber band follows the hand; the line itself is the nodes.
+      cursor = view.toImage(sx, sy);
+      if (cutting.stroke.length) render();
     } else if (sweep) {
       sweep.points.push(onPage(view.toImage(sx, sy)));
       // Sent in flight rather than only on release, so the outline keeps up
@@ -2901,7 +3481,19 @@ stage.addEventListener("pointermove", (event) => {
   }
 
   if (drag) {
-    shapes()[drag.index][drag.corner] = onPage(view.toImage(sx, sy));
+    const polygon = drag.index === -1 ? draft.points : shapes()[drag.index];
+    if (drag.grip) {
+      // The tangent is where the hand is, measured from the node it leaves.
+      const [px, py] = view.toImage(sx, sy);
+      const node = polygon[drag.corner];
+      const [hx, hy] = [Math.round(px - node[0]), Math.round(py - node[1])];
+      polygon[drag.corner] = Math.hypot(hx, hy) < 2 ? [node[0], node[1]] : [node[0], node[1], hx, hy];
+    } else {
+      const moved = onPage(view.toImage(sx, sy));
+      const node = polygon[drag.corner];
+      // Moving a node carries its tangent with it.
+      polygon[drag.corner] = node.length > 2 ? [...moved, node[2], node[3]] : moved;
+    }
     drag.dirty = true;
     render();
     return;
@@ -2914,6 +3506,7 @@ stage.addEventListener("pointermove", (event) => {
   const corner = hitCorner(sx, sy);
   const moved = (corner && (!hover || hover.index !== corner.index || hover.corner !== corner.corner)) || (!corner && hover);
   hover = corner;
+  stage.classList.toggle("sampling", Boolean(mixing && mixing.picking));
   stage.classList.toggle("on-corner", Boolean(corner));
   stage.classList.toggle("on-edge", !corner && Boolean(hitEdge(sx, sy)));
   if (moved) render();
@@ -2923,10 +3516,7 @@ stage.addEventListener("pointerup", (event) => {
   const which = activeLayer();
   if (stage.hasPointerCapture(event.pointerId)) stage.releasePointerCapture(event.pointerId);
   if (which === "zones") {
-    if (cutting && cutting.stroke.length) {
-      applyCut();
-      return;
-    }
+    if (cutting) return;
     if (sweep) {
       const path = sweep.points.slice(Math.max(0, sweep.sent - 1));
       sweep = null;
@@ -2937,7 +3527,9 @@ stage.addEventListener("pointerup", (event) => {
   if (!drag) return;
   const { dirty, index } = drag;
   drag = null;
-  if (dirty) saveShape(index);
+  // A node of a shape still being drawn has nothing to save yet.
+  if (dirty && index !== -1) saveShape(index);
+  else if (index === -1) render();
 });
 
 stage.addEventListener("click", (event) => {
@@ -2945,9 +3537,18 @@ stage.addEventListener("click", (event) => {
     panned = false;
     return;
   }
-  if (!picking()) return;
   const [x, y] = view.toImage(...local(event));
   if (x < 0 || y < 0 || x >= state.page.width || y >= state.page.height) return;
+  if (mixing && mixing.picking) {
+    const sampled = sampleAt(Math.round(x), Math.round(y));
+    if (sampled) {
+      mixing.picking = false;
+      setMixed(sampled);
+      render();
+    }
+    return;
+  }
+  if (!picking()) return;
   pickSegment(x, y);
 });
 
@@ -2992,13 +3593,19 @@ stage.addEventListener("contextmenu", (event) => {
   const [sx, sy] = local(event);
 
   if (which === "zones") {
-    if (cutting) return openMenu(event, [{ label: t("menu.stop_cutting"), action: stopCut }]);
+    if (cutting) {
+      const cut = [];
+      if (cutting.stroke.length >= 2) cut.push({ label: t("menu.finish_cut"), action: applyCut });
+      cut.push({ label: t("menu.stop_cutting"), action: stopCut });
+      return openMenu(event, cut);
+    }
     const items = [];
     if (picked.size >= 2) items.push({ label: t("menu.merge", { count: picked.size }), action: mergePicked });
     // Cutting is one zone's business: with several selected there is no
     // saying which one the stroke belongs to.
     if (picked.size === 1) items.push({ label: t("menu.cut"), action: startCut });
     if (picked.size) items.push({ label: t("menu.clear"), action: clearPicked });
+    if (state.undo) items.push({ label: t("menu.undo"), action: undoZones });
     if (items.length) openMenu(event, items);
     return;
   }
@@ -3009,13 +3616,22 @@ stage.addEventListener("contextmenu", (event) => {
       { label: panels ? t("menu.stop_panel") : t("menu.stop_bubble"), action: discardDraft },
     ]);
   }
+  const grip = hitGrip(sx, sy);
+  if (grip) {
+    return openMenu(event, [{ label: t("menu.straighten"), action: () => straighten(grip) }]);
+  }
   const corner = hitCorner(sx, sy);
   if (corner) {
     // On a triangle the corner is the shape — say so, so the click that removes
     // the whole detection never comes as a surprise.
     const last = shapes()[corner.index].length <= 3;
+    const items = [];
+    if (pulled(shapes()[corner.index][corner.corner])) {
+      items.push({ label: t("menu.straighten"), action: () => straighten(corner) });
+    }
     const label = !last ? t("menu.delete_corner") : panels ? t("menu.delete_panel") : t("menu.delete_bubble");
-    return openMenu(event, [{ label, action: () => deleteCorner(corner) }]);
+    items.push({ label, action: () => deleteCorner(corner) });
+    return openMenu(event, items);
   }
   const index = shapeAt(sx, sy);
   if (index !== null) {
@@ -3118,6 +3734,14 @@ document.addEventListener("keydown", (event) => {
     }
     return;
   }
+  // Undo belongs to step 4 alone: merge and cut are the only corrections the
+  // app can put back, and they stop being undoable once the step is left.
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
+    if (activeLayer() !== "zones" || cutting) return;
+    event.preventDefault();
+    undoZones();
+    return;
+  }
   // Space and 0 belong to a focused control when there is one.
   if (event.target.matches("input, textarea, select, button")) return;
   if (event.code === "Space" && !event.repeat) {
@@ -3210,6 +3834,7 @@ new ResizeObserver(resize).observe(stage);
   controls.threshold = state.segments.threshold;
   controls.gap = Math.round(state.leak_gap * 100);
   controls.granularity = state.export.granularity || "colour";
+  controls.supportGrey = Boolean(state.export.support_grey);
   edits = {
     panels: state.done.panels ? null : 0,
     bubbles: state.done.bubbles ? null : 0,

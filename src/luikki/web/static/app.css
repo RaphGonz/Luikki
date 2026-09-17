@@ -384,6 +384,27 @@ input[type="checkbox"] { margin: 0; accent-color: var(--action); }
 .swatch span { font-size: var(--fs-num); font-variant-numeric: tabular-nums; }
 
 .editor { display: flex; flex-direction: column; gap: var(--s-2); }
+
+/* The colour box. Four ways into one colour, stacked in the inspector: the
+   wheel, then brightness, then the numbers. No dependency draws any of it. */
+.box { display: flex; flex-direction: column; gap: var(--s-2); }
+.wheel-wrap { position: relative; align-self: center; line-height: 0; }
+.wheel { width: 152px; height: 152px; touch-action: none; cursor: crosshair; }
+/* Where the colour sits on the disc: a ring, never a filled dot — nothing
+   drawn over a colour being judged carries a hue of its own (§11). */
+.wheel-mark {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  margin: -5px 0 0 -5px;
+  border: 1px solid var(--over-dark);
+  outline: 1px solid var(--over-light);
+  border-radius: 50%;
+  pointer-events: none;
+}
+.parts { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--s-2); }
+.part { display: flex; flex-direction: column; gap: var(--s-1); color: var(--text-dim); font-size: var(--fs-label); }
+.part input { width: 100%; }
 input[type="color"] {
   width: 48px;
   height: 28px;
@@ -501,8 +522,38 @@ input[type="color"] {
 }
 .menu button:hover { background: var(--control-hover); }
 
+/* Step 6's decision, beside the zone it is about. The tester looked for it
+   under their hand and it was in the inspector, a screen away. */
+.near {
+  position: absolute;
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  width: 232px;
+  max-height: calc(100% - 8px);
+  overflow-y: auto;
+  padding: var(--s-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-panel);
+  background: var(--panel);
+}
+.near .ins-title { margin: 0; }
+
 body.busy { cursor: progress; }
+
+/* A file is over the window. One border, in the one attention colour, and no
+   overlay: the page stays visible under the hand that is dropping on it. */
+body.dropping::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  border: 2px solid var(--attention);
+  pointer-events: none;
+  z-index: 9;
+}
 canvas.editing, canvas.pickable { cursor: crosshair; }
+canvas.sampling { cursor: crosshair; }
 canvas.on-corner { cursor: move; }
 canvas.on-edge { cursor: copy; }
 canvas.grab { cursor: grab; }

@@ -103,6 +103,173 @@ tant que les entrées sont des couleurs *proposées* il y en a une par segment.
       de calques annoncé = le compte de calques écrit, dans les deux
       granularités.
 
+### Retour testeur 1 — coloriste pro (2026-09-17)
+
+Premier vrai retour extérieur. Deux découvertes qui dépassent l'ergonomie :
+l'artiste **n'a pas de références** (ni la plupart de ses confrères), et il
+lettre **après** l'encrage — donc la case « bulles » et l'étape 5 telles
+qu'elles sont posées supposent un atelier qui n'existe pas. Le reste est de
+l'outillage de dessin : ce que l'app demande à la main doit être aussi précis
+que dans Illustrator, sinon la correction coûte plus cher que l'erreur.
+
+**Bugs vus en séance**
+
+- [x] **La découpe casse les fusions.** `cut_zone` (`web/session.py:824`) fait
+      un `connectedComponents` sur le masque de la zone entière : une zone
+      fusionnée depuis N morceaux séparés compte déjà N composantes avant le
+      trait, donc chaque morceau ressort avec un label neuf et l'artiste doit
+      refaire toute la fusion. Le trait doit produire **deux côtés**, pas N
+      composantes : étiqueter les côtés du mur sur la boîte du panneau (le
+      trait doit alors sortir de la zone des deux bouts, ce que `_overshoot`
+      fait déjà en partie) et donner à chaque morceau le côté où il tombe. Les
+      morceaux fusionnés d'un même côté gardent le label survivant.
+      **Fait.** La cause était pire que prévu et le correctif plus simple :
+      une coupe ne divise désormais **que le morceau que le trait a traversé**
+      (les composantes avant le mur contre celles d'après). Les morceaux
+      intacts gardent le label de la zone, où qu'ils soient sur la planche.
+      Aucun changement de sémantique au passage : un trait qui ne sépare rien
+      ne sépare toujours rien.
+- [x] **La découpe se trace à la souris** : impossible à viser, jamais précis.
+      Elle doit utiliser **le même éditeur que les cases et les bulles** —
+      pose de nœuds au clic, poignées, reprise d'un nœud — mais en polyligne
+      **ouverte**, sans fermeture. Un seul éditeur de tracé pour les étapes
+      2, 3 et 4.
+- [x] **Étape 5 sans référence** : ne se lance pas, et l'erreur ne dit pas que
+      c'est ça. Voir « références » plus bas — le message n'est qu'une partie
+      du problème.
+
+**Édition — ce qui manque pour travailler**
+
+- [x] **Ctrl-Z par étape.** Une pile d'annulation par étape, bornée à l'étape
+      courante : la frontière d'étape reste la protection (cf. la fusion
+      « permanente par décision », qui devient annulable **dans** l'étape 4 et
+      définitive une fois l'étape quittée).
+      **Fait, sur l'étape 4 seulement** (fusion et coupe), comme décidé en
+      séance. Instantanés serveur bornés à 20, un panneau par entrée puisque
+      les deux opérations n'en touchent qu'un ; `POST /api/zones/undo`, Ctrl-Z
+      dans le canvas, une entrée au clic droit, un bouton dans l'inspecteur.
+      La pile meurt avec l'étape : re-segmenter la vide, l'étape 5 la ferme,
+      et un redémarrage ne la ramène pas — une fusion faite hier est aussi
+      définitive qu'une fusion faite avant les aplats.
+- [x] **Courbes au tracé** : maintenir le clic en posant un nœud tire une
+      poignée de Bézier, comme Illustrator. Vaut pour les cases, les bulles et
+      la découpe de zone.
+      **Fait.** Un nœud est `[x, y]` ou `[x, y, hx, hy]`. Le navigateur dessine
+      la courbe ; `flatten_polygon` (`web/session.py`) l'échantillonne en
+      points à un demi-pixel **au moment où elle est rasterisée**, donc
+      `segmentation/` n'a pas bougé d'une ligne. Les poignées sont rangées
+      avec la forme, se rattrapent après réouverture, et le clic droit sur
+      l'une d'elles redresse le nœud.
+- [x] **Glisser-déposer** la planche sur l'étape 1.
+- [x] **Créer une couleur dans l'app** — il n'y a aucun moyen aujourd'hui,
+      seulement depuis une référence ou une image de palette. Boîte de
+      couleur : roue chromatique, RVB, HSL, CMJN, OKLab, saisie
+      hexadécimale, pipette (planche et références). Confirme et remplace le
+      retour du 2026-09-13, plus haut dans la section A ; c'est le point le
+      plus cité des deux.
+      **Fait.** `POST /api/palette/colour` et une boîte de couleur sans
+      dépendance (R9) : roue TSV dessinée au canvas, curseur de luminosité,
+      RVB, TSL, hexadécimal, pipette sur la planche. Le CMJN est affiché et
+      **marqué indicatif** : conversion arithmétique, aucun profil, et
+      l'export reste en RVB. La même boîte sert à modifier une couleur
+      existante, à la place du petit carré natif.
+- [x] **Les commandes doivent être sous le curseur.** Les suggestions de
+      couleur s'affichent dans l'inspecteur, à l'autre bout de l'écran : il
+      faut une fenêtre volante **à côté de la zone sélectionnée**. Idem pour
+      « Caler » et « Choisir une couleur », en bas à droite aujourd'hui —
+      personne ne les trouve. `UI.md` : l'inspecteur montre ce que le canvas a
+      sélectionné, il ne porte pas l'action qui suit un clic sur la planche.
+      **Fait.** Une fenêtre (`.near`) ancrée à la boîte de la zone, à sa droite
+      s'il y a la place et à sa gauche sinon, qui suit le zoom et le
+      déplacement. L'inspecteur de l'étape 6 ne garde que le compte.
+      `UI.md` R7 est réécrite : elle visait les pop-ups qui interrompent, et
+      la section 15 demandait déjà l'inverse — « les actions appartiennent à
+      l'objet ».
+
+**Flux — sauter des étapes**
+
+- [x] **Cliquer une étape ouvre son onglet, exécutée ou non.** Aujourd'hui les
+      paramètres (le jeu de la fuite, le choix des couleurs) ne sont
+      atteignables qu'après coup ; on veut les régler **avant** de lancer.
+      Ne change rien à la règle « rien ne se lance tout seul » : ouvrir un
+      onglet n'exécute pas l'étape.
+- [x] **Bulles optionnelles** : les pros dessinent d'abord et lettrent ensuite,
+      la planche testée n'avait pas de bulles. L'étape 3 doit pouvoir être
+      sautée explicitement, sans bloquer l'étape 4.
+      **Fait.** `POST /api/bubbles/skip` pose `_bubbles_done` avec un
+      `protected` vide, sans charger les 161 Mo du détecteur. Le serveur
+      l'autorisait déjà (`segment_zones` ne regardait pas `_bubbles_done`) :
+      seul le rail bloquait.
+- [x] **Sauter une étape en général** — à cadrer : quelles étapes ont un
+      « aucun » légitime (3 : pas de bulles ; 5 : je cale tout à la main ;
+      6 : je ne cale rien) et lesquelles n'en ont pas (1, 2, 4, 7).
+      **Cadré et fait** par les trois items ci-dessus : l'étape 3 a « Pas de
+      bulles sur cette planche », l'étape 5 a « Continuer sans générer », et
+      un clic sur une étape ouvre son onglet sans la lancer. Les étapes 1, 2,
+      4 et 7 n'ont pas de sortie vide — sans elles il n'y a pas de planche,
+      pas de cases, pas de zones, pas de fichier.
+- [x] **Références manquantes : avertir, jamais bloquer.** Découverte du
+      retour : *la plupart des artistes n'ont pas de références*. L'étape 5
+      doit dire ce qui manque et ce que ça change, puis laisser passer.
+      Conséquence à trancher ailleurs : Cobra vendu sur « vos références »
+      s'adresse à moins de monde que prévu (`business-plan.md`).
+      **Fait.** `StepError("flats_no_reference")`, levé avant d'appeler un
+      proposer qui en exige (`needs_references` sur Cobra et sur le distant),
+      avec sa phrase en `en` et en `fr` — c'était le seul refus de l'app sans
+      clé de locale, un 503 anglais brut sorti de `CobraProposer`. Et
+      l'avertissement s'affiche **avant** l'appui dès qu'il n'y a aucune
+      référence, avec « Continuer sans générer » juste à côté.
+- [x] **`distinct` disparaît de l'interface** (décidé le 2026-09-17, avec
+      Raph). Personne ne comprend le mot, et l'option ne décrit pas ce que
+      l'artiste obtient. L'étape 5 offre deux sorties, pas un réglage :
+      **« Générer les couleurs »** et **« Continuer sans générer »**.
+      - « Continuer sans générer » est **le mot que l'utilisateur lit, pas ce
+        que le code fait** : c'est la génération `distinct` d'aujourd'hui, à
+        l'identique. Le libellé dit « continuer », pas « passer », parce que
+        l'étape s'exécute bel et bien et que la suite est entière.
+      - Elle ne peut pas être un non-événement : `generate_flats`
+        (`web/session.py:245-249`) construit `self.segments` et `_auto_entry`,
+        une entrée de palette privée par zone, et c'est de là que viennent
+        l'étape 6 et l'export. La règle « une zone tient un
+        `palette_entry_id`, jamais du RVB » ne se contourne pas.
+      - Ce qu'elle écrit est **la fausse couleur que l'artiste vient de voir à
+        l'étape 4** : `zones_rgba` (`web/session.py:1647`) et
+        `DistinctColourProposer` (`colour/proposer.py:110`) appellent déjà le
+        même `distinct_colour` avec la même indexation, donc l'image ne change
+        pas. Ce n'était pas un bug : l'image de l'étape 4 **était** la
+        réponse. Rien à corriger côté rendu, et la fausse couleur reste — le
+        testeur en a besoin pour lire ce qui s'est passé.
+      - Cohérent avec B2 : aucun repli silencieux, puisque plus rien ne
+        prétend proposer des couleurs. C'est un acte de l'artiste.
+      - Ne coûte rien (pas de GPU) : c'est le gratuit, sans avoir à le nommer.
+      - Le grisé porte le sens : « Générer les couleurs » n'est sélectionnable
+        qu'avec un compte payant. Aujourd'hui le refus arrive **après**
+        l'appui (`gpu_no_subscription`, 402, `web/app.py:164`) ; il doit être
+        lisible avant. Croise l'ouverture des onglets non exécutés : un bouton
+        éteint dit pourquoi et ce qu'il faut faire.
+
+**Export**
+
+- [x] **Gris de soutien** (option d'export). En plus des aplats : le calque de
+      trait en **Produit**, et sous lui le même calque, verrouillage alpha,
+      teinté en gris 20 %. C'est ce que les pros font pour l'édition papier.
+      Ne touche pas à la convention existante (la couleur du flat passe sous
+      l'encre) : c'est un calque de plus, pas un changement de procédé.
+      **Fait.** `write_psd(..., line_mask=, support_grey=)` écrit **Lines** en
+      Produit et, dessous, **Support grey** : la même encre en gris 20 %,
+      verrouillée en alpha. Case à cocher à l'étape 7, mémorisée avec la
+      granularité. La règle 7 de `export/psd.py` est amendée plutôt que
+      contournée : les aplats ne portent toujours aucune encre, et cette
+      option est la seule exception, demandée par son nom.
+
+**Ouvert, à trancher hors app**
+
+- [ ] **Faire payer le calage dans l'app ?** Idée lancée en fin de séance. ⚠
+      contredit la page tarifs actuelle, où la segmentation et le calage sont
+      le gratuit qui amène à Cobra (`business-plan.md`, section D). À traiter
+      comme une expérience de prix, pas comme un correctif — et pas avant les
+      10 comptes de la section C.
+
 ## B — App installable + cloud (plan fixé le 2026-09-10)
 
 Décidé : **pas de mesure avant de construire**, perte sèche acceptée. Raph

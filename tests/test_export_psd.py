@@ -166,3 +166,48 @@ def test_the_announced_layer_count_is_the_written_one(tmp_path, granularity):
 def test_an_unknown_granularity_is_refused(tmp_path):
     with pytest.raises(ValueError):
         write_psd(tmp_path / "flats.psd", (100, 40), two_panels(), palette(), "object")
+
+
+def test_the_supporting_grey_is_the_ink_twice(tmp_path):
+    """The one export that carries line art, and only when asked for. Print
+    colourists build it by hand: the ink on Multiply so it darkens the flats,
+    and under it the same ink at 20% grey with its transparency locked, which
+    makes a stencil of the drawing to paint the line's support into."""
+    from psd_tools.constants import BlendMode
+
+    from luikki.export.psd import SUPPORT_GREY
+
+    ink = np.zeros((40, 100), dtype=bool)
+    ink[10:14, 5:55] = True
+
+    plain = psd_tools.PSDImage.open(
+        write_psd(tmp_path / "plain.psd", (100, 40), two_panels(), palette())
+    )
+    assert not [layer for layer in plain if layer.name in {"Lines", "Support grey"}]
+
+    path = write_psd(
+        tmp_path / "support.psd",
+        (100, 40),
+        two_panels(),
+        palette(),
+        line_mask=ink,
+        support_grey=True,
+    )
+    psd = psd_tools.PSDImage.open(path)
+    # Written last, so both sit above every colour.
+    assert [layer.name for layer in psd][-2:] == ["Support grey", "Lines"]
+
+    grey, lines = psd[-2], psd[-1]
+    assert lines.blend_mode == BlendMode.MULTIPLY
+    assert grey.locks.transparency
+    # The grey is the ink, at 20% grey, cropped to the drawing.
+    patch = np.array(grey.numpy())[..., :3]
+    assert np.allclose(patch.reshape(-1, 3)[0] * 255, SUPPORT_GREY, atol=1)
+    assert (grey.height, grey.width) == (4, 50)
+
+
+def test_the_supporting_grey_needs_the_ink(tmp_path):
+    with pytest.raises(ValueError, match="line mask"):
+        write_psd(
+            tmp_path / "no.psd", (100, 40), two_panels(), palette(), support_grey=True
+        )

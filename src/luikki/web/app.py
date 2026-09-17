@@ -37,9 +37,14 @@ from .update import Updater
 
 
 class Shape(BaseModel):
-    """A polygon in page space, as the artist left it on screen."""
+    """A polygon in page space, as the artist left it on screen.
 
-    polygon: list[tuple[int, int]]
+    A node is two numbers — a corner — or four, the last two being the tangent
+    the artist pulled out of it. Only the browser and `flatten_polygon` read
+    the handles; everything that rasterises a shape is given points.
+    """
+
+    polygon: list[tuple[int, int] | tuple[int, int, int, int]]
 
 
 class Stroke(BaseModel):
@@ -74,6 +79,13 @@ class Pick(BaseModel):
 
     reference_id: int
     rgb: tuple[int, int, int]
+
+
+class Mixed(BaseModel):
+    """A colour the artist mixed, rather than took from an image."""
+
+    rgb: tuple[int, int, int]
+    label: str = ""
 
 
 class Purchase(BaseModel):
@@ -341,6 +353,11 @@ def create_app(
         session.detect_bubbles()
         return session.state()
 
+    @app.post("/api/bubbles/skip")
+    def skip_bubbles():
+        session.skip_bubbles()
+        return session.state()
+
     # -- 2b/3b. corrections to the detected geometry ---------------------
     #
     # Detection is a proposal, and these are how the artist disagrees with it.
@@ -463,6 +480,11 @@ def create_app(
         result = session.cut_zone(cut.panel, cut.label, cut.stroke)
         return {**session.state(), "result": result}
 
+    @app.post("/api/zones/undo")
+    def undo_zones():
+        result = session.undo_zones()
+        return {**session.state(), "result": result}
+
     # -- palette / references --------------------------------------------
 
     @app.post("/api/reference")
@@ -543,6 +565,12 @@ def create_app(
         entry = session.include_candidate(pick.reference_id, pick.rgb)
         return {**session.state(), "entry_id": entry.id}
 
+    @app.post("/api/palette/colour")
+    def mix_colour(mixed: Mixed):
+        """A colour from the colour box, with no image behind it."""
+        entry = session.add_colour(mixed.rgb, mixed.label)
+        return {**session.state(), "entry_id": entry.id}
+
     @app.put("/api/palette/{entry_id}")
     def recolour(entry_id: int, colour: Colour):
         """Change a palette colour — and with it every zone holding that id.
@@ -562,9 +590,12 @@ def create_app(
     # -- 5. flats --------------------------------------------------------
 
     @app.post("/api/flats")
-    def generate_flats():
+    def generate_flats(plain: bool = False):
+        """Step 5's two ends. `plain` is "Continue without generating": the
+        same pass, one distinct colour per zone, no model and no GPU. It does
+        not change the artist's proposer — it is a press, not a setting."""
         try:
-            result = session.generate_flats()
+            result = session.generate_flats(plain=plain)
         except RemoteUnavailable as exc:
             raise _gpu_refusal(exc) from exc
         except RuntimeError as exc:
@@ -664,11 +695,12 @@ def create_app(
     # -- 7. export -------------------------------------------------------
 
     @app.post("/api/export")
-    def export(granularity: str | None = None):
+    def export(granularity: str | None = None, support_grey: bool | None = None):
         """`granularity` is "colour" (one layer per palette entry, whole page)
-        or "panel" (one group per panel). Omitted, the session keeps the one it
-        was last given — the choice is the artist's, not the request's."""
-        path = session.export_psd(granularity=granularity)
+        or "panel" (one group per panel). `support_grey` adds the printer's two
+        ink layers over the flats. Omitted, either keeps what the session was
+        last given — the choice is the artist's, not the request's."""
+        path = session.export_psd(granularity=granularity, support_grey=support_grey)
         return FileResponse(
             path, media_type="image/vnd.adobe.photoshop", filename=path.name
         )

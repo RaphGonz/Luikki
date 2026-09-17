@@ -51,8 +51,17 @@ transforms the view.
 **R6 — The order of the steps is visible.** The server refuses step 3 before step
 2. The interface must show that refusal before the artist clicks.
 
-**R7 — Nothing covers the canvas.** No pop-up, and no dialog, except the one
-confirmation that rule 4 of `SPEC.md` asks for.
+**R7 — Nothing *interrupts* the canvas.** No dialog, and no pop-up that takes
+the artist away from what they were doing, except the one confirmation that
+rule 4 of `SPEC.md` asks for.
+
+A panel pinned to the object it is about is not one of those, and section 15
+already asks for the opposite: the right-click menu and the merge and cut
+actions belong on the page, not off it. Step 6's decision — the colour a zone
+holds, the nearest one, Snap, Choose another — sits in a window beside the
+zone (`.near`, `renderNear`), because the first tester never found those
+buttons at the far edge of the screen while their hand was on the zone. It is
+placed clear of the zone it describes and never covers it.
 
 **R8 — One gradient.** Section 6 names the only place a gradient appears.
 
@@ -498,7 +507,8 @@ again? This deletes 14 merges and 2 cuts.` An error says what to do next.
 - The keyboard reaches every control, and the focus ring is visible on all of
   them.
 - Every step shows its state before the artist clicks it.
-- No pop-up covers the page.
+- No pop-up interrupts the page, and the one panel that sits over the artwork
+  is pinned beside the object it is about.
 - The window works at 1280 x 720 with no horizontal scrollbar.
 
 ## 15. Do not do this
