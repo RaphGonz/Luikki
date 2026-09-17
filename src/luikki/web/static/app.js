@@ -1956,6 +1956,11 @@ function snapPanel() {
 // written against pop-ups that interrupt, and this one is the opposite, the
 // decision brought to where the artist is already looking. Recorded as a
 // deviation in `UI.md`, with the logo and the zoom.
+// Built when the *contents* change, and only then. `render()` runs twelve
+// times a second while the selection marches, and rebuilding the buttons on
+// every frame made them impossible to press: the button under the pointer was
+// replaced between the press and the release, so the browser never saw a whole
+// click on one element. Moving the window is `placeNear`, below.
 function renderNear() {
   const panel = $("near");
   const body = current === "snap" ? snapPanel() : null;
@@ -1966,6 +1971,16 @@ function renderNear() {
   }
   keepFocus(() => panel.replaceChildren(...body.filter(Boolean)));
   panel.hidden = false;
+  placeNear();
+}
+
+// Where the window sits, and nothing else. Cheap enough for every frame, so
+// the window keeps up with the page under zoom and pan.
+function placeNear() {
+  const panel = $("near");
+  // A `render()` can follow the selection being dropped — the window is
+  // hidden by then, and there are no bounds left to read.
+  if (panel.hidden || current !== "snap" || !selected) return;
   const [left, top, right, bottom] = selected.bounds;
   const [sx, sy] = view.toScreen(right, top);
   const [bx] = view.toScreen(left, bottom);
@@ -2651,8 +2666,9 @@ function render() {
   drawDraft(editing);
   if (editing === "zones") drawPicked();
   if (picking()) drawSegment();
-  // The window beside the zone moves with the picture it is pinned to.
-  renderNear();
+  // The window beside the zone moves with the picture it is pinned to. Moved,
+  // never rebuilt: see `renderNear`.
+  placeNear();
   startMarching();
 }
 
