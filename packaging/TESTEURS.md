@@ -17,7 +17,7 @@ le code reçu par e-mail. Donnez cette adresse à Raph : il passe votre compte
 en compte testeur, et l'étape 5 génère alors avec Cobra sans rien acheter.
 
 À l'étape 5, **Couleurs** choisit entre Cobra (d'après vos références) et les
-couleurs distinctes, gratuites, sans GPU. Cobra compte en cases : chaque case
+couleurs distinctes, sans GPU, qui ne comptent aucune case. Cobra compte en cases : chaque case
 générée en consomme une, deuxième essai compris. **Compte** et l'étape 5
 disent ce qu'il reste.
 

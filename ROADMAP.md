@@ -438,7 +438,7 @@ App installée (Win/Mac)                    Modal (GPU)                      Sup
   Customer Portal pour résilier et changer de carte, webhooks → Supabase. Le
   serveur ne croit jamais le client sur l'état d'un abonnement.
   Managed Payments (Stripe marchand officiel, TVA comprise) : 3,5 % en plus des
-  frais de carte. Prix régionaux par devise (`currency_options`). Pas de
+  frais de carte. Pas de prix régionaux (abandonnés le 2026-09-25). Pas de
   Paddle ni de Lemon Squeezy (2026-09-13) : la chaîne est validée sur Stripe.
 - **Packaging : PyInstaller `onedir` + pywebview.** Inno Setup (Windows), DMG
   (Mac arm64), non signés jusqu'à B6, GitHub Actions sur tag → GitHub Releases.
@@ -770,6 +770,10 @@ fin : ce sont elles qui attendent.
 
 ### B5b — Vente en cases (décidée le 2026-09-13, `business-plan.md`)
 
+**Grille remplacée le 2026-09-25 par les trois offres de B5c.** Le compte en
+cases, le registre des achats, les postes et les jobs restent ; la table
+ci-dessous est l'historique.
+
 L'infrastructure de B5 reste : Checkout, portail, webhook, Managed Payments,
 `stripe_setup`. Ce qui change : on vend des **cases**, et plus un abonnement
 mensuel aux particuliers. La case est ce que le GPU coûte ; la page ne l'est
@@ -812,8 +816,7 @@ cases achetées ; les cases achetées marchent sans pass. Testeurs :
       Checkout.
 - [x] `stripe_setup` : les six produits, leurs prix (`lookup_key`) et leur
       code fiscal ; archive le prix à 15 €/mois et le coupon `testeur-3-mois`.
-- [ ] Prix régionaux (optionnel, ne bloque pas B6) : prix par devise (`currency_options`). Devises à
-      décider (BRL, MXN, IDR, PHP…).
+- [x] ~~Prix régionaux~~ : abandonnés le 2026-09-25 (B5c).
 - [x] App, Compte : cases restantes du mois, cases achetées, boutons d'achat.
       Étape 5 : sélecteur Cobra / `distinct` (jamais de repli silencieux,
       B2) ; au plafond, proposer un pack ou le Studio.
@@ -822,7 +825,39 @@ cases achetées ; les cases achetées marchent sans pass. Testeurs :
 - Fait quand : en mode test, un compte achète Luikki, génère, épuise son mois,
   achète un pack et continue ; un compte Studio génère sur 3 machines à la
   fois ; un fondateur revient après trois mois et retrouve ses cases.
-  Validé par Raph (confirmé le 2026-09-15). Reste les prix régionaux, optionnels.
+  Validé par Raph (confirmé le 2026-09-15).
+
+### B5c — Trois offres (décidée le 2026-09-25, `business-plan.md` draft 3)
+
+Plus simple que B5b : trois offres, pas de gratuit, pas de fondateur, pas de
+pass, pas de prix régionaux. Les particuliers sont la vitrine, les studios la
+cible. Résumé en français : `business-canvas.md`.
+
+| Ligne | Prix | Stripe | Droit côté serveur |
+|---|---|---|---|
+| Base | 10 €/an | `mode=payment` | Segmentation et click-to-color ; pas de Cobra |
+| IA | 50 €/an | `mode=payment` | Cobra 1 an, 1 000 cases **par an**, 2 postes |
+| Pack 100 / 500 / 1 000 | 5 € / 10 € / 20 € | `mode=payment` | +cases sans expiration ; **licence IA active exigée** |
+| Studio | 150 €/mois | `mode=subscription` | 5 000 cases/mois, 3 postes, 3 jobs en parallèle |
+
+- [ ] `cloud/billing.py` : `LINES` passe aux trois offres et aux trois packs ;
+      `FOUNDERS` et la ligne `pass` disparaissent ; un pack sans licence IA
+      active est refusé avant le Checkout.
+- [ ] `cloud/schema.sql` : `purchases.line` accepte `base`, `ai`, `pack` ;
+      quota IA compté **par an** depuis l'achat (aujourd'hui `cases_per_month`) ;
+      les achats `luikki`, `pass`, `founder` déjà faits restent valides.
+- [ ] `cloud/stripe_setup.py` : les nouveaux produits et prix (`lookup_key`),
+      archive les anciens (69 €, 39 €, 19 €, 249 €, 149 €).
+- [ ] La licence de base : décider ce qu'elle ouvre sans contrôle côté client
+      (`business-plan.md` §2.4 : installeur, mises à jour, connexion). Le
+      contournement par GitHub est un risque accepté.
+- [ ] App, Compte : boutons d'achat et mots (`locales/en.json`, `fr.json` :
+      `account.buy_*`, `error.needs_luikki`, `error.already_bought`,
+      `error.sold_out`) ; « 1 000 cases par an ≈ 200 pages ».
+- Fait quand : en mode test, un compte achète la base puis l'IA, génère,
+  épuise ses cases, achète un pack et continue ; un compte base seule ne peut
+  pas acheter de pack ; un ancien acheteur Luikki ou fondateur garde ses
+  droits.
 
 ### B6 — Production (4–6 j + délais externes)
 
@@ -845,7 +880,7 @@ cases achetées ; les cases achetées marchent sans pass. Testeurs :
       à l'inscription. « Aucun entraînement » est une clause du contrat, et le
       premier écran du site (`business-plan.md` §2.3).
 - [x] Mesurer le temps GPU d'une case **avant la vente publique** : le quota
-      de 1 000 cases/mois du pass à 39 € perd de l'argent au-delà de 10 s par
+      de 1 000 cases/mois du pass à 39 € (grille B5b) perd de l'argent au-delà de 10 s par
       case (`business-plan.md` §4.6). Au-delà, baisser `cases_per_month` :
       une ligne dans `plans`, sans nouvelle version.
       Mesuré le 2026-09-13 (logs Modal, 2 séances d'une planche de 3 cases,
@@ -892,7 +927,7 @@ cases achetées ; les cases achetées marchent sans pass. Testeurs :
       (décidé 2026-09-12), lu dans l'en-tête PNG avant tout décodage. Protège
       le GPU partagé d'une image géante ou d'un PNG qui explose au décodage ;
       l'app n'envoie rien d'aussi grand.
-- Fait quand : un inconnu télécharge, achète Luikki avec une vraie carte,
+- Fait quand : un inconnu télécharge, achète la licence IA avec une vraie carte,
   génère des cases et reçoit sa facture.
 
 ## C — Après les tests : mesurer, durcir
@@ -904,10 +939,14 @@ cases achetées ; les cases achetées marchent sans pass. Testeurs :
       démarrage, 1 $/h tout compris. À 10 s, le calcul autoriserait 12 000
       cases Studio ; le plafond reste 5 000 jusqu'aux 10 comptes.
 - [ ] Journal des expériences de prix : chaque promo ou semaine à ×2, avec
-      ses dates et ses ventes (`business-plan.md` §4.9).
+      ses dates et ses ventes (`business-plan.md` §4.7).
 - [ ] Comptes d'équipe Studio : plusieurs emails sous un seul paiement (v1 :
       un email, 3 postes).
-- [ ] Ligne Production : devis, facture annuelle, SLA.
+- [ ] Devis au-delà du Studio : facture annuelle, volume (`business-plan.md` §4.5).
+- [ ] Mesurer un épisode avec un coloriste de studio, avec et sans Luikki,
+      **avant la première vente à un studio** : leurs coloristes sont rapides,
+      l'argument « 10× » ne vaut que pour l'auteur qui fait ses aplats
+      (`business-plan.md` §3.1).
 - [ ] Région UE (Modal ×1,5, ou hébergeur UE) quand de vrais clients paient.
       Jamais d'hôtes tiers (type Community Cloud).
 - [ ] Non-rétention vérifiée chez Modal (entrées, sorties, logs) + DPA signé.
@@ -933,11 +972,11 @@ cases achetées ; les cases achetées marchent sans pass. Testeurs :
 - [ ] Démo longue 5–8 min sur vraie page, avec l'artiste, erreurs comprises.
 - [ ] Avant/après sur planche d'album réelle (autorisation écrite).
 - [ ] Bloc « vos couleurs, vos références » sur page tarifs : refs de l'artiste uniquement / sortie brute jamais montrée ni exportée / aucun trait dans l'export / aucun entraînement.
-- [ ] Page tarifs : Gratuit (`distinct`), Luikki 69 €, pass 39 €/an, packs, Studio, Production. Les plafonds en cases dans les conditions, pas sur la page (`business-plan.md` §4.4).
+- [ ] Page tarifs : Base 10 €/an, IA 50 €/an, Studio 150 €/mois ; les packs sous l'IA. Les plafonds en cases dans les conditions, pas sur la page (`business-plan.md` §4.4). « Rien ne quitte votre ordinateur, sauf les cases envoyées à la génération » (§2.3).
 - [ ] Site coréen pour les studios webtoon : une autre vente, pas une traduction. Formulaire de devis, cases montrées en épisodes.
 - [ ] **[€]** Hébergement vidéo : YouTube non répertorié au début, Bunny/Mux ensuite.
 - [x] **[€]** Email transactionnel : Resend, le même compte que le SMTP Supabase (B2). Compte et domaine du site faits (2026-09-12).
-- [ ] 3 emails liste d'attente : démo vidéo → vente des 100 licences fondateur (le cloud existe déjà) → ouverture publique.
+- [ ] 2 emails liste d'attente : démo vidéo → ouverture publique.
 
 ## ~~E — Lignes ouvertes (recherche, transverse)~~ — résolu (2026-09-11)
 
