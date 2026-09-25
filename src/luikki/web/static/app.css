@@ -458,6 +458,12 @@ input[type="color"] {
   transition: opacity 120ms;
 }
 .chip:hover { opacity: 0.85; }
+.chip.solid { border: 1px solid var(--separator); opacity: 1; cursor: default; }
+
+/* A book inside a step (5: references, 6: palette). */
+.block { display: flex; flex-direction: column; gap: var(--s-2); padding-block-end: var(--s-2); border-block-end: 1px solid var(--separator); }
+.thumbs { display: flex; gap: var(--s-1); overflow-x: auto; }
+.thumbs img { height: 40px; border-radius: var(--r-control); background: var(--canvas); }
 .chip[aria-pressed="true"] { border: 1px solid var(--border); opacity: 1; }
 
 .tick svg { position: absolute; inset: 0; margin: auto; width: 14px; height: 14px; fill: none; stroke-linecap: round; stroke-linejoin: round; }

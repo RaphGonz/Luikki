@@ -889,8 +889,8 @@ async function uploadBlob(file, path, label, extra = {}) {
 // is in — a page on step 1, a reference or a palette while that book is open —
 // so a drop never has to be aimed at a particular strip of the window.
 function dropTarget() {
-  if (shelf === "references") return { path: "/api/reference", label: t("work.reference"), extra: { kind: "sheet" } };
-  if (shelf === "palette") return { path: "/api/palette/image", label: t("work.palette"), extra: {} };
+  if (shelf === "references" || (!shelf && current === "flats")) return { path: "/api/reference", label: t("work.reference"), extra: { kind: "sheet" } };
+  if (shelf === "palette" || (!shelf && current === "snap")) return { path: "/api/palette/image", label: t("work.palette"), extra: {} };
   return { path: "/api/page", label: t("work.page"), extra: {} };
 }
 
@@ -1086,7 +1086,9 @@ async function installUpdate() {
 function renderRail() {
   keepFocus(() => {
     $("steps").replaceChildren(...STEPS.map(stepRow));
-    $("books").replaceChildren(bookRow("pages"), bookRow("references"), bookRow("palette"), bookRow("account"));
+    // References and the palette live in steps 5 and 6, where the colour work
+    // starts: at the foot of the rail tester 2 never found them.
+    $("books").replaceChildren(bookRow("pages"), bookRow("account"));
   });
 }
 
@@ -1209,6 +1211,7 @@ function stepBody(id) {
       ];
     case "flats":
       return [
+        referencesBlock(),
         askBlock("flats"),
         state.flats_stale ? note(t("flats.stale"), true) : null,
         note(done.flats ? t("flats.done", { count: state.segments.count }) : t("about.flats")),
@@ -1237,6 +1240,7 @@ function stepBody(id) {
     case "snap": {
       const snappable = state.segments.snappable;
       return [
+        paletteBlock(),
         note(snappable ? t("snap.hint") : t("snap.no_palette"), !snappable),
         h(
           "label",
@@ -1332,6 +1336,35 @@ function stepBody(id) {
       ];
     }
   }
+}
+
+// The way into the colour work, at the top of the step that needs it. The
+// thumbnails and chips themselves are in the inspector, which this step opens
+// on.
+function referencesBlock() {
+  const count = state.references.length;
+  return h(
+    "div",
+    { class: "block" },
+    h("div", { class: "ins-row" }, h("span", { class: "label" }, t("book.references")), h("span", { class: "step-meta num" }, t("meta.references", { count }))),
+    count
+      ? h("div", { class: "thumbs" }, state.references.map((reference) => h("img", { src: `/api/reference/${reference.id}.png`, alt: reference.label })))
+      : null,
+    h("div", { class: "row" }, button(t("refs.add"), { kind: count ? "" : "primary", key: "rail-add-ref", onclick: () => $("ref-file").click() })),
+  );
+}
+
+function paletteBlock() {
+  const colours = paletteColours();
+  return h(
+    "div",
+    { class: "block" },
+    h("div", { class: "ins-row" }, h("span", { class: "label" }, t("book.palette")), h("span", { class: "step-meta num" }, t("meta.colours", { count: colours.length }))),
+    colours.length
+      ? h("div", { class: "chips" }, colours.map((entry) => h("i", { class: "chip solid", title: entry.label, style: { background: rgb(entry.rgb) } })))
+      : null,
+    h("div", { class: "row" }, button(t("palette.add_image"), { key: "rail-add-palette", onclick: () => $("pal-file").click() })),
+  );
 }
 
 function bookName(which) {
@@ -1813,16 +1846,19 @@ function zonesView() {
   ];
 }
 
+// Step 5 opens on the references: they are what the flats are made from.
 function flatsView() {
-  if (!state.done.flats) return [[note(t("inspect.flats.not_run"))], []];
+  const [references, footer] = referencesView();
+  if (!state.done.flats) return [references, footer];
   const { count, snapped } = state.segments;
   return [
     [
       heading(t("inspect.flats.title")),
       h("div", { class: "ins-row num" }, t("inspect.flats.segments", { count })),
       h("div", { class: "ins-row num" }, t("inspect.flats.private", { count: count - snapped })),
+      ...references,
     ],
-    [],
+    footer,
   ];
 }
 
@@ -1832,15 +1868,18 @@ function flatsView() {
 // their hand and the decision about it was at the other end of the screen.
 function snapView() {
   const { count, snapped } = state.segments;
-  if (!state.done.flats) return [[note(t("inspect.flats.not_run"))], []];
+  // And step 6 on the palette, which is what the zones are snapped to.
+  const [palette, footer] = paletteView();
+  if (!state.done.flats) return [[note(t("inspect.flats.not_run")), ...palette], footer];
   return [
     [
       heading(t("inspect.snap.title_all")),
       h("div", { class: "ins-row num" }, t("inspect.snap.left", { count: count - snapped })),
       h("div", { class: "ins-row num" }, t("inspect.flats.segments", { count })),
       selected ? null : note(t("inspect.snap.empty")),
+      ...palette,
     ],
-    [],
+    footer,
   ];
 }
 
@@ -2554,7 +2593,8 @@ $("ref-file").addEventListener("change", async () => {
     kind: controls.refKind,
   });
   if (!next) return;
-  shelf = "references";
+  // Steps 5 and 6 show their book already; anywhere else, open it.
+  if (current !== "flats") shelf = "references";
   await adopt(next);
   // A finished page is kept whole and cut into its panels: one press, several
   // references, and the count is the honest answer.
@@ -2568,7 +2608,7 @@ $("ref-file").addEventListener("change", async () => {
 $("pal-file").addEventListener("change", async () => {
   const next = await uploadFile($("pal-file"), "/api/palette/image", t("work.palette"));
   if (!next) return;
-  shelf = "palette";
+  if (current !== "snap") shelf = "palette";
   await adopt(next);
   say(t("done.palette"));
 });
