@@ -30,7 +30,7 @@ Cloud = endpoint GPU authentifié, pas une SaaS. Projet, pages, refs, palette, m
       pupille ont la même forme et la même bordure.
 - [ ] Contre-épreuve du seuil sur les 7 planches de `crosspage`, comme pour 0,14.
 - [ ] Nommer/créer/renommer entrées de palette (SPEC 17).
-- [ ] **Premier retour de Raph sur l'app (2026-09-13)** : impossible d'ajouter
+- [x] **Premier retour de Raph sur l'app (2026-09-13)** : impossible d'ajouter
       une couleur à la main dans la palette, seulement depuis une référence ou
       une image de palette. Il faut une boîte de couleur : curseurs RGB, HSL
       et OKLab, saisie hexadécimale, pipette (sur la planche et sur les
@@ -629,7 +629,7 @@ fin : ce sont elles qui attendent.
   segments, comme sur Modal), et la suite passe (321, le seul test sauté est
   la parité, qui a besoin de torch).
 
-### B4 — Installeurs (5–8 j)
+### B4 — Installeurs (fait, 2026-09-25)
 
 - [x] Retirer le token partagé de B1 : serveur Modal, `luikki.bat`, et
       `luikki flatten --proposer remote` passe par `Account`. Gardé jusque-là
@@ -719,7 +719,7 @@ fin : ce sont elles qui attendent.
       propose rien. Éprouvé le même jour sur un second PC (Windows 11) : la
       0.2.0 installée a proposé la 0.2.1, l'a installée et s'est rouverte,
       planche intacte.
-- [ ] Un Mac pour tester : un testeur, ou un Mac loué à l'heure. En attente
+- [x] Un Mac pour tester : un testeur, ou un Mac loué à l'heure. En attente
       (2026-09-12) : Raph ne peut pas tester sur Mac en direct pour l'instant.
       Un testeur a le DMG de la CI (2026-09-13) : il vérifie le build, pas
       l'app.
@@ -727,7 +727,7 @@ fin : ce sont elles qui attendent.
   page va jusqu'au PSD.
   Windows validé le 2026-09-13 sur un second PC Windows 11 (pas une VM, choix
   de Raph) : installation de la 0.2.0 depuis la release, page jusqu'au PSD,
-  mise à jour 0.2.1 depuis l'app. Reste le Mac.
+  mise à jour 0.2.1 depuis l'app. Mac validé par Raph (2026-09-25).
 
 ### B5 — Stripe, mode test (3–4 j)
 
