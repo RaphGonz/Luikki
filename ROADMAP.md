@@ -990,7 +990,11 @@ impressions.
 - [ ] Rapport dans `reports/`, même forme que p3/ab : rendus côte à côte, verdict sur images, pas sur compteurs.
 - [ ] Décision finale en une ligne : garder l'heuristique, la remplacer, ou empiler apprise → trapped-ball.
 
-## F — Luikki animation (variante, tweaks)
+## ~~F — Luikki animation (variante, tweaks)~~ — abandonné (2026-09-25)
+
+**Section close.** Pas un besoin dans ce métier : d'une image à l'autre les
+plans se ressemblent, la couleur se reporte déjà. Le vrai problème est en BD et
+en webtoon, où chaque case est unique. Gardé pour l'historique.
 
 Même problème, même pipeline, autre unité de travail : le plan, pas la planche.
 Rien à réinventer côté segmentation — c'est de l'UI et de la persistance.
