@@ -160,6 +160,7 @@
   "error.panel_missing": "There is no panel {number}.",
   "error.panel_no_zones": "Panel {panel} has no zones.",
   "error.panels_closed": "The zones are already cut from these panels. Detect panels again to change them.",
+  "error.cancelled": "Segmentation stopped. The page is as it was.",
   "error.panels_first": "Detect panels first. The steps run in order.",
   "error.refused": "The server refused that. Check the values and try again.",
   "error.segment_missing": "Panel {panel} has no segment {segment}.",
@@ -195,6 +196,7 @@
   "flats.stale": "A reference these flats were proposed from has been removed since. They still work: generate them again to use the references you have now.",
 
   "footer.language": "Language",
+  "footer.stop": "Stop",
   "footer.progress": "Progress",
 
   "header.inspector": "Show or hide the inspector",
@@ -332,6 +334,7 @@
 
   "progress.colour": "Colouring panel {index} of {total}",
   "progress.elapsed": "{label}… {time}",
+  "progress.stopping": "Stopping after the current pass…",
   "progress.extract": "Extracting the lines",
   "progress.percent": "{label}… {percent}",
   "progress.segment": "Segmenting panel {index} of {total}",

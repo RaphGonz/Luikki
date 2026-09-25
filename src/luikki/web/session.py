@@ -64,15 +64,15 @@ from ..segmentation.protected import rasterize_protected_for_panel
 from ..segmentation.segmenter import LineFillerSegmenter
 from ..segmentation.trappedball import expand_under_lines, inked_zones
 from . import project
-from .progress import Progress
+from .progress import Cancelled, Progress
 
 # Seconds per megapixel for each pass of Segment zones — what the progress bar
-# sizes its steps by. Measured on `test_pages/antoine_page.png` (1 MP, CPU):
-# LineFiller's ball passes are most of the wait, its merge most of the rest,
-# and the audit and the expansion barely register. `extract` is a guess until
-# the first run on this machine measures it: a few seconds per megapixel on a
-# GPU, tens on a CPU. Every run folds what it measured back in (`_learn`).
-_PASS_COST = {"extract": 20.0, "ball": 10.7, "merge": 11.0, "audit": 1.0, "expand": 0.2}
+# sizes its steps by. Measured on `test_pages/antoine_page.png` (14.4 MP, CPU)
+# on 2026-09-25, once `linefiller_fast` had taken LineFiller from minutes to
+# seconds: the leak audit is now the largest of the segmentation passes, and
+# extraction dwarfs them all on a CPU (about 18 s/MP, against about 1.2 on a
+# GPU through DirectML). Every run folds what it measured back in (`_learn`).
+_PASS_COST = {"extract": 18.0, "ball": 0.1, "merge": 0.3, "audit": 1.2, "expand": 0.23}
 
 
 def _megapixels(panel: "PanelState") -> float:
@@ -659,110 +659,40 @@ class Session:
                 measured[name][0] += seconds
                 measured[name][1] += megapixels
 
-            with self.progress.run(total) as progress:
-                if extracting:
-                    progress.at("extract")
-                    started = time.perf_counter()
-                    structural = self.structural_mask(
-                        progress=lambda done, count: progress.tick(
-                            page_megapixels * cost["extract"] / count
+            # Stop (`POST /api/cancel`) lands between two passes. Every map is
+            # computed before any is written, so a stopped run leaves the page
+            # exactly as it was before the press: its zones, its flats, its
+            # snaps.
+            try:
+                with self.progress.run(total, cancellable=True) as progress:
+                    if extracting:
+                        progress.at("extract")
+                        started = time.perf_counter()
+                        structural = self.structural_mask(
+                            progress=lambda done, count: progress.tick(
+                                page_megapixels * cost["extract"] / count
+                            )
                         )
-                    )
-                    spent("extract", time.perf_counter() - started, page_megapixels)
-                else:
-                    structural = self.structural_mask()
+                        spent("extract", time.perf_counter() - started, page_megapixels)
+                    else:
+                        structural = self.structural_mask()
 
-                for number, panel in enumerate(self.panels, start=1):
-                    progress.at("segment", number, len(self.panels))
-                    megapixels = _megapixels(panel)
-                    window = (
-                        slice(panel.y, panel.y + panel.height),
-                        slice(panel.x, panel.x + panel.width),
-                    )
-                    blocked = self._blocked_for(panel)
-                    labels = segmenter.segment(
-                        structural[window],
-                        protected=blocked,
-                        # LineFiller's last pass is its merge; the others are balls.
-                        progress=lambda done, passes, megapixels=megapixels: progress.tick(
-                            megapixels * cost["merge" if done == passes else "ball"]
-                        ),
-                    )
-                    timing = segmenter.last_timing
-                    spent("ball", timing["ball_seconds"] / ball_passes, megapixels)
-                    spent("merge", timing["merge_seconds"], megapixels)
+                    results = []
+                    for number, panel in enumerate(self.panels, start=1):
+                        progress.at("segment", number, len(self.panels))
+                        results.append(
+                            self._segment_panel(
+                                panel, segmenter, structural, cost, progress, spent
+                            )
+                        )
+            except Cancelled:
+                raise StepError("cancelled") from None
 
-                    started = time.perf_counter()
-                    # The audit pass, §1.3. LineFiller merges hard enough to take a
-                    # zone straight through a hole in a line; this puts back the
-                    # splits whose border turns out to be a line rather than a
-                    # tunnel. It only ever divides what came back, never re-draws
-                    # it, so nothing downstream sees a zone move.
-                    labels = split_open_borders(
-                        labels,
-                        structural[window],
-                        protected=blocked,
-                        params=LeakParams(max_open_share=self.leak_gap),
-                    )
-                    raw = self.line_mask[window]
-                    # The crumbs, §1.4. Before expansion, or "80% of this border is
-                    # one neighbour" would be measured on shapes already fused
-                    # under the strokes. The panel's own area is the denominator:
-                    # a crumb is a share of the panel, never a count of pixels.
-                    labels = absorb_micro_zones(
-                        labels,
-                        structural[window],
-                        raw,
-                        panel.width * panel.height,
-                        protected=blocked,
-                    )
-                    # Which zones are the artist's own spot black, measured here
-                    # and punched below. Measured on the labels the segmenter
-                    # returned, because after expansion every sliver that grew
-                    # under a stroke looks black too.
-                    doomed = inked_zones(labels, raw)
-                    spent("audit", time.perf_counter() - started, megapixels)
-                    progress.tick(megapixels * cost["audit"])
-
-                    started = time.perf_counter()
-                    # Flats must meet underneath the ink, or every line leaves a
-                    # white seam in the export (§10, anti-aliased line art). This
-                    # one takes the *raw* ink, not the structural lines: the layer
-                    # the artist drops on top is their real ink, so that is what
-                    # the flats have to reach under.
-                    expanded = expand_under_lines(labels, raw, protected=blocked)
-                    # Frozen now, in pixels. `doomed` is indexed by label, and the
-                    # pass below moves labels: read through it afterwards and it
-                    # would point at somewhere else entirely.
-                    spot_black = doomed[expanded]
-                    # The rest of the residue. Zones are cut on the *structural*
-                    # lines but expansion above only reaches under *real* ink, so
-                    # every pixel the extractor called line and the artist's ink
-                    # does not cover was left with no zone at all — no segment to
-                    # click, no colour, transparent in every PSD layer, white on
-                    # the flattened page. Nothing covers those pixels, so they get
-                    # the nearest label.
-                    expanded = expand_under_lines(
-                        expanded, ~spot_black, protected=blocked
-                    )
-                    # Now the hole. Left in place through expansion the spot black
-                    # was a wall the neighbours stopped against; taken out before
-                    # it, they would have flooded it and met in its middle, which
-                    # draws zones straight across the stroke separating them.
-                    expanded[spot_black] = UNASSIGNED
-                    panel.label_map = expanded
-                    panel.assignments = {}
-                    panel.flagged = set()
-                    # §3's exhaustiveness invariant, with the two exceptions as
-                    # the excluded set. Reported, never enforced: a panel that
-                    # fails it still colours, and the number is what says so.
-                    panel.orphans = int(
-                        check_coverage(expanded, spot_black, protected=blocked)[
-                            "uncovered_pixels"
-                        ]
-                    )
-                    spent("expand", time.perf_counter() - started, megapixels)
-                    progress.tick(megapixels * cost["expand"])
+            for panel, (label_map, orphans) in zip(self.panels, results):
+                panel.label_map = label_map
+                panel.assignments = {}
+                panel.flagged = set()
+                panel.orphans = orphans
 
             self._learn(measured)
             self._undo = []
@@ -770,6 +700,100 @@ class Session:
             self._flats_done = False
             self._save(maps="all")
             return self.panels
+
+    def _segment_panel(
+        self, panel: PanelState, segmenter, structural, cost, progress, spent
+    ) -> tuple[np.ndarray, int]:
+        """One panel through every pass of step 4: its label map and orphans.
+
+        Writes nothing to `panel`, so a run stopped halfway leaves no panel
+        half-cut.
+        """
+        megapixels = _megapixels(panel)
+        window = (
+            slice(panel.y, panel.y + panel.height),
+            slice(panel.x, panel.x + panel.width),
+        )
+        blocked = self._blocked_for(panel)
+        labels = segmenter.segment(
+            structural[window],
+            protected=blocked,
+            # LineFiller's last pass is its merge; the others are balls.
+            progress=lambda done, passes, megapixels=megapixels: progress.tick(
+                megapixels * cost["merge" if done == passes else "ball"]
+            ),
+        )
+        timing = segmenter.last_timing
+        spent("ball", timing["ball_seconds"] / (len(segmenter.radii) + 1), megapixels)
+        spent("merge", timing["merge_seconds"], megapixels)
+
+        started = time.perf_counter()
+        # The audit pass, §1.3. LineFiller merges hard enough to take a
+        # zone straight through a hole in a line; this puts back the
+        # splits whose border turns out to be a line rather than a
+        # tunnel. It only ever divides what came back, never re-draws
+        # it, so nothing downstream sees a zone move.
+        labels = split_open_borders(
+            labels,
+            structural[window],
+            protected=blocked,
+            params=LeakParams(max_open_share=self.leak_gap),
+        )
+        raw = self.line_mask[window]
+        # The crumbs, §1.4. Before expansion, or "80% of this border is
+        # one neighbour" would be measured on shapes already fused
+        # under the strokes. The panel's own area is the denominator:
+        # a crumb is a share of the panel, never a count of pixels.
+        labels = absorb_micro_zones(
+            labels,
+            structural[window],
+            raw,
+            panel.width * panel.height,
+            protected=blocked,
+        )
+        # Which zones are the artist's own spot black, measured here
+        # and punched below. Measured on the labels the segmenter
+        # returned, because after expansion every sliver that grew
+        # under a stroke looks black too.
+        doomed = inked_zones(labels, raw)
+        spent("audit", time.perf_counter() - started, megapixels)
+        progress.tick(megapixels * cost["audit"])
+
+        started = time.perf_counter()
+        # Flats must meet underneath the ink, or every line leaves a
+        # white seam in the export (§10, anti-aliased line art). This
+        # one takes the *raw* ink, not the structural lines: the layer
+        # the artist drops on top is their real ink, so that is what
+        # the flats have to reach under.
+        expanded = expand_under_lines(labels, raw, protected=blocked)
+        # Frozen now, in pixels. `doomed` is indexed by label, and the
+        # pass below moves labels: read through it afterwards and it
+        # would point at somewhere else entirely.
+        spot_black = doomed[expanded]
+        # The rest of the residue. Zones are cut on the *structural*
+        # lines but expansion above only reaches under *real* ink, so
+        # every pixel the extractor called line and the artist's ink
+        # does not cover was left with no zone at all — no segment to
+        # click, no colour, transparent in every PSD layer, white on
+        # the flattened page. Nothing covers those pixels, so they get
+        # the nearest label.
+        expanded = expand_under_lines(
+            expanded, ~spot_black, protected=blocked
+        )
+        # Now the hole. Left in place through expansion the spot black
+        # was a wall the neighbours stopped against; taken out before
+        # it, they would have flooded it and met in its middle, which
+        # draws zones straight across the stroke separating them.
+        expanded[spot_black] = UNASSIGNED
+        # §3's exhaustiveness invariant, with the two exceptions as the
+        # excluded set. Reported, never enforced: a panel that fails it still
+        # colours, and the number is what says so.
+        orphans = int(
+            check_coverage(expanded, spot_black, protected=blocked)["uncovered_pixels"]
+        )
+        spent("expand", time.perf_counter() - started, megapixels)
+        progress.tick(megapixels * cost["expand"])
+        return expanded, orphans
 
     def _learn(self, measured: dict[str, list[float]]) -> None:
         """Fold what a run took into the pass costs, half old and half new.

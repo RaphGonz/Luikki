@@ -247,6 +247,13 @@ def create_app(
         while it does."""
         return session.progress.snapshot()
 
+    @app.post("/api/cancel")
+    def cancel():
+        """Stop the step in flight, between two of its passes. Without the
+        lock, like the progress: the step holds it. The step itself answers
+        with `cancelled`, and leaves the page as it was before the press."""
+        return {"stopping": session.progress.cancel()}
+
     # -- updates ---------------------------------------------------------
     #
     # Here and not in the browser: the installer is downloaded, checked and

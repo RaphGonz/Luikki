@@ -418,7 +418,7 @@ function say(message, bad = false) {
   status.classList.toggle("bad", bad);
 }
 
-const work = { timer: null, started: 0, label: "", phase: null, polling: false, pending: false, percent: null };
+const work = { timer: null, started: 0, label: "", phase: null, polling: false, pending: false, percent: null, stopping: false };
 
 // A long step, with the bar running. Segmenting and colouring report a real
 // percent through `/api/progress`; a step that reports none gets a still track
@@ -431,6 +431,7 @@ async function working(label, polling, task) {
     polling,
     pending: false,
     percent: null,
+    stopping: false,
   });
   document.body.classList.add("busy");
   $("bar").hidden = false;
@@ -442,6 +443,7 @@ async function working(label, polling, task) {
     clearInterval(work.timer);
     work.timer = null;
     $("bar").hidden = true;
+    $("stop").hidden = true;
     $("bar-fill").style.width = "0";
     document.body.classList.remove("busy");
   }
@@ -455,6 +457,8 @@ async function tickWork() {
       if (work.timer && progress.running) {
         work.percent = progress.percent;
         work.phase = progressLabel(progress);
+        // Only segmentation stops: a generation is spent once it starts.
+        $("stop").hidden = !progress.cancellable;
       }
     } catch {
       // A missed poll is a bar that waits a tick. The step itself reports errors.
@@ -488,13 +492,26 @@ function showWork() {
   } else {
     bar.removeAttribute("aria-valuenow");
   }
-  const label = work.phase || work.label;
+  const label = work.stopping ? t("progress.stopping") : work.phase || work.label;
   say(
     determinate
       ? t("progress.percent", { label, percent: fmt.percent(work.percent) })
       : t("progress.elapsed", { label, time: fmt.clock((performance.now() - work.started) / 1000) }),
   );
 }
+
+// Stop asks; the server stops after the pass in flight, and the step's own
+// request then comes back refused, with the page as it was.
+$("stop").addEventListener("click", async () => {
+  work.stopping = true;
+  $("stop").hidden = true;
+  showWork();
+  try {
+    await call("/api/cancel", { method: "POST" });
+  } catch (error) {
+    say(error.message, true);
+  }
+});
 
 // ---- layers -----------------------------------------------------------------
 

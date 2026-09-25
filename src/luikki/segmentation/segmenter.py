@@ -16,6 +16,7 @@ from typing import Protocol, runtime_checkable
 
 import numpy as np
 
+from . import linefiller_fast as fast
 from .trappedball import SegmentationParams, trapped_ball_segment
 
 _VENDOR_DIR = Path(__file__).resolve().parents[3] / "third_party" / "LineFiller"
@@ -171,13 +172,15 @@ class LineFillerSegmenter:
         fills: list = []
         result = image
 
+        # The fill and merge passes are `linefiller_fast`'s: upstream's answer,
+        # pixel for pixel, without a whole-page scan per zone.
         for done, (radius, method) in enumerate(zip(self.radii, self.methods), start=1):
-            fill = lf.trapped_ball_fill_multi(result, radius, method=method)
+            fill = fast.trapped_ball_fill_multi(result, radius, method=method)
             fills += fill
             result = lf.mark_fill(result, fill)
             passed(done)
 
-        fills += lf.flood_fill_multi(result)
+        fills += fast.flood_fill_multi(result)
         ball_seconds = time.perf_counter() - started
         passed(passes - 1)
 
@@ -185,7 +188,7 @@ class LineFillerSegmenter:
 
         merge_started = time.perf_counter()
         if self.merge:
-            fillmap = lf.merge_fill(fillmap, max_iter=self.merge_iterations)
+            fillmap = fast.merge_fill(fillmap, max_iter=self.merge_iterations)
         merge_seconds = time.perf_counter() - merge_started
         passed(passes)
 

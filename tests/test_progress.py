@@ -11,7 +11,7 @@ pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
 from luikki.web.app import create_app  # noqa: E402
-from luikki.web.progress import Progress  # noqa: E402
+from luikki.web.progress import Cancelled, Progress  # noqa: E402
 
 
 def test_nothing_running_reads_as_nothing():
@@ -98,6 +98,7 @@ def test_segmenting_reports_every_panel_and_ends_at_100(client, page, monkeypatc
     assert {s["index"] for s in seen if s["phase"] == "segment"} == set(range(1, panels + 1))
     assert client.get("/api/progress").json() == {
         "running": False,
+        "cancellable": False,
         "phase": "segment",
         "index": panels,
         "count": panels,
@@ -117,3 +118,52 @@ def test_generating_flats_reports_its_panels(client, page, monkeypatch):
     final = client.get("/api/progress").json()
     assert final["running"] is False
     assert final["percent"] == 100.0
+
+
+def test_only_a_cancellable_run_stops():
+    progress = Progress()
+    assert progress.cancel() is False, "nothing is running"
+    with progress.run(10):
+        assert progress.cancel() is False, "a generation is never stopped"
+        progress.tick(1)
+    with pytest.raises(Cancelled):
+        with progress.run(10, cancellable=True):
+            assert progress.snapshot()["cancellable"] is True
+            assert progress.cancel() is True
+            progress.tick(1)
+    # The flag dies with the run it stopped.
+    with progress.run(10, cancellable=True):
+        progress.tick(1)
+
+
+def test_stopping_segmentation_leaves_the_page_as_it_was(client, page, monkeypatch):
+    """Stop lands between two passes, and nothing of the run is kept: the
+    zones, merges and flats from before the press are all still there."""
+    _upload(client, page)
+    client.post("/api/panels")
+    client.post("/api/zones")
+    client.post("/api/flats")
+    before = client.get("/api/state").json()
+    before_segments = client.get("/api/segments").json()
+
+    session = client.app.state.session
+    tick = session.progress.tick
+    ticks = []
+
+    def press_stop_midway(units):
+        ticks.append(units)
+        if len(ticks) == 3:
+            assert client.post("/api/cancel").json() == {"stopping": True}
+        tick(units)
+
+    monkeypatch.setattr(session.progress, "tick", press_stop_midway)
+    stopped = client.post("/api/zones")
+    assert stopped.status_code == 409
+    assert stopped.json()["code"] == "cancelled"
+
+    assert client.get("/api/state").json() == before
+    assert client.get("/api/segments").json() == before_segments
+    assert client.get("/api/progress").json()["running"] is False
+
+    monkeypatch.setattr(session.progress, "tick", tick)
+    assert client.post("/api/zones").status_code == 200, "a stopped run can be run again"

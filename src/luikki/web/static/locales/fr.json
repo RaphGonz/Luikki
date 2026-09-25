@@ -157,6 +157,7 @@
   "error.panel_missing": "Il n'y a pas de case {number}.",
   "error.panel_no_zones": "La case {panel} n'a pas de zones.",
   "error.panels_closed": "Les zones sont déjà découpées dans ces cases. Détectez à nouveau les cases pour les modifier.",
+  "error.cancelled": "Segmentation arrêtée. La planche est comme avant.",
   "error.panels_first": "Détectez d'abord les cases. Les étapes se suivent dans l'ordre.",
   "error.refused": "Le serveur a refusé. Vérifiez les valeurs et réessayez.",
   "error.segment_missing": "La case {panel} n'a pas de segment {segment}.",
@@ -192,6 +193,7 @@
   "flats.stale": "Une référence ayant servi à ces aplats a été retirée depuis. Ils restent utilisables : générez-les à nouveau pour profiter des références actuelles.",
 
   "footer.language": "Langue",
+  "footer.stop": "Arrêter",
   "footer.progress": "Progression",
 
   "header.inspector": "Afficher ou masquer l'inspecteur",
@@ -329,6 +331,7 @@
 
   "progress.colour": "Mise en couleur de la case {index} sur {total}",
   "progress.elapsed": "{label}… {time}",
+  "progress.stopping": "Arrêt après la passe en cours…",
   "progress.extract": "Extraction des traits",
   "progress.percent": "{label}… {percent}",
   "progress.segment": "Segmentation de la case {index} sur {total}",
