@@ -528,6 +528,17 @@ extractor, one pass of LineFiller, one panel. `Session._learn` measures what
 each pass costs on this machine, so the steps of the bar match that machine.
 The route sends codes, not words.
 
+Segment zones can be stopped. `POST /api/cancel` (also without the lock) sets
+a flag in `Progress`; the next tick raises `Cancelled`, between two passes and
+never by killing a thread. `segment_zones` computes every panel's map before
+it writes any, so a stopped run leaves the page as it was. Step 5 is not
+cancellable: a generation is spent once it starts.
+
+LineFiller's fill and merge passes run from `segmentation/linefiller_fast.py`:
+upstream's answer, pixel for pixel (`tests/test_linefiller_fast.py`), without
+the whole-page scan upstream makes per zone. The Windows build ships
+`onnxruntime-directml`, so the line extractor runs on the GPU.
+
 `src/luikki/model/store.py` is a full SQLite store with the same shape.
 This version of the app **does not use it**. Persistence is not the purpose of
 this version.

@@ -270,6 +270,119 @@ que dans Illustrator, sinon la correction coûte plus cher que l'erreur.
       comme une expérience de prix, pas comme un correctif — et pas avant les
       10 comptes de la section C.
 
+### Retour testeur 2 — coloriste pro (2026-09-24)
+
+Deuxième séance, tout est à faire. Deux découvertes qui dépassent l'ergonomie :
+l'extracteur **mange les traits épais**, donc la segmentation fusionne des
+zones que l'encre d'origine sépare très nettement — le défaut est dans le
+masque de trait, pas dans le trapped-ball ; et une planche de 3 700 × 3 900
+(14 Mpx) demande **plusieurs minutes**, ce qui fait de la vitesse un problème
+d'ergonomie et non de confort. Le reste : le zoom désoriente, et les commandes
+ne se trouvent toujours pas.
+
+**Segmentation — le masque de trait**
+
+- [ ] **Les traits épais disparaissent à l'extraction.** Sur sa planche, des
+      traits très épais sont absents de la sortie de MangaLineExtraction, donc
+      la coupe combine des zones que le lineart sépare sans ambiguïté. Ce n'est
+      pas un défaut de fermeture (§1.3) : le mur n'existe pas dans l'image sur
+      laquelle on coupe. Piste : le masque qui sert à couper doit être
+      **l'union de l'extrait et de l'encre franche de l'original** (seuil sur
+      le gris), jamais l'extrait seul — `expand_under_lines` pousse déjà la
+      couleur sous l'encre réelle, donc une union ne coûte que des zones en
+      plus, aucun pixel perdu. À juger sur rendus avant d'écrire une ligne
+      (cf. [[show-renders-explain-before-coding]]).
+- [x] Récupérer **la planche du testeur** et les endroits exacts où le trait
+      manque : le détail viendra de lui, et sans la planche il n'y a rien à
+      mesurer. C'est de l'encre réelle, donc elle a sa place dans le jeu
+      d'évaluation (contrainte « jamais de traits extraits »).
+
+- [ ] **Vu en mesurant : la détection trouve 2 cases sur les 4 d'antoine_page.**
+      Chaque paire de cases superposées revient en une seule. Pas signalé par
+      le testeur (il redessine ses cases), mais c'est une correction de plus à
+      chaque planche de ce style.
+
+**Performance — plusieurs minutes sur une vraie planche**
+
+- [x] **Mesurer avant d'optimiser** : le coût par passe est déjà instrumenté
+      (`_pass_cost`, `web/progress.py`) — extraction ONNX, les passes
+      multi-rayons du trapped-ball, la fusion, l'audit de fuite, l'expansion
+      sous le trait. Sortir le profil d'une planche 14 Mpx, puis viser la
+      passe qui domine, pas les cinq.
+      *Fait le 2026-09-25 sur antoine_page (14,4 Mpx, CPU) : l'étape 4 dépassait
+      10 min. LineFiller refaisait un travail sur toute la page à chaque zone ;
+      `linefiller_fast` rend la même réponse au pixel près, 77 s → 0,9 s sur
+      2,25 Mpx. Restait l'extraction, 255 s sur 290 : le build Windows passe
+      sur `onnxruntime-directml`, 17 s sur une GTX 1660 Ti, même masque. Hors
+      extraction l'étape fait 35 s, dont l'audit de fuite ~16 s.*
+- [ ] ~~**Paralléliser par panneau**~~ — *écarté après mesure : 35 s hors
+      extraction, dont l'essentiel dans un seul grand panneau.* : les panneaux sont indépendants après
+      l'étape 2 (un `panelN.npy` chacun), donc un thread par panneau est un
+      gain quasi gratuit. Le verrou de session et la progression (un total figé
+      avant le premier tic) sont ce qu'il faut revoir, pas l'algorithme.
+- [ ] **Segmenter à échelle réduite puis remonter la carte de labels.**
+      *Plus nécessaire en l'état (voir la mesure) ; à rouvrir seulement si
+      l'extraction CPU pèse chez un testeur sans GPU.* La plus
+      grosse économie et le plus gros risque : un trait de 1 px n'existe plus
+      après réduction, et une fuite créée par la réduction est invisible sur un
+      compteur. À trancher sur les rendus, jamais sur un chrono.
+- [x] **Arrêter une segmentation en cours.** Aucun moyen aujourd'hui : la
+      session tient son verrou pendant tout le run et `Progress` ne porte pas
+      de drapeau d'annulation. Il faut un drapeau posé de l'extérieur
+      (`POST /api/cancel`) et lu **entre deux passes** — jamais un thread tué —
+      avec un état qui revient proprement à « étape 4 non exécutée ».
+
+**Flux — re-segmenter après avoir vu les couleurs**
+
+- [x] **Impossible de corriger les zones une fois les couleurs posées.**
+      `editable.zones = _zones_done and not _flats_done`
+      (`web/session.py:1994`) ferme l'étape 4 dès l'étape 5, donc fusion, coupe
+      et Ctrl-Z sont refusés au moment précis où l'artiste **voit enfin**
+      l'erreur — la couleur est ce qui révèle la zone ratée. Il reste la
+      re-segmentation complète, qui jette tout. La frontière d'étape est une
+      décision assumée (« la fusion est permanente ») ; ce retour dit qu'elle
+      est posée une étape trop tôt. *Tranché : fusion et coupe à l'étape 6,
+      aplats en place (Maj + clic/balayage, clic droit) ; la fusion garde la
+      couleur du survivant, la coupe donne la couleur à chaque morceau.*
+
+**Interface — à retravailler**
+
+- [x] **Le panneau volant de l'étape 6 se ferme mais ne disparaît pas.** Cause
+      trouvée : `renderNear` pose bien `panel.hidden = true`, mais
+      `.near { display: flex }` (`app.css:527`) écrase l'attribut `hidden` de
+      la feuille du navigateur — la boîte reste, vidée. Un `.near[hidden]
+      { display: none; }` suffit ; vérifier au passage les autres panneaux
+      pilotés par `hidden` derrière une règle `display`.
+- [x] **La palette n'est pas visible dans le panneau volant**, donc l'artiste
+      ne comprend pas ce qu'on lui demande : `snapPanel`
+      (`app.js:1896`) ne montre les pastilles que derrière `choosing`, un état
+      qu'il faut deviner. Les couleurs de la palette doivent être là d'emblée,
+      à côté de la zone sélectionnée.
+- [x] **Ajouter une palette ou une référence est introuvable** : le bloc est en
+      bas à gauche, sous les sept étapes (`renderRail`, `bookRow`), donc hors
+      du chemin du regard. C'est le point d'entrée du travail de couleur ; il
+      ne peut pas être un pied de rail. Revoir le rail en entier plutôt que
+      déplacer une ligne.
+- [x] **La barre de chargement n'est pas assez visible** — la mettre en orange
+      plein. Aujourd'hui : 4 px, dégradé `--ramp` qui n'atteint `--attention`
+      qu'à 100 % (`app.css:478`). Décision de Raph, avec sa conséquence
+      écrite : `--attention` a « un seul sens » dans `UI.md`, et une barre
+      entièrement orange le dépense pour dire « ça travaille ».
+- [x] **Le zoom désoriente.** Le testeur décrit un zoom centré sur la planche
+      et non sous le curseur. La molette zoome pourtant bien sous le curseur
+      (`app.js:3672`) — ce qui recentre, c'est le **clamp** : `pan` est ramené
+      dans les bornes de la planche à chaque `applyView`, donc dès qu'on zoome
+      près d'un bord la vue saute vers le centre. C'est ce saut qu'il faut
+      tuer, pas le calcul du zoom.
+- [x] **Dézoomer sous le cadrage** pour voir la planche de loin et équilibrer
+      les couleurs : `zoom` est borné à `Math.max(1, …)` (`app.js:332`), le
+      cadrage est donc le plus loin qu'on puisse aller. Un plancher plus bas
+      (≈ 0,25) et un fond qui laisse la planche respirer.
+- [x] Facultatif, pour les tablettes graphiques (leurs raccourcis prennent le
+      reste) : **Ctrl + clic gauche** pour déplacer la planche plutôt que la
+      barre d'espace, et **Ctrl + / Ctrl −** pour zoomer. À ajouter aux
+      gestes existants, pas à leur place.
+
 ## B — App installable + cloud (plan fixé le 2026-09-10)
 
 Décidé : **pas de mesure avant de construire**, perte sèche acceptée. Raph
