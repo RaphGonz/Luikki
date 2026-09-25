@@ -83,6 +83,40 @@ def binarise_lines(lines: np.ndarray, threshold: int | None = None) -> np.ndarra
     return binary.astype(bool)
 
 
+# The band of stroke widths `thick_ink` keeps, as ball radii. Chosen by eye on
+# antoine_page, teddy and laurine (2026-09-25, renders in reports/traits_epais).
+THICK_MIN_RADIUS = 3
+THICK_MAX_RADIUS = 12
+
+
+def thick_ink(
+    line_mask: np.ndarray,
+    min_radius: int = THICK_MIN_RADIUS,
+    max_radius: int = THICK_MAX_RADIUS,
+) -> np.ndarray:
+    """The ink that is a thick stroke: wider than hatching, narrower than a spot black.
+
+    MangaLineExtraction returns a thick stroke as its two edges. The inside of
+    the stroke is then a corridor, and wherever one edge breaks, the zones on
+    either side run into each other through it — the second tester's page
+    merged zones its ink separates without ambiguity. Adding this band to the
+    extracted lines puts the wall back.
+
+    An opening by a ball of `min_radius` drops every stroke thinner than it,
+    which is the hatching the extractor exists to remove. One of `max_radius`
+    keeps only solid blacks, which are taken back out: those stay zones of
+    their own, found and punched by `inked_zones`, rather than walls the
+    neighbours would flood from both sides.
+    """
+    ink = line_mask.astype(np.uint8)
+
+    def opened(radius: int) -> np.ndarray:
+        ball = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * radius + 1, 2 * radius + 1))
+        return cv2.morphologyEx(ink, cv2.MORPH_OPEN, ball).astype(bool)
+
+    return opened(min_radius) & ~opened(max_radius)
+
+
 def ink_fraction(line_mask: np.ndarray) -> float:
     """Share of the page that is ink. A quick sanity check on binarisation.
 

@@ -59,7 +59,7 @@ from ..segmentation.absorb import absorb_micro_zones
 from ..segmentation.bubbles import BubbleDetector, detect_bubbles
 from ..segmentation.leaks import LeakParams, split_open_borders
 from ..segmentation.panels import segment_panels
-from ..segmentation.preprocess import binarise_lines, load_line_art
+from ..segmentation.preprocess import binarise_lines, load_line_art, thick_ink
 from ..segmentation.protected import rasterize_protected_for_panel
 from ..segmentation.segmenter import LineFillerSegmenter
 from ..segmentation.trappedball import expand_under_lines, inked_zones
@@ -1166,7 +1166,10 @@ class Session:
         a CPU, and it does not change until a new page is loaded.
         """
         if self._structural is None:
-            self._structural = binarise_lines(self.structural_lines(progress))
+            # Plus the thick strokes the extractor hollows out (`thick_ink`).
+            self._structural = binarise_lines(self.structural_lines(progress)) | thick_ink(
+                self.line_mask
+            )
         return self._structural
 
     def structural_lines(

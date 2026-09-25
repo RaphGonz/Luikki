@@ -17,7 +17,7 @@ import pytest
 from luikki import models
 from luikki.extract.base import ExtractionResult
 from luikki.model.masks import UNASSIGNED
-from luikki.segmentation.preprocess import binarise_lines
+from luikki.segmentation.preprocess import binarise_lines, thick_ink
 from luikki.web.session import Session
 
 ONNX = models.model_dir() / models.MANGA_LINE
@@ -73,7 +73,10 @@ def test_segmentation_reads_the_extractor_not_the_raw_ink(tmp_path):
     session.segment_zones()
 
     assert session.extractor.calls == 1
-    assert np.array_equal(session.structural_mask(), binarise_lines(lines))
+    # The extractor's lines, plus the thick strokes it hollows out (`thick_ink`).
+    assert np.array_equal(
+        session.structural_mask(), binarise_lines(lines) | thick_ink(session.line_mask)
+    )
 
     panel = session.panels[0]
     left = panel.label_map[150, 100]
