@@ -14,7 +14,7 @@ import re
 import sys
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_dynamic_libs, collect_submodules
 
 ROOT = Path(SPECPATH).parent
 MODELS = ROOT / "models"
@@ -40,6 +40,10 @@ a = Analysis(
     [str(ROOT / "packaging" / "luikki_app.py")],
     # `linefiller` is imported from the vendored folder, not an installed package.
     pathex=[str(ROOT / "src"), str(LINEFILLER)],
+    # Every DLL onnxruntime ships, named rather than left to the import scan:
+    # the Windows build swaps in onnxruntime-directml, whose DirectML.dll is
+    # loaded at run time and is what puts the line extractor on the GPU.
+    binaries=collect_dynamic_libs("onnxruntime"),
     datas=[
         (str(ROOT / "src" / "luikki" / "web" / "static"), "luikki/web/static"),
         (str(MODELS / "manga_line.onnx"), "models"),

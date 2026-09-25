@@ -65,6 +65,16 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[desktop]" pyinstaller
 
+      # The line extractor on any Windows GPU. Measured on antoine_page
+      # (14 Mpx, GTX 1660 Ti): 255 s on the CPU, 17 s through DirectML, the
+      # same binary line mask. Both wheels ship the `onnxruntime` module, so
+      # one replaces the other rather than sitting beside it.
+      - name: DirectML (Windows)
+        if: matrix.system == 'windows'
+        run: |
+          pip uninstall -y onnxruntime
+          pip install "onnxruntime-directml>=1.20"
+
       - name: Models
         run: luikki models
 

@@ -87,9 +87,18 @@ class MangaLineExtractor:
             import onnxruntime
 
             self.model = self.model or model_file(MANGA_LINE)
-            self._session = onnxruntime.InferenceSession(
-                str(self.model), providers=self.providers or best_providers()
-            )
+            providers = self.providers or best_providers()
+            try:
+                self._session = onnxruntime.InferenceSession(str(self.model), providers=providers)
+            except Exception:
+                # A GPU the build can name but not start (an old driver, a
+                # machine with no DirectX 12 device): the CPU is slower, and
+                # still gives the same lines.
+                if providers == ["CPUExecutionProvider"]:
+                    raise
+                self._session = onnxruntime.InferenceSession(
+                    str(self.model), providers=["CPUExecutionProvider"]
+                )
             self._input = self._session.get_inputs()[0].name
         return self._session
 
