@@ -23,6 +23,13 @@ frame broken by a few pixels of hair is a hole too small for the ball to pass
 through, so the panel stays sealed — a gap has to be gutter-width before it
 merges two panels.
 
+One disc cannot fit every gutter of a page: sized to the page, it misses a
+gutter narrower than the rest and the two panels come back as one (the second
+tester's page, 18 px against a 33 px disc; tintin's left column). So each blob
+is tried again with smaller discs from its own edge, and the split is kept
+only when the pieces are panel-shaped and lose almost no area
+(`_split_blob`).
+
 Remaining limits, stated rather than hidden: panels that share a border with
 no gutter between them merge into one; a page with no gutters at all (full
 bleed) returns a single whole-page panel. Both are honest failures rather than
@@ -88,6 +95,13 @@ class PanelParams:
     max_polygon_vertices: int = 12
     # Shortest run counted as a panel frame, as a fraction of the shorter side.
     frame_length_frac: float = 0.05
+    # A blob the page-sized disc left whole is tried again with smaller discs
+    # (`_split_blob`), and the split is kept only if every piece is at least
+    # this solid and the pieces together keep this share of the blob. A disc
+    # leaking into a panel through a broken frame eats its paper and fails
+    # the second test; one finding a narrow gutter loses only the gutter.
+    split_min_solidity: float = 0.6
+    split_min_cover: float = 0.9
     # Longest break in a frame to repair, as a fraction of the shorter side.
     # Sized to swallow hair, SFX and figures crossing a border.
     frame_gap_frac: float = 0.10
@@ -232,8 +246,11 @@ def segment_panels(
             continue
         if area / float(w * h) < params.min_solidity:
             continue
-        box = PanelBox(int(x), int(y), int(w), int(h))
-        panels.append(Panel(_panel_polygon(labels == index, box, params), box))
+        blob = labels == index
+        for piece in _split_blob(line_mask, blob, radius, min_area, params) or [blob]:
+            px, py, pw, ph = cv2.boundingRect(piece.astype(np.uint8))
+            box = PanelBox(int(px), int(py), int(pw), int(ph))
+            panels.append(Panel(_panel_polygon(piece, box, params), box))
 
     if not panels:
         # No gutters found at all: full bleed, or a page that is one image.
@@ -241,6 +258,54 @@ def segment_panels(
         return [Panel(box_to_polygon(whole), whole)]
 
     return _reading_order(panels, params.reading)
+
+
+def _split_blob(
+    line_mask: np.ndarray,
+    blob: np.ndarray,
+    radius: int,
+    min_area: float,
+    params: PanelParams,
+) -> list[np.ndarray] | None:
+    """The panels a smaller disc finds inside one blob, or None to keep it whole.
+
+    The disc starts from the blob's own edge: everything outside the blob is
+    treated as margin, so only a gutter opening onto the gutters already found
+    can be followed in. Radii halve, then third, then quarter the page's; the
+    first split that passes both tests in `PanelParams` wins.
+    """
+    x, y, w, h = cv2.boundingRect(blob.astype(np.uint8))
+    area = int(blob.sum())
+    for smaller in dict.fromkeys((radius // 2, radius // 3, radius // 4)):
+        if not 0 < smaller < radius:
+            continue
+        pad = smaller + 2
+        x0, y0 = max(0, x - pad), max(0, y - pad)
+        x1, y1 = min(blob.shape[1], x + w + pad), min(blob.shape[0], y + h + pad)
+        inside = blob[y0:y1, x0:x1]
+        gutter = _gutter_network(line_mask[y0:y1, x0:x1] & inside, smaller) & inside
+
+        count, labels, stats, _ = cv2.connectedComponentsWithStats(
+            (inside & ~gutter).astype(np.uint8), connectivity=4
+        )
+        pieces = [i for i in range(1, count) if stats[i][4] >= min_area]
+        if len(pieces) < 2:
+            continue
+        solid = all(
+            stats[i][4] / float(stats[i][2] * stats[i][3]) >= params.split_min_solidity
+            for i in pieces
+        )
+        kept = sum(int(stats[i][4]) for i in pieces) / area
+        if not solid or kept < params.split_min_cover:
+            continue
+
+        masks = []
+        for i in pieces:
+            piece = np.zeros_like(blob)
+            piece[y0:y1, x0:x1] = labels == i
+            masks.append(piece)
+        return masks
+    return None
 
 
 def _reinforce_frames(line_mask: np.ndarray, length: int, gap: int) -> np.ndarray:

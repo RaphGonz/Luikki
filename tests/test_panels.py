@@ -180,3 +180,45 @@ def test_polygons_are_closed_without_repeating_the_first_point():
     vertex is a degenerate edge."""
     for panel in segment_panels(_grid_page(2, 2)):
         assert panel.polygon[0] != panel.polygon[-1]
+
+
+def _frame(page: np.ndarray, x: int, y: int, width: int, height: int, weight: int = 6) -> None:
+    page[y : y + weight, x : x + width] = True
+    page[y + height - weight : y + height, x : x + width] = True
+    page[y : y + height, x : x + weight] = True
+    page[y : y + height, x + width - weight : x + width] = True
+
+
+def test_a_gutter_narrower_than_the_rest_still_separates_its_panels():
+    """The second tester's page, at its size: a 2x2 grid whose bottom two
+    panels sit 18 px apart, against gutters of 60 elsewhere. The page-sized
+    disc is 33 px across and cannot enter."""
+    page = np.zeros((3600, 3600), dtype=bool)
+    _frame(page, 60, 60, 1710, 1710)
+    _frame(page, 1830, 60, 1710, 1710)
+    _frame(page, 60, 1830, 1731, 1710)
+    _frame(page, 1809, 1830, 1731, 1710)  # 18 px from its neighbour
+    for x, y in ((300, 600), (2100, 600), (300, 2400), (2100, 2400)):
+        page[y : y + 12, x : x + 900] = True
+
+    assert len(segment_panels(page)) == 4
+
+
+def test_a_broken_frame_is_not_split_by_the_smaller_disc():
+    """A smaller disc gets through a break in a frame too. What it finds
+    inside is the panel's own paper, and losing that fails the cover test,
+    so the panel stays whole."""
+    page = np.zeros((1200, 1200), dtype=bool)
+    _frame(page, 60, 60, 1080, 1080)
+    # Two posts the full height of the panel: three rooms. A disc through the
+    # break floods the middle one, and the other two look like two panels.
+    page[60:1140, 420:432] = True
+    page[60:1140, 780:792] = True
+    # Breaks of 8 px, top and bottom: shut to the page-sized disc (11 px),
+    # open to the smaller ones, and the frame no longer joins the side rooms.
+    page[60:66, 596:604] = False
+    page[1134:1140, 596:604] = False
+
+    assert len(segment_panels(page)) == 1
+    unguarded = PanelParams(split_min_cover=0, split_min_solidity=0)
+    assert len(segment_panels(page, unguarded)) == 2, "the leak the guard refuses"

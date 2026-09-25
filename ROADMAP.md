@@ -282,7 +282,7 @@ ne se trouvent toujours pas.
 
 **Segmentation — le masque de trait**
 
-- [ ] **Les traits épais disparaissent à l'extraction.** Sur sa planche, des
+- [x] **Les traits épais disparaissent à l'extraction.** Sur sa planche, des
       traits très épais sont absents de la sortie de MangaLineExtraction, donc
       la coupe combine des zones que le lineart sépare sans ambiguïté. Ce n'est
       pas un défaut de fermeture (§1.3) : le mur n'existe pas dans l'image sur
@@ -292,15 +292,24 @@ ne se trouvent toujours pas.
       couleur sous l'encre réelle, donc une union ne coûte que des zones en
       plus, aucun pixel perdu. À juger sur rendus avant d'écrire une ligne
       (cf. [[show-renders-explain-before-coding]]).
+      *Fait le 2026-09-25 : l'extracteur rend un trait épais comme ses deux
+      bords, et l'intérieur devient un couloir. Le masque de coupe reçoit
+      l'encre ni hachure ni aplat noir (`thick_ink`, ouverture r=3 moins
+      r=12). Rendus validés par Raph : `reports/traits_epais/`.*
 - [x] Récupérer **la planche du testeur** et les endroits exacts où le trait
       manque : le détail viendra de lui, et sans la planche il n'y a rien à
       mesurer. C'est de l'encre réelle, donc elle a sa place dans le jeu
       d'évaluation (contrainte « jamais de traits extraits »).
 
-- [ ] **Vu en mesurant : la détection trouve 2 cases sur les 4 d'antoine_page.**
+- [x] **Vu en mesurant : la détection trouve 2 cases sur les 4 d'antoine_page.**
       Chaque paire de cases superposées revient en une seule. Pas signalé par
       le testeur (il redessine ses cases), mais c'est une correction de plus à
       chaque planche de ce style.
+      *Corrigé : la gouttière entre les deux cases du bas fait 18 px contre un
+      disque de 33. Chaque bloc est retenté avec des disques plus petits
+      depuis son propre bord (`_split_blob`), gardé seulement si les morceaux
+      ont une forme de case et gardent 90 % de l'aire. antoine 2 → 4, et la
+      colonne gauche fusionnée de tintin se sépare aussi.*
 
 **Performance — plusieurs minutes sur une vraie planche**
 
