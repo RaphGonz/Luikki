@@ -64,6 +64,11 @@
 
 * { box-sizing: border-box; }
 
+/* `hidden` means gone, whatever `display` a class sets. Without this, a rule
+   like `.near { display: flex }` beats the browser's own sheet and a hidden
+   window stays on screen, emptied (tester 2). */
+[hidden] { display: none !important; }
+
 * { scrollbar-width: thin; scrollbar-color: var(--control-press) transparent; }
 *::-webkit-scrollbar { width: 10px; height: 10px; }
 *::-webkit-scrollbar-thumb {
@@ -473,23 +478,21 @@ input[type="color"] {
 }
 .status.bad { color: var(--attention); }
 
-/* The gradient's size is the track's, fixed: the colour at 40 % is the same
-   on every run, and 100 % lands exactly on --attention. */
+/* Solid --attention, Raph's choice after tester 2 missed the bar: it spends
+   the one meaning on "working", recorded in UI.md's deviations. */
 .bar {
-  --track: 240px;
   flex: none;
-  width: var(--track);
-  height: 4px;
+  width: 240px;
+  height: 6px;
   overflow: hidden;
-  border-radius: 2px;
+  border-radius: 3px;
   background: var(--control);
 }
 .bar-fill {
   width: 0;
-  height: 4px;
-  border-radius: 2px;
-  background: var(--ramp);
-  background-size: var(--track) 4px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--attention);
   transition: width 200ms linear;
 }
 .bar.indeterminate .bar-fill { visibility: hidden; }

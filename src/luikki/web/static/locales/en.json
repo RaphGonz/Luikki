@@ -239,7 +239,7 @@
   "inspect.snap.no_colour": "No colour",
   "inspect.snap.no_suggestion": "No palette colour to suggest. Add colours to the palette first.",
   "inspect.snap.not_snapped": "It already shows what the model proposed.",
-  "inspect.snap.pick": "Pick another colour",
+  "inspect.snap.palette": "Your palette · click one to use it",
   "inspect.snap.proposed": "Proposed by the model",
   "inspect.snap.snap": "Snap",
   "inspect.snap.taken": "It already holds the nearest palette colour.",
@@ -448,6 +448,6 @@
   "zones.gap": "Largest gap to cut across, in % of a border",
   "zones.gap_tip": "Where a hole in a line stops looking like a hole and starts looking like a passage. Raise it to cut more, lower it to cut less. It changes nothing until you segment again.",
 
-  "zoom.fit": "Scroll to zoom · Space + drag to move",
+  "zoom.fit": "Scroll or Ctrl +/− to zoom · Space or Ctrl + drag to move",
   "zoom.zoomed": "{percent} · 0 to fit"
 }

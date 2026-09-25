@@ -236,7 +236,7 @@
   "inspect.snap.no_colour": "Pas de couleur",
   "inspect.snap.no_suggestion": "Aucune couleur de palette à proposer. Ajoutez d'abord des couleurs à la palette.",
   "inspect.snap.not_snapped": "Elle montre déjà la proposition du modèle.",
-  "inspect.snap.pick": "Choisir une autre couleur",
+  "inspect.snap.palette": "Votre palette · cliquez une couleur pour la poser",
   "inspect.snap.proposed": "Proposée par le modèle",
   "inspect.snap.snap": "Caler",
   "inspect.snap.taken": "Elle a déjà la couleur de palette la plus proche.",
@@ -445,6 +445,6 @@
   "zones.gap": "Plus grand trou à couper, en % d'une bordure",
   "zones.gap_tip": "Là où un trou dans un trait cesse de ressembler à un trou et devient un passage. Montez pour couper plus, baissez pour couper moins. Rien ne change avant de segmenter à nouveau.",
 
-  "zoom.fit": "Molette pour zoomer · Espace + glisser pour déplacer",
+  "zoom.fit": "Molette ou Ctrl +/− pour zoomer · Espace ou Ctrl + glisser pour déplacer",
   "zoom.zoomed": "{percent} · 0 pour recadrer"
 }

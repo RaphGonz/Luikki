@@ -310,6 +310,10 @@ const view = {
 // the scale that fits the page inside its surround, `pan` offsets it from
 // centred. `applyView` folds both into `view`, which stays the only converter.
 const MAX_ZOOM = 32;
+// Below the fit, to see the page from across the room and weigh its colours.
+const MIN_ZOOM = 0.25;
+// How much of the page, per axis, always stays in view.
+const KEEP_IN_VIEW = 0.2;
 let zoom = 1;
 let pan = { x: 0, y: 0 };
 let panning = null;
@@ -325,18 +329,24 @@ function fitScale() {
   );
 }
 
-// The one sizing function. The clamp is the safety of zooming: the page cannot
-// be flung off screen, and a page smaller than the canvas cannot be panned.
+// The one sizing function. The clamp only stops the page being flung off
+// screen: a fifth of it stays in view on each axis. It used to hold the page
+// against the canvas edges, and every zoom near an edge then jumped the view
+// back toward the centre — tester 2 read that as zooming on the page rather
+// than under the cursor. Only `fitPage` recentres.
+const clampPan = (offset, drawn, room) => {
+  const reach = (room + drawn) / 2 - KEEP_IN_VIEW * Math.min(drawn, room);
+  return Math.max(-reach, Math.min(reach, offset));
+};
+
 function applyView() {
   const page = state.page;
-  zoom = Math.min(MAX_ZOOM, Math.max(1, zoom));
+  zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom));
   view.scale = fitScale() * zoom;
   const drawnWidth = page.width * view.scale;
   const drawnHeight = page.height * view.scale;
-  const slackX = Math.max(0, (drawnWidth - stage.clientWidth) / 2 + tokens.surround);
-  const slackY = Math.max(0, (drawnHeight - stage.clientHeight) / 2 + tokens.surround);
-  pan.x = zoom > 1 ? Math.max(-slackX, Math.min(slackX, pan.x)) : 0;
-  pan.y = zoom > 1 ? Math.max(-slackY, Math.min(slackY, pan.y)) : 0;
+  pan.x = clampPan(pan.x, drawnWidth, stage.clientWidth);
+  pan.y = clampPan(pan.y, drawnHeight, stage.clientHeight);
   view.ox = (stage.clientWidth - drawnWidth) / 2 + pan.x;
   view.oy = (stage.clientHeight - drawnHeight) / 2 + pan.y;
 }
@@ -1383,7 +1393,7 @@ function showZoom() {
     readout.textContent = "";
     return;
   }
-  readout.textContent = zoom > 1.01 ? t("zoom.zoomed", { percent: fmt.percent(zoom * 100) }) : t("zoom.fit");
+  readout.textContent = Math.abs(zoom - 1) > 0.01 ? t("zoom.zoomed", { percent: fmt.percent(zoom * 100) }) : t("zoom.fit");
 }
 
 // ---- the inspector (§9) -----------------------------------------------------
@@ -1816,9 +1826,6 @@ function flatsView() {
   ];
 }
 
-// Choosing a colour other than the suggestion opens the palette under it.
-let choosing = false;
-
 // Step 6's inspector keeps the count and nothing else. What belongs to the
 // zone under the pointer goes next to the zone, in `renderNear` below: the
 // tester could not find the buttons, and they were right — the zone was under
@@ -1893,8 +1900,12 @@ function snapPanel() {
     body.push(note(t("inspect.snap.no_suggestion")));
   }
 
-  if (choosing && colours.length) {
+  // The palette is there from the start. Behind a "pick another" toggle the
+  // tester never found it, and could not tell what the window wanted of them.
+  if (!colours.length) body.push(note(t("snap.no_palette")));
+  else {
     body.push(
+      note(t("inspect.snap.palette")),
       h(
         "div",
         { class: "swatches" },
@@ -1927,16 +1938,6 @@ function snapPanel() {
         disabled: !suggestion || taken,
         why: taken ? t("inspect.snap.taken") : t("inspect.snap.no_suggestion"),
         onclick: () => snapSelected(),
-      }),
-      button(t("inspect.snap.pick"), {
-        key: "pick",
-        disabled: !colours.length,
-        why: t("snap.no_palette"),
-        pressed: choosing,
-        onclick: () => {
-          choosing = !choosing;
-          renderNear();
-        },
       }),
       button(t("inspect.snap.unsnap"), {
         kind: "quiet",
@@ -3075,7 +3076,6 @@ function forgetCanvasSelection() {
   sweep = null;
   cutting = null;
   selected = null;
-  choosing = false;
   closeMenu();
 }
 
@@ -3336,7 +3336,6 @@ async function applyCut() {
 let selected = null; // the /api/segment payload, plus its traced outline
 
 async function pickSegment(x, y) {
-  choosing = false;
   try {
     selected = await call(`/api/segment?x=${Math.round(x)}&y=${Math.round(y)}`);
     attachTrace(selected);
@@ -3379,7 +3378,6 @@ async function snapSelected(entryId) {
   const query = entryId === undefined ? "" : `?entry_id=${entryId}`;
   try {
     selected = { ...(await call(`/api/segment/${panel}/${label}/snap${query}`, { method: "POST" })), trace };
-    choosing = false;
     await afterSegmentChange(t("status.snapped", { zone: String(label) }));
   } catch (error) {
     say(error.message, true);
@@ -3665,8 +3663,19 @@ document.addEventListener("pointerdown", (event) => {
 // ---- zoom and pan -----------------------------------------------------------
 //
 // Two gestures: the wheel zooms about the cursor, and the middle button — or
-// space with the left, for a pen with no middle button — drags the page. Both
+// space or Ctrl with the left, for a pen with no middle button — drags the
+// page. Ctrl + and Ctrl − zoom about the middle of the canvas. Both
 // take the pointer in the capture phase, before the editing handlers above.
+
+// The page point at (sx, sy) stays there: a loupe over paper.
+function zoomAbout(sx, sy, wanted) {
+  const [ix, iy] = view.toImage(sx, sy);
+  zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, wanted));
+  const scale = fitScale() * zoom;
+  pan.x = sx - ix * scale - (stage.clientWidth - state.page.width * scale) / 2;
+  pan.y = sy - iy * scale - (stage.clientHeight - state.page.height * scale) / 2;
+  render();
+}
 
 stage.addEventListener(
   "wheel",
@@ -3674,14 +3683,8 @@ stage.addEventListener(
     if (!state || !state.page) return;
     event.preventDefault();
     const [sx, sy] = local(event);
-    // The page point under the cursor stays under it: a loupe over paper.
-    const [ix, iy] = view.toImage(sx, sy);
     const delta = event.deltaY * (event.deltaMode === 1 ? 16 : 1);
-    zoom = Math.min(MAX_ZOOM, Math.max(1, zoom * Math.exp(-delta * 0.0015)));
-    const scale = fitScale() * zoom;
-    pan.x = sx - ix * scale - (stage.clientWidth - state.page.width * scale) / 2;
-    pan.y = sy - iy * scale - (stage.clientHeight - state.page.height * scale) / 2;
-    render();
+    zoomAbout(sx, sy, zoom * Math.exp(-delta * 0.0015));
   },
   { passive: false },
 );
@@ -3691,7 +3694,9 @@ stage.addEventListener(
   (event) => {
     panned = false;
     if (!state || !state.page) return;
-    if (event.button !== 1 && !(spaceHeld && event.button === 0)) return;
+    // Ctrl with the left too: a tablet's own shortcuts often take the space bar.
+    const held = spaceHeld || event.ctrlKey || event.metaKey;
+    if (event.button !== 1 && !(held && event.button === 0)) return;
     event.preventDefault();
     event.stopImmediatePropagation();
     panning = local(event);
@@ -3744,7 +3749,6 @@ document.addEventListener("keydown", (event) => {
     if (selected || shapeSelected !== null) {
       selected = null;
       shapeSelected = null;
-      choosing = false;
       renderInspector();
       render();
     }
@@ -3756,6 +3760,14 @@ document.addEventListener("keydown", (event) => {
     if (activeLayer() !== "zones" || cutting) return;
     event.preventDefault();
     undoZones();
+    return;
+  }
+  // Ctrl + and Ctrl −, for a tablet: the browser's own page zoom is refused.
+  if ((event.ctrlKey || event.metaKey) && ["+", "=", "-", "_"].includes(event.key)) {
+    event.preventDefault();
+    if (!state || !state.page) return;
+    const step = event.key === "-" || event.key === "_" ? 1 / 1.25 : 1.25;
+    zoomAbout(stage.clientWidth / 2, stage.clientHeight / 2, zoom * step);
     return;
   }
   // Space and 0 belong to a focused control when there is one.
