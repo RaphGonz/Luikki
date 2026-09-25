@@ -169,7 +169,6 @@
   "error.upload_first": "Upload a page first.",
   "error.vault_unavailable": "This computer has no password store to keep the session in.",
   "error.zone_missing": "Panel {panel} has no zone {zone}.",
-  "error.zones_closed": "The flats are coloured from these zones. Segment zones again to change them — every merge and cut goes with it.",
   "error.zones_first": "Segment zones first. The steps run in order.",
 
   "export.count": { "one": "The PSD will have {count} layer.", "other": "The PSD will have {count} layers." },
@@ -361,6 +360,7 @@
 
   "snap.hint": "Click a zone on the page to decide its colour, or snap every zone at once.",
   "snap.ignore_guard": "Ignore the distance guard",
+  "snap.zones_hint": "A zone is wrong, not its colour? Shift + click or sweep to pick zones, then right-click to merge or cut. Ctrl+Z takes it back.",
   "snap.no_palette": "Add a palette colour first. There is nothing to snap to.",
   "snap.threshold": "Snap only within ΔE",
 

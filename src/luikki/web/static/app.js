@@ -1242,6 +1242,7 @@ function stepBody(id) {
       return [
         paletteBlock(),
         note(snappable ? t("snap.hint") : t("snap.no_palette"), !snappable),
+        note(t("snap.zones_hint")),
         h(
           "label",
           { class: "check" },
@@ -1867,6 +1868,8 @@ function flatsView() {
 // tester could not find the buttons, and they were right — the zone was under
 // their hand and the decision about it was at the other end of the screen.
 function snapView() {
+  // Zones picked for a merge or a cut: step 4's inspector, over the colours.
+  if (zonesOverColour() && (cutting || picked.size)) return zonesView();
   const { count, snapped } = state.segments;
   // And step 6 on the palette, which is what the zones are snapped to.
   const [palette, footer] = paletteView();
@@ -1987,6 +1990,14 @@ function snapPanel() {
       }),
     ),
   );
+  // The zone itself is wrong, not its colour: cut it here, or Shift-pick
+  // others to merge it with.
+  if (state.editable.zones) {
+    body.push(
+      h("div", { class: "row" }, button(t("menu.cut"), { kind: "quiet", key: "near-cut", onclick: () => startCut(selected) })),
+      note(t("snap.zones_hint")),
+    );
+  }
   return body;
 }
 
@@ -2635,6 +2646,13 @@ function activeLayer() {
 
 const picking = () => Boolean(state && current === "snap" && state.done.flats);
 
+// Step 4's merge and cut, over the colours. The second tester saw what was
+// wrong with a zone only once it was coloured, so step 6 corrects zones too:
+// Shift + press or sweep picks zones, the right click merges or cuts. A plain
+// click still picks the segment for its colour.
+const zonesOverColour = () => picking() && state.editable.zones;
+const zoneGesture = () => activeLayer() === "zones" || zonesOverColour();
+
 function applyCanvasMode() {
   const editing = Boolean(activeLayer());
   stage.classList.toggle("editing", editing);
@@ -2705,7 +2723,7 @@ function render() {
 
   drawHandles(editing);
   drawDraft(editing);
-  if (editing === "zones") drawPicked();
+  if (editing === "zones" || zonesOverColour()) drawPicked();
   if (picking()) drawSegment();
   // The window beside the zone moves with the picture it is pinned to. Moved,
   // never rebuilt: see `renderNear`.
@@ -3312,6 +3330,7 @@ async function mergePicked() {
     });
     picked.clear();
     traces.clear();
+    selected = null;
     if (edits.zones) edits.zones.merges++;
     await adopt(next);
     say(t("status.merged", { count: next.result.merged }));
@@ -3325,6 +3344,7 @@ async function undoZones() {
     const next = await call("/api/zones/undo", { method: "POST" });
     picked.clear();
     traces.clear();
+    selected = null;
     await adopt(next);
     say(t("status.undone"));
   } catch (error) {
@@ -3332,8 +3352,7 @@ async function undoZones() {
   }
 }
 
-function startCut() {
-  const [zone] = [...picked.values()];
+function startCut(zone = [...picked.values()][0]) {
   cutting = { panel: zone.panel, label: zone.label, stroke: [] };
   cursor = null;
   renderInspector();
@@ -3360,6 +3379,7 @@ async function applyCut() {
     });
     picked.clear();
     traces.clear();
+    selected = null;
     if (edits.zones) edits.zones.cuts++;
     await adopt(next);
     say(t("status.cut", { count: next.result.pieces }));
@@ -3441,11 +3461,12 @@ stage.addEventListener("pointerdown", (event) => {
   if (event.button !== 0 || !state || !state.page) return;
   closeMenu();
   const which = activeLayer();
-  if (!which) return;
+  const overColour = zonesOverColour() && (cutting || event.shiftKey);
+  if (!which && !overColour) return;
   const [sx, sy] = local(event);
   const point = onPage(view.toImage(sx, sy));
 
-  if (which === "zones") {
+  if (which === "zones" || overColour) {
     if (cutting) {
       cutting.stroke.push(point);
       render();
@@ -3513,10 +3534,11 @@ stage.addEventListener("pointerdown", (event) => {
 
 stage.addEventListener("pointermove", (event) => {
   const which = activeLayer();
-  if (!which) return;
+  const overColour = zonesOverColour() && (cutting || sweep);
+  if (!which && !overColour) return;
   const [sx, sy] = local(event);
 
-  if (which === "zones") {
+  if (which === "zones" || overColour) {
     if (cutting) {
       // Only the rubber band follows the hand; the line itself is the nodes.
       cursor = view.toImage(sx, sy);
@@ -3569,7 +3591,7 @@ stage.addEventListener("pointermove", (event) => {
 stage.addEventListener("pointerup", (event) => {
   const which = activeLayer();
   if (stage.hasPointerCapture(event.pointerId)) stage.releasePointerCapture(event.pointerId);
-  if (which === "zones") {
+  if (which === "zones" || (zonesOverColour() && (cutting || sweep))) {
     if (cutting) return;
     if (sweep) {
       const path = sweep.points.slice(Math.max(0, sweep.sent - 1));
@@ -3602,7 +3624,7 @@ stage.addEventListener("click", (event) => {
     }
     return;
   }
-  if (!picking()) return;
+  if (!picking() || cutting || event.shiftKey) return;
   pickSegment(x, y);
 });
 
@@ -3641,7 +3663,7 @@ function closeMenu() {
 }
 
 stage.addEventListener("contextmenu", (event) => {
-  const which = activeLayer();
+  const which = zoneGesture() ? "zones" : activeLayer();
   if (!which) return;
   event.preventDefault();
   const [sx, sy] = local(event);
@@ -3658,6 +3680,10 @@ stage.addEventListener("contextmenu", (event) => {
     // Cutting is one zone's business: with several selected there is no
     // saying which one the stroke belongs to.
     if (picked.size === 1) items.push({ label: t("menu.cut"), action: startCut });
+    // At step 6 the zone in hand is the selected segment.
+    else if (!picked.size && selected && current === "snap") {
+      items.push({ label: t("menu.cut"), action: () => startCut(selected) });
+    }
     if (picked.size) items.push({ label: t("menu.clear"), action: clearPicked });
     if (state.undo) items.push({ label: t("menu.undo"), action: undoZones });
     if (items.length) openMenu(event, items);
@@ -3794,10 +3820,10 @@ document.addEventListener("keydown", (event) => {
     }
     return;
   }
-  // Undo belongs to step 4 alone: merge and cut are the only corrections the
-  // app can put back, and they stop being undoable once the step is left.
+  // Undo belongs to merge and cut, at step 4 or over the colours at step 6:
+  // they are the only corrections the app can put back.
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
-    if (activeLayer() !== "zones" || cutting) return;
+    if (!zoneGesture() || cutting) return;
     event.preventDefault();
     undoZones();
     return;

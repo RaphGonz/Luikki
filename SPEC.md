@@ -109,11 +109,12 @@ wrong.
     Merged zones need not touch, and must share a panel.
 16. Draw a line across a zone to cut it in two. The line is a cut in the zone
     map only — it never appears in any export.
-16a. Both are corrections to the segmenter's proposal, so they happen at that
-    stage: after **Segment zones**, before **Generate flats**. They are
-    permanent — there is no unmerge, and the boundary is what protects the
-    artist instead of a history that every later stage would have to
-    interpret.
+16a. Both are corrections to the segmenter's proposal. They open after
+    **Segment zones** and stay open over the flats, at step 6: colour is what
+    shows a zone went wrong (tester 2). Over the flats a merge keeps the
+    survivor's colour and a cut gives the zone's colour to every piece.
+    There is no unmerge; Ctrl+Z takes back the last few edits, colours
+    included, until the zones are segmented or the flats generated again.
 
 ### Palette and character sheets
 17. Recolour and delete palette colours by hand. Removing a colour un-snaps

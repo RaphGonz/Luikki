@@ -351,11 +351,14 @@ more, the app cannot know which zone a stroke belongs to.
   fringe around. A stroke that separates nothing changes nothing, and the app
   says so.
 
-**These corrections are permanent.** There is no unmerge. To keep one would
-mean to hold the map of the segmenter beside the map of the artist, and each
-later stage would have to say which of the two it uses. The stage boundary
-protects the artist instead. The stage opens when the zones exist and closes
-when step 5 colours them.
+**There is no unmerge.** To keep one would mean to hold the map of the
+segmenter beside the map of the artist, and each later stage would have to
+say which of the two it uses. `_undo` keeps the last few label maps instead,
+with the panel's colours, and dies when the zones are segmented or the flats
+generated again. The corrections open when the zones exist and stay open at
+step 6, over the flats (tester 2 saw the bad zones only once they were
+coloured): `_recolour_panel` rebuilds that one panel's segments, a merge keeps
+the survivor's entry and a cut hands the zone's entry to every piece.
 
 ### Step 5 — Generate flats
 
@@ -628,11 +631,11 @@ No colour is in `app.js`. Each colour is a token in the `:root` block of
   the palette would repaint a page in silence.
 - Step 5 must not snap. Snapping is step 6, and the artist does it. See the
   reason in step 5.
-- A correction to the panels, the balloons or the zones happens at its own
-  stage and nowhere else. The stage closes when the next stage uses the
-  result.
-- A merge and a cut are permanent. Do not add an undo that keeps the map of
-  the segmenter beside the map of the artist.
+- A correction to the panels or the balloons happens at its own stage and
+  nowhere else. The stage closes when the next stage uses the result. Zones
+  are the exception: merge and cut stay open over the flats at step 6.
+- There is no unmerge. Do not add an undo that keeps the map of the segmenter
+  beside the map of the artist.
 - Do not show a palette image to the colour model. It is a strip of swatches,
   not an example of a coloured page.
 - Keep the bubble detector on `onnxruntime`. Nearly every other comic balloon

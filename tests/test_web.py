@@ -382,12 +382,11 @@ def _zones_of(client, panel=0):
     return state
 
 
-def test_zones_are_correctable_between_the_cut_and_the_colour(client, page):
-    """The whole stage rule, in one test.
+def test_zones_are_correctable_from_the_cut_through_the_colour(client, page):
+    """Not before the zones exist; from then on, flats or not.
 
-    Not before the zones exist, and not once the flats are coloured from them:
-    the corrections are permanent and there is no unmerge, so the boundary is
-    what protects the artist rather than a history they would have to manage.
+    The second tester found the bad zones only once they were coloured, so
+    the corrections stay open over the flats (step 6).
     """
     upload(client, "/api/page", page)
     client.post("/api/panels")
@@ -397,10 +396,78 @@ def test_zones_are_correctable_between_the_cut_and_the_colour(client, page):
     assert client.get("/api/state").json()["editable"]["zones"] is True
 
     client.post("/api/flats")
-    assert client.get("/api/state").json()["editable"]["zones"] is False
-    refused = client.post("/api/zones/merge", json={"panel": 0, "labels": [1, 2]})
-    assert refused.status_code == 409
-    assert refused.json()["code"] == "zones_closed"
+    assert client.get("/api/state").json()["editable"]["zones"] is True
+
+
+def _colours(client):
+    """(panel, label) -> palette entry, for every segment on the page."""
+    listed = client.get("/api/segments").json()["segments"]
+    return {(s["panel"], s["label"]): s["palette_entry_id"] for s in listed}
+
+
+def test_a_merge_over_the_flats_keeps_the_survivors_colour(client, page):
+    _zoned(client, page)
+    client.post("/api/flats")
+    before = _colours(client)
+    crossed, untouched = _stacked_pair(client)
+
+    merged = client.post(
+        "/api/zones/merge",
+        json={"panel": 0, "labels": [crossed["label"], untouched["label"]]},
+    )
+    assert merged.status_code == 200
+    survivor = merged.json()["result"]["label"]
+    gone = ({crossed["label"], untouched["label"]} - {survivor}).pop()
+
+    after = _colours(client)
+    assert after[(0, survivor)] == before[(0, survivor)]
+    assert (0, gone) not in after
+    # Nothing else on the page moved.
+    assert {k: v for k, v in before.items() if k != (0, gone)} == after
+
+
+def test_a_cut_over_the_flats_gives_every_piece_the_colour(client, page):
+    _zoned(client, page)
+    client.post("/api/flats")
+    crossed, _ = _stacked_pair(client)
+    # Snapped first, so the pieces have to carry the artist's colour and the
+    # snap with it, not fall back to the proposal.
+    colour = client.post("/api/palette/colour", json={"rgb": [10, 200, 30]}).json()["entry_id"]
+    snap = client.post(f"/api/segment/0/{crossed['label']}/snap?entry_id={colour}")
+    assert snap.json()["snapped"] is True
+
+    left, top, right, bottom = crossed["bounds"]
+    cut = client.post(
+        "/api/zones/cut",
+        json={
+            "panel": 0,
+            "label": crossed["label"],
+            "stroke": [[left - 5, (top + bottom) // 2], [right + 5, (top + bottom) // 2]],
+        },
+    )
+    assert cut.status_code == 200
+    pieces = cut.json()["result"]["labels"]
+    assert len(pieces) == 2
+    after = _colours(client)
+    assert [after[(0, piece)] for piece in pieces] == [colour, colour]
+    listed = client.get("/api/segments").json()["segments"]
+    assert all(s["snapped"] for s in listed if s["panel"] == 0 and s["label"] in pieces)
+
+    # And the PSD still covers every pixel it covered before.
+    assert client.post("/api/export").status_code == 200
+
+
+def test_undo_over_the_flats_puts_the_colours_back(client, page):
+    _zoned(client, page)
+    client.post("/api/flats")
+    before = _colours(client)
+    crossed, untouched = _stacked_pair(client)
+    client.post(
+        "/api/zones/merge",
+        json={"panel": 0, "labels": [crossed["label"], untouched["label"]]},
+    )
+    assert client.post("/api/zones/undo").status_code == 200
+    assert _colours(client) == before
 
 
 def test_a_press_resolves_to_the_zone_under_it(client, page):
@@ -599,7 +666,7 @@ def test_a_merge_and_a_cut_can_be_taken_back(client, page):
 
 def test_taking_back_a_zone_edit_stops_at_the_stage_boundary(client, page):
     """Segmenting again, or colouring, ends the stack: an undo across either
-    would put back zones the page no longer describes."""
+    would put back zones, or colours, the page no longer describes."""
     _zoned(client, page)
     crossed, untouched = _stacked_pair(client)
     client.post(
@@ -618,7 +685,7 @@ def test_taking_back_a_zone_edit_stops_at_the_stage_boundary(client, page):
     client.post("/api/flats")
     refused = client.post("/api/zones/undo")
     assert refused.status_code == 409
-    assert refused.json()["code"] == "zones_closed"
+    assert refused.json()["code"] == "nothing_to_undo"
 
 
 def test_a_stroke_that_separates_nothing_changes_nothing(client, page):

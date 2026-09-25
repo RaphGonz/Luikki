@@ -312,7 +312,12 @@ class Session:
         self._flats_done = False
         # Step 4 only: the label maps as they stood before the last merges and
         # cuts, oldest first. One panel per entry — see `_remember_zones`.
-        self._undo: list[tuple[int, np.ndarray]] = []
+        # (panel, label map, its assignments, its proposed entries): a merge
+        # or a cut made over the flats changes colours too, and undo has to
+        # put those back with the zones.
+        self._undo: list[
+            tuple[int, np.ndarray, dict[int, int], dict[tuple[int, int], int]]
+        ] = []
         # Which page of the project is open, and which references its flats
         # were proposed from: one deleted since is a warning, never a reason
         # to throw the flats away — the artist's snaps are built on them.
@@ -789,22 +794,25 @@ class Session:
     # Merge and cut are the two corrections that follow, and they are the last
     # thing the artist does before the colours arrive.
     #
-    # They are **undoable inside the step and permanent once it is left**. The
-    # first tester lost a forty-piece merge to one cut and had to rebuild it by
-    # hand, so `_undo` keeps the last few label maps and `undo_zones` puts one
-    # back. That is not the same thing as carrying the segmenter's original map
+    # They stay open **through step 6**, over the flats. The second tester
+    # found the bad zones only once they were coloured — colour is what shows a
+    # zone went wrong — and closing step 4 at step 5 left them nothing but a
+    # full re-segmentation that threw every snap away. So a merge keeps the
+    # colour of the zone that survives, and a cut hands the zone's colour to
+    # every piece; the rest of the page does not move.
+    #
+    # They are **undoable**. The first tester lost a forty-piece merge to one
+    # cut and had to rebuild it by hand, so `_undo` keeps the last few label
+    # maps, with their colours, and `undo_zones` puts one back. That is not the same thing as carrying the segmenter's original map
     # beside the artist's — the objection that ruled history out before. A
     # snapshot is a state this panel was in, not a second opinion about what
-    # the page is, and nothing downstream ever reads one. The stage boundary
-    # stays the real protection: the stack dies with the step, and pressing
-    # Segment zones again starts the page over.
+    # the page is, and nothing downstream ever reads one. Pressing Segment
+    # zones again still starts the page over, and empties the stack.
 
     def _require_zone_stage(self) -> None:
         self._require_page()
         if not self._zones_done:
             raise StepError("zones_first")
-        if self._flats_done:
-            raise StepError("zones_closed")
 
     def zone_at(self, x: int, y: int) -> tuple[int, int] | None:
         """The (panel, label) under a page-space point, or None.
@@ -884,8 +892,34 @@ class Session:
         or a cut that separates nothing must not push a state nothing changed.
         """
         assert panel.label_map is not None
-        self._undo.append((panel.order, panel.label_map.copy()))
+        proposed = {
+            key: entry for key, entry in self._auto_entry.items() if key[0] == panel.order
+        }
+        self._undo.append(
+            (panel.order, panel.label_map.copy(), dict(panel.assignments), proposed)
+        )
         del self._undo[:-_UNDO_DEPTH]
+
+    def _recolour_panel(self, panel: PanelState) -> None:
+        """Rebuild one panel's segments after its zones moved under the flats.
+
+        Only this panel's: the others' segments, and every snap on them, stay
+        the objects they were. The segments keep their place in the list, so
+        the page's order does not shuffle under the artist.
+        """
+        if not self._flats_done or panel.label_map is None:
+            return
+        fresh = build_segments(
+            panel.order, panel.label_map, panel.assignments, (panel.x, panel.y)
+        )
+        for segment in fresh:
+            segment.snapped = segment.palette_entry_id != self._auto_entry.get(segment.key)
+        at = next(
+            (i for i, segment in enumerate(self.segments) if segment.panel == panel.order),
+            len(self.segments),
+        )
+        kept = [segment for segment in self.segments if segment.panel != panel.order]
+        self.segments = kept[:at] + fresh + kept[at:]
 
     def undo_zones(self) -> dict:
         """Put back the zones as they were before the last merge or cut."""
@@ -893,9 +927,14 @@ class Session:
             self._require_zone_stage()
             if not self._undo:
                 raise StepError("nothing_to_undo")
-            order, label_map = self._undo.pop()
+            order, label_map, assignments, proposed = self._undo.pop()
             panel = self._panel_for(order)
             panel.label_map = label_map
+            panel.assignments = assignments
+            self._auto_entry = {
+                key: entry for key, entry in self._auto_entry.items() if key[0] != order
+            } | proposed
+            self._recolour_panel(panel)
             self._save(maps=[panel.order])
             return {"panel": order, "left": len(self._undo)}
 
@@ -929,6 +968,11 @@ class Session:
             others = [label for label in present if label != survivor]
             self._remember_zones(panel)
             panel.label_map[np.isin(panel.label_map, others)] = survivor
+            # Over the flats the survivor's colour is the merged zone's colour.
+            for label in others:
+                panel.assignments.pop(label, None)
+                self._auto_entry.pop((panel.order, label), None)
+            self._recolour_panel(panel)
             self._save(maps=[panel.order])
             return {
                 "panel": panel_order,
@@ -1024,6 +1068,17 @@ class Session:
                 )
                 panel.label_map[seam] = panel.label_map[rows[seam], cols[seam]]
 
+            # Over the flats every piece keeps the zone's colour, snapped or
+            # not: a cut changes where a colour stops, never what it is.
+            parent = int(label)
+            for piece in made[1:]:
+                if parent in panel.assignments:
+                    panel.assignments[piece] = panel.assignments[parent]
+                if (panel.order, parent) in self._auto_entry:
+                    self._auto_entry[(panel.order, piece)] = self._auto_entry[
+                        (panel.order, parent)
+                    ]
+            self._recolour_panel(panel)
             self._save(maps=[panel.order])
             return {"panel": panel_order, "labels": made, "pieces": len(made)}
 
@@ -1623,6 +1678,9 @@ class Session:
             }
 
             self._flats_done = True
+            # A snapshot from before the colours holds no colours: undoing
+            # across this press would put back zones with nothing to show.
+            self._undo = []
             self._flats_references = [
                 reference.id for reference in self.reference_store if reference.kind != PALETTE_KIND
             ]
@@ -1991,7 +2049,7 @@ class Session:
                     "bubbles": self._bubbles_done and not self._zones_done,
                     # Zones are corrected between the cut and the colour, and
                     # the corrections are permanent — there is no unmerge.
-                    "zones": self._zones_done and not self._flats_done,
+                    "zones": self._zones_done,
                 },
                 # Step 6 is per-segment and never "done" — what the sidebar
                 # reports is how much of the page the artist has resolved.

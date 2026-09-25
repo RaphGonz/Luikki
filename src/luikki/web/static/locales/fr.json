@@ -166,7 +166,6 @@
   "error.upload_first": "Chargez d'abord une planche.",
   "error.vault_unavailable": "Cet ordinateur n'a pas de coffre à mots de passe pour garder la session.",
   "error.zone_missing": "La case {panel} n'a pas de zone {zone}.",
-  "error.zones_closed": "Les aplats sont colorés à partir de ces zones. Segmentez à nouveau pour les modifier — chaque fusion et chaque coupe part avec.",
   "error.zones_first": "Segmentez d'abord les zones. Les étapes se suivent dans l'ordre.",
 
   "export.count": { "one": "Le PSD aura {count} calque.", "other": "Le PSD aura {count} calques." },
@@ -358,6 +357,7 @@
 
   "snap.hint": "Cliquez une zone de la planche pour décider de sa couleur, ou calez toutes les zones d'un coup.",
   "snap.ignore_guard": "Ignorer le garde de distance",
+  "snap.zones_hint": "La zone est fausse, pas sa couleur ? Maj + clic ou balayage pour prendre des zones, puis clic droit pour fusionner ou couper. Ctrl+Z pour revenir.",
   "snap.no_palette": "Ajoutez d'abord une couleur à la palette. Il n'y a rien sur quoi caler.",
   "snap.threshold": "Caler seulement sous ΔE",
 
