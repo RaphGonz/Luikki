@@ -1,8 +1,8 @@
 """The artist's account on this machine: a code by email once, then stay signed in.
 
 The app signs in without a password. Supabase emails a code, the artist types
-it here, and the session that comes back is what `POST /v1/panel` checks
-(`cloud/accounts.py`). Only the refresh token is kept, in the system's own
+it here, and the session that comes back is what the billing server checks
+(`cloud/billing.py`). Only the refresh token is kept, in the system's own
 password store through `keyring` (Credential Manager, Keychain): closing the
 app signs nobody out, and nothing readable sits in the project folder. The
 access token lives in memory and is renewed shortly before it lapses.
@@ -25,7 +25,7 @@ logger = logging.getLogger("luikki.account")
 
 SUPABASE_URL = "https://wuqgjbrkymmvvxftkeyi.supabase.co"
 SUPABASE_KEY = "sb_publishable_9pz49jbpKr74dsSE4--juQ_4rFDfMaz"
-# Renewed this many seconds early, so a panel never goes up with a token that
+# Renewed this many seconds early, so a request never goes up with a token that
 # lapses on the way.
 _MARGIN = 60
 
@@ -147,7 +147,7 @@ class Account:
             )
             if response.status_code in (400, 401, 403):
                 # Revoked, or signed out from elsewhere: the session is over,
-                # and pretending otherwise would fail every panel after this.
+                # and pretending otherwise would fail every request after this.
                 self._forget()
                 raise AccountError("signed_out")
             if response.status_code >= 300:
@@ -168,9 +168,8 @@ class Account:
             self._forget()
 
     def status(self, page: str = "") -> dict | None:
-        """The plan and what is left of it this month, for step 5 before it is
-        pressed (`my_status` in `schema.sql`). None when signed out or when the
-        database will not say: the GPU server still decides at the press."""
+        """The account's licence (`my_status` in `schema.sql`). None when
+        signed out or when the database will not say."""
         token = self.access_token()
         if not token:
             return None

@@ -1,7 +1,6 @@
 """A project is a folder; a page is a folder inside it (SPEC 1–4).
 
     <project>/
-      references/  palette.json   the book's, kept by `ReferenceStore` and `Session`
       project.json                which page is open, the leak gap, the export stack
       pages/0001/
         source.png                the artist's upload, copied in
@@ -11,8 +10,7 @@
 
 Files rather than SQLite: the state is small, and a folder of JSON and images
 is one anybody can open, read and copy. Rule 1 holds on disk as it does in
-memory — `page.json` gives each zone a palette entry id, and an RGB value only
-ever sits beside an entry.
+memory — `page.json` gives each zone a palette entry id, never an RGB value.
 
 Every edit saves before it returns (SPEC 4). Each file is written beside
 itself and then swapped in, so a crash mid-save leaves the previous version
@@ -34,8 +32,6 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from ..colour.segments import build_segments
-from ..model.entities import PaletteEntry
 from ..segmentation.preprocess import load_line_art
 
 FORMAT = 1
@@ -102,8 +98,8 @@ def page_ids(workdir: Path) -> list[int]:
 def stage(record: dict) -> str:
     """How far a page has got: the last step it has run."""
     done = record["done"]
-    if done["flats"]:
-        return "flats"
+    if done.get("planes"):
+        return "planes"
     if done["zones"]:
         return "zones"
     if done["bubbles"]:
@@ -146,8 +142,7 @@ def save_project(session) -> None:
             "current": session.page_id,
             "leak_gap": session.leak_gap,
             "granularity": session.granularity,
-        "support_grey": session.support_grey,
-            "colours": session.proposer.name,
+            "support_grey": session.support_grey,
         },
     )
 
@@ -158,12 +153,10 @@ def load_project(session) -> int | None:
     if record is None:
         return None
     session.leak_gap = float(record.get("leak_gap", session.leak_gap))
-    session.granularity = record.get("granularity", session.granularity)
+    # A project saved before the planes stacked by colour or by panel.
+    granularity = record.get("granularity", session.granularity)
+    session.granularity = granularity if granularity in ("plane", "colour") else "plane"
     session.support_grey = bool(record.get("support_grey", session.support_grey))
-    # The artist's choice at step 5, where this app still offers it.
-    colours = record.get("colours")
-    if colours in session.proposers:
-        session.proposer = session.proposers[colours]
     return record.get("current")
 
 
@@ -179,8 +172,8 @@ def _lines_file(session) -> str:
 def save_page(session, maps="all") -> dict:
     """Write the open page. `maps` is "all" or the panel orders whose zones changed.
 
-    Zone maps are the only large files, so a snap rewrites `page.json` alone
-    and a merge rewrites one panel's map. Arrays go first and `page.json` last,
+    Zone maps are the only large files, so moving a zone to another plane
+    rewrites `page.json` alone and a merge rewrites one panel's map. Arrays go first and `page.json` last,
     so the record never names a file that is not there yet.
     """
     folder = page_folder(session.workdir, session.page_id)
@@ -197,6 +190,16 @@ def save_page(session, maps="all") -> dict:
         # Re-running an earlier step threw the zones away; the files go too.
         for stale in folder.glob("panel*.npy"):
             stale.unlink()
+
+    # The depth the planes were voted on, so a cut votes again after a restart.
+    for order, panel in enumerate(session.panels):
+        path = folder / f"depth{order}.npy"
+        if panel.depth_groups is None:
+            path.unlink(missing_ok=True)
+        elif maps == "all" or order in maps or not path.exists():
+            with open(folder / f"depth{order}.npy.tmp", "wb") as handle:
+                np.save(handle, panel.depth_groups)
+            os.replace(folder / f"depth{order}.npy.tmp", path)
 
     lines = folder / _lines_file(session)
     if session._structural_lines is not None and not lines.exists():
@@ -220,20 +223,16 @@ def save_page(session, maps="all") -> dict:
                 "orphans": panel.orphans,
                 # zone label -> palette entry id. Never an RGB (rule 1).
                 "assignments": {str(label): entry for label, entry in panel.assignments.items()},
+                # zone label -> plane.
+                "planes": {str(label): plane for label, plane in panel.planes.items()},
             }
             for panel in session.panels
         ],
-        # The page's own entries: one per zone, the colour the proposer gave it.
-        "proposed": [
-            {"id": entry.id, "rgb": list(entry.rgb), "label": entry.label, "revision": entry.revision}
-            for entry in session._created_palette
-        ],
-        "auto_entry": [[panel, label, entry] for (panel, label), entry in session._auto_entry.items()],
-        "flats_references": session._flats_references,
+        "extract_lines": session.extract_lines,
         "done": {
             "bubbles": session._bubbles_done,
             "zones": session._zones_done,
-            "flats": session._flats_done,
+            "planes": session._planes_done,
         },
     }
     _write_json(folder / PAGE_FILE, record)
@@ -266,7 +265,7 @@ def open_page(session, page_id: int) -> None:
                 width=panel["width"],
                 height=panel["height"],
                 polygon=[tuple(point) for point in panel["polygon"]],
-                assignments={int(label): int(entry) for label, entry in panel["assignments"].items()},
+                planes={int(label): int(plane) for label, plane in panel.get("planes", {}).items()},
                 orphans=panel["orphans"],
             )
             for order, panel in enumerate(record["panels"])
@@ -274,19 +273,16 @@ def open_page(session, page_id: int) -> None:
         if done["zones"]:
             for order, panel in enumerate(panels):
                 panel.label_map = np.load(folder / f"panel{order}.npy")
+                depth = folder / f"depth{order}.npy"
+                if depth.exists():
+                    panel.depth_groups = np.load(depth)
+        session.extract_lines = bool(record.get("extract_lines", False))
         lines = folder / _lines_file(session)
-        structural_lines = cv2.imread(str(lines), cv2.IMREAD_GRAYSCALE) if lines.exists() else None
-        created = [
-            PaletteEntry(
-                project_id=0,
-                rgb=tuple(entry["rgb"]),
-                label=entry["label"],
-                id=int(entry["id"]),
-                revision=int(entry["revision"]),
-            )
-            for entry in record["proposed"]
-        ]
-        auto_entry = {(int(p), int(l)): int(e) for p, l, e in record["auto_entry"]}
+        structural_lines = (
+            cv2.imdecode(np.fromfile(str(lines), np.uint8), cv2.IMREAD_GRAYSCALE)
+            if lines.exists()
+            else None
+        )
     except (KeyError, TypeError) as exc:
         session.reset()
         raise ValueError(f"page {page_id} is not a page this version can read: {exc}") from exc
@@ -309,24 +305,10 @@ def open_page(session, page_id: int) -> None:
     session._structural_lines = structural_lines
     session.protected = [[tuple(point) for point in polygon] for polygon in record["protected"]]
     session.panels = panels
-    session._created_palette = created
-    session._auto_entry = auto_entry
-    session._flats_references = [int(ref) for ref in record.get("flats_references", [])]
     session._bubbles_done = bool(done["bubbles"])
     session._zones_done = bool(done["zones"])
-    session._flats_done = bool(done["flats"])
-
-    if session._flats_done:
-        # A colour taken out of the palette while this page was closed. Done
-        # to an open page, `delete_palette_entry` puts each zone back on its
-        # proposed colour; a closed page gets the same when it opens.
-        known = set(session.palette_by_id)
-        for panel in panels:
-            for label, entry in list(panel.assignments.items()):
-                if entry not in known and (panel.order, label) in auto_entry:
-                    panel.assignments[label] = auto_entry[(panel.order, label)]
-        for panel in panels:
-            segments = build_segments(panel.order, panel.label_map, panel.assignments, (panel.x, panel.y))
-            for segment in segments:
-                segment.snapped = segment.palette_entry_id != auto_entry.get(segment.key)
-            session.segments.extend(segments)
+    session._planes_done = bool(done.get("planes")) and any(panel.planes for panel in panels)
+    if session._zones_done:
+        # Given again rather than read back: a page saved before the fake
+        # flats holds the ids of colours that no longer exist.
+        session._assign_colours()

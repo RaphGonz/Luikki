@@ -1,4 +1,4 @@
-"""One project, seven buttons, one page open at a time.
+"""One project, six buttons, one page open at a time.
 
 The project is the working folder, and every page in it is saved as the
 artist works (`project.py`): each method that changes something writes it
@@ -9,8 +9,9 @@ image files, which is simpler to read and to debug.
 
 What *is* carried over from the store's design, because it is non-negotiable
 (rule 1): a zone holds a `palette_entry_id` and there is nowhere in this module
-for a zone to hold an RGB value. Colour is resolved through the palette at
-render and export time, both of which go through `export.psd`.
+for a zone to hold an RGB value. Luikki proposes no colour (ROADMAP G): the
+entries are the eight fake flats of `export.flat_colours`, given so that no two
+touching zones share one, and resolved at render and export time.
 
 Rule 2 — nothing runs by itself. Every method here is one button. Rule 4 —
 re-running a step replaces its output, so each step clears what depended on it.
@@ -19,7 +20,6 @@ re-running a step replaces its output, so each step clears what depended on it.
 from __future__ import annotations
 
 import inspect
-import json
 import threading
 import time
 import uuid
@@ -29,36 +29,29 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from PIL import Image
 from scipy import ndimage
 
-from ..account import Account, AccountError
-from ..colour.extract import EmptyImageError, extract_palette
-from ..colour.proposer import (
-    ColourProposer,
-    DistinctColourProposer,
-    PanelRequest,
-    ReferenceImage,
-)
-from ..colour.references import PALETTE_KIND, Reference, ReferenceStore
-from ..colour.segments import Segment, build_segments
-from ..colour.snap import SNAP_MAX_DELTA, assign_zones, nearest_entry
-from ..export.psd import (
-    EXPORT_LAYER_WARNING,
-    GRANULARITIES,
-    PanelFlats,
-    flats_preview,
-    layer_count,
-    write_psd,
-)
+from ..account import Account
+from ..export.flat_colours import FLAT_PALETTE, assign_flat_colours
+from ..export.psd import GRANULARITIES, PanelFlats, flats_preview, layer_count, write_psd
 from ..extract.base import LineExtractor
-from ..extract.manga_line import MangaLineExtractor
+from ..extract.passthrough import PassthroughExtractor
 from ..model.entities import PaletteEntry
 from ..model.masks import UNASSIGNED, check_coverage, region_stats
 from ..segmentation.absorb import absorb_micro_zones
 from ..segmentation.bubbles import BubbleDetector, detect_bubbles
 from ..segmentation.leaks import LeakParams, split_open_borders
 from ..segmentation.panels import segment_panels
+from ..segmentation.planes import (
+    CHARACTER,
+    FAR,
+    MIDDLE,
+    NEAR,
+    PLANES,
+    DepthEstimator,
+    panel_planes,
+    planes_from,
+)
 from ..segmentation.preprocess import binarise_lines, load_line_art, thick_ink
 from ..segmentation.protected import rasterize_protected_for_panel
 from ..segmentation.segmenter import LineFillerSegmenter
@@ -89,9 +82,14 @@ class PanelState:
     polygon: list[tuple[int, int]]
     # None until Segment zones has run. Panel-local frame, not page frame.
     label_map: np.ndarray | None = None
-    # zone label -> palette entry id. Empty until Generate flats has run.
+    # zone label -> palette entry id: one of the eight fake flats, given by
+    # `_assign_colours` whenever the zones change. Never an RGB (rule 1).
     assignments: dict[int, int] = field(default_factory=dict)
-    flagged: set[int] = field(default_factory=set)
+    # zone label -> plane (`segmentation.planes`). Empty until Planes has run.
+    planes: dict[int, int] = field(default_factory=dict)
+    # The depth groups the planes were voted on (`planes.depth_groups`),
+    # panel-local: a zone cut or merged later votes again on what is under it.
+    depth_groups: np.ndarray | None = None
     # Pixels this panel left with no zone at all, once the two deliberate
     # exceptions — protected, and the artist's own spot black — are taken out.
     # An alarm, not a score, like the zone count: it should read 0, and it read
@@ -106,17 +104,19 @@ class PanelState:
         return int((present != UNASSIGNED).sum())
 
 
-# What `CobraProposer.resolution` defaults to, on the long side. A reference
-# panel is measured against this because the real target is per-query and
-# unknown at upload time (`_split_into_panels`).
-_NOMINAL_TARGET = 1024
-# How far a reference may be blown up to reach that frame before it is more
-# smear than drawing. 2.0 is where `reports/10-retrieval` measured the fall,
-# on one page — treat it as calibrated, not derived.
-_MAX_UPSCALE = 2.0
-# How many merges and cuts step 4 can take back. Each one holds one panel's
+# How many merges and cuts the zones can take back. Each one holds one panel's
 # label map, and a merge or a cut touches exactly one panel.
 _UNDO_DEPTH = 20
+
+# What the planes look like when nobody says otherwise (the command line): a
+# tint over the page, never in the PSD. The app sends its own, from the
+# `--plane-*` tokens of `app.css`.
+PLANE_TINTS = {
+    NEAR: (235, 90, 60),
+    MIDDLE: (120, 200, 80),
+    FAR: (60, 160, 230),
+    CHARACTER: (200, 60, 200),
+}
 
 
 # How finely a curve is sampled, in page pixels between two samples. Half a
@@ -186,14 +186,6 @@ def _overshoot(points: np.ndarray, margin: int) -> np.ndarray:
     )
 
 
-def _rgb(value) -> tuple[int, int, int]:
-    """Three channels, 0-255, from whatever the wire or the store sent."""
-    channels = tuple(int(part) for part in value)
-    if len(channels) != 3 or any(not 0 <= part <= 255 for part in channels):
-        raise StepError("colour_invalid")
-    return channels
-
-
 class StepError(RuntimeError):
     """What the artist asked for cannot be done now, named by a code.
 
@@ -210,28 +202,28 @@ class StepError(RuntimeError):
         self.params = params
 
 
+
 class Session:
     """The whole application state. One instance per process."""
 
     def __init__(
         self,
         workdir: str | Path,
-        proposer: ColourProposer | None = None,
         extractor: LineExtractor | None = None,
         account: Account | None = None,
-        proposers: dict[str, ColourProposer] | None = None,
+        depth: DepthEstimator | None = None,
     ):
         self.workdir = Path(workdir)
         # Who is signed in on this machine, for the rail. None where nothing
         # signs in: the CLI, and most tests.
         self.account = account
         self.workdir.mkdir(parents=True, exist_ok=True)
-        self.proposer: ColourProposer = proposer or DistinctColourProposer()
-        # What the artist may choose between at step 5, by name. Never swapped
-        # behind their back: distinct colours are a choice, not a fallback.
-        self.proposers: dict[str, ColourProposer] = proposers or {self.proposer.name: self.proposer}
-        # On onnxruntime, with a GPU when the installed build has one.
-        self.extractor: LineExtractor = extractor or MangaLineExtractor()
+        # The whole of the artist's ink is the line by default: the extractor
+        # erases small dense detail — windows, pipes — it takes for hatching
+        # (ROADMAP G5). It runs only on a page where the artist turns it on.
+        self.raw_extractor: LineExtractor = PassthroughExtractor()
+        # MangaLineExtraction, built on first use: it loads 172 MB of weights.
+        self._line_extractor = extractor
         # Serialises the buttons. Segmentation takes seconds and the artist
         # will double-click; two passes mutating the same panel list is the
         # one race worth spending a lock on.
@@ -240,25 +232,18 @@ class Session:
         self.progress = Progress()
         # Machine-scoped rather than page-scoped: how long each pass takes here.
         self._pass_cost = dict(_PASS_COST)
-        # Loaded on the first press of Detect bubbles rather than here: it is
-        # 161 MB off disk, and a page with no balloons never needs it.
+        # Loaded on the first press of their step rather than here: each is
+        # tens of megabytes off disk, and a page may never need it.
         self.bubble_detector: BubbleDetector | None = None
-        # Built before `reset`, and deliberately not touched by it: the
-        # reference pool belongs to the book, not to the page in flight.
-        self.reference_store = ReferenceStore(self.workdir / "references")
-        # reference id -> the colours found in it, cached; and
-        # (reference id, rgb) -> the palette entry the artist made from it.
-        self._candidates: dict[int, list[tuple[int, int, int]]] = {}
-        self._taken: dict[tuple[int, tuple[int, int, int]], int] = {}
-        self._load_palette()
+        self.depth_estimator = depth
         # How open a border may be before the leak audit calls it a passage
         # rather than a hole in a line (§1.3). Held on the session, not passed
         # and forgotten, because it is the one segmentation knob the artist
         # turns: they change it, press Segment zones again, and look. Book-
-        # scoped like the palette — an artist's ink does not change per page —
-        # and so is how they stack a PSD.
+        # scoped — an artist's ink does not change per page — and so is how
+        # they stack a PSD.
         self.leak_gap = LeakParams().max_open_share
-        self.granularity = "colour"
+        self.granularity = "plane"
         # The two ink layers a printer wants over the flats (`_write_support`).
         # Off unless asked for: it is the one thing that puts line art in an
         # export. Book-scoped, like the stack it sits on.
@@ -276,6 +261,27 @@ class Session:
                 # list, and the app starts rather than dying on it.
                 pass
 
+    @property
+    def line_extractor(self) -> LineExtractor:
+        if self._line_extractor is None:
+            from ..extract.manga_line import MangaLineExtractor
+
+            self._line_extractor = MangaLineExtractor()
+        return self._line_extractor
+
+    @property
+    def extractor(self) -> LineExtractor:
+        """What the open page's zones are cut from: its ink, or extracted lines."""
+        return self.line_extractor if self.extract_lines else self.raw_extractor
+
+    @property
+    def palette(self) -> list[PaletteEntry]:
+        return FLAT_PALETTE
+
+    @property
+    def palette_by_id(self) -> dict[int, PaletteEntry]:
+        return {int(entry.id): entry for entry in FLAT_PALETTE}
+
     # -- state -----------------------------------------------------------
 
     def reset(self) -> None:
@@ -285,47 +291,27 @@ class Session:
         self.height = 0
         self.grey: np.ndarray | None = None
         self.line_mask: np.ndarray | None = None
-        # Extractor output, computed lazily by `structural_lines`. The
-        # greyscale is kept as well as the mask because the two consumers want
-        # different things from it: trapped-ball wants a boolean ink map, the
-        # proposer wants the soft line image the model was trained on.
+        # Page-scoped: line extraction, on or off for this page (ROADMAP G5).
+        self.extract_lines = False
+        # Extractor output, computed lazily by `structural_lines`, and its
+        # binarised mask, which is what trapped-ball reads.
         self._structural_lines: np.ndarray | None = None
         self._structural: np.ndarray | None = None
         self.panels: list[PanelState] = []
         self.protected: list[list[tuple[int, int]]] = []
-        # The palette itself is not reset: it belongs to the book, like the
-        # references, and outlives both the page and the process. What is
-        # page-scoped is the private entry `generate_flats` gives every zone
-        # that no colour was chosen for — those go with the page they describe.
-        self._created_palette: list[PaletteEntry] = []
         # Tracked apart from `self.protected` because a page with no bubbles
         # on it is a legitimate outcome of pressing the button, not a step
         # that never ran.
-        # One per zone, built by `generate_flats`. The artist's unit of work
-        # from here on: everything after flats is per-segment.
-        self.segments: list[Segment] = []
-        # (panel, label) -> the private entry `generate_flats` gave that
-        # segment, so `unsnap_segment` can put back what the proposer said.
-        self._auto_entry: dict[tuple[int, int], int] = {}
         self._bubbles_done = False
         self._zones_done = False
-        self._flats_done = False
-        # Step 4 only: the label maps as they stood before the last merges and
-        # cuts, oldest first. One panel per entry — see `_remember_zones`.
-        # (panel, label map, its assignments, its proposed entries): a merge
-        # or a cut made over the flats changes colours too, and undo has to
-        # put those back with the zones.
-        self._undo: list[
-            tuple[int, np.ndarray, dict[int, int], dict[tuple[int, int], int]]
-        ] = []
-        # Which page of the project is open, and which references its flats
-        # were proposed from: one deleted since is a warning, never a reason
-        # to throw the flats away — the artist's snaps are built on them.
+        self._planes_done = False
+        # The page as it stood before each of the last merges, cuts and plane
+        # changes, oldest first: per edit, (panel, its label map or None when
+        # the zones did not move, its planes) for every panel it touched.
+        self._undo: list[list[tuple[int, np.ndarray | None, dict[int, int]]]] = []
+        # Which page of the project is open.
         self.page_id: int | None = None
-        # What the GPU server counts the page by. `page_id` is a folder
-        # number, reused after a deletion and repeated in every project.
         self.page_uid = ""
-        self._flats_references: list[int] = []
 
     def _require_page(self) -> None:
         if self.line_mask is None:
@@ -367,7 +353,7 @@ class Session:
     def delete_page(self) -> None:
         """Delete the open page, then open the newest one left.
 
-        Only the page goes. The palette, the references and every other page
+        Only the page goes. The book settings and every other page
         stay, because they belong to the book.
         """
         with self.lock:
@@ -619,13 +605,17 @@ class Session:
 
     # -- 4. segment zones ------------------------------------------------
 
-    def segment_zones(self, leak_gap: float | None = None) -> list[PanelState]:
-        """Cut every panel into zones. ``leak_gap`` tunes the audit below.
+    def segment_zones(
+        self, leak_gap: float | None = None, extract_lines: bool | None = None
+    ) -> list[PanelState]:
+        """Cut every panel into zones. ``leak_gap`` tunes the audit below;
+        ``extract_lines`` says whether this page's zones are cut from its ink
+        as drawn or from MangaLineExtraction's lines (ROADMAP G5).
 
         The default was measured on one artist's ink, and the whole point of
         §1.3 is that this threshold is style-sensitive — so it is a knob the
         artist turns rather than a constant they inherit. Setting it here keeps
-        it for the rest of the book, the way the palette is kept.
+        it for the rest of the book.
         """
         # Checked before anything else: a bad number is wrong whatever state
         # the page is in, and saying so beats reporting the step it blocked.
@@ -638,6 +628,10 @@ class Session:
                 raise StepError("panels_first")
             if leak_gap is not None:
                 self.leak_gap = leak_gap
+            if extract_lines is not None and extract_lines != self.extract_lines:
+                self.extract_lines = extract_lines
+                self._structural_lines = None
+                self._structural = None
 
             segmenter = LineFillerSegmenter()
             # The bar's total is fixed before the first tick. Costs are copied
@@ -661,8 +655,7 @@ class Session:
 
             # Stop (`POST /api/cancel`) lands between two passes. Every map is
             # computed before any is written, so a stopped run leaves the page
-            # exactly as it was before the press: its zones, its flats, its
-            # snaps.
+            # exactly as it was before the press: its zones and its planes.
             try:
                 with self.progress.run(total, cancellable=True) as progress:
                     if extracting:
@@ -690,14 +683,15 @@ class Session:
 
             for panel, (label_map, orphans) in zip(self.panels, results):
                 panel.label_map = label_map
-                panel.assignments = {}
-                panel.flagged = set()
+                panel.planes = {}
+                panel.depth_groups = None
                 panel.orphans = orphans
 
             self._learn(measured)
+            self._assign_colours()
             self._undo = []
             self._zones_done = True
-            self._flats_done = False
+            self._planes_done = False
             self._save(maps="all")
             return self.panels
 
@@ -812,26 +806,18 @@ class Session:
     # Trapped-ball cuts a panel into zones from the ink it can see, and the
     # ink is not always closed. So it leaks a garment into the background
     # through a gap, and it splits what the eye reads as one thing — a pair of
-    # trousers, a glass, a pair of shoes — into forty scraps that would each
-    # need colouring by hand.
+    # trousers, a glass, a pair of shoes — into forty scraps.
     #
-    # Merge and cut are the two corrections that follow, and they are the last
-    # thing the artist does before the colours arrive.
-    #
-    # They stay open **through step 6**, over the flats. The second tester
-    # found the bad zones only once they were coloured — colour is what shows a
-    # zone went wrong — and closing step 4 at step 5 left them nothing but a
-    # full re-segmentation that threw every snap away. So a merge keeps the
-    # colour of the zone that survives, and a cut hands the zone's colour to
-    # every piece; the rest of the page does not move.
+    # Merge and cut are the two corrections that follow. They stay open over
+    # the planes: a merged zone keeps the plane of the zone that survives, and
+    # every piece of a cut keeps the plane of the zone it came from.
     #
     # They are **undoable**. The first tester lost a forty-piece merge to one
     # cut and had to rebuild it by hand, so `_undo` keeps the last few label
-    # maps, with their colours, and `undo_zones` puts one back. That is not the same thing as carrying the segmenter's original map
-    # beside the artist's — the objection that ruled history out before. A
-    # snapshot is a state this panel was in, not a second opinion about what
-    # the page is, and nothing downstream ever reads one. Pressing Segment
-    # zones again still starts the page over, and empties the stack.
+    # maps and `undo_zones` puts one back. A snapshot is a state this panel was
+    # in, not a second opinion about what the page is, and nothing downstream
+    # ever reads one. Pressing Segment zones again still starts the page over,
+    # and empties the stack.
 
     def _require_zone_stage(self) -> None:
         self._require_page()
@@ -841,10 +827,8 @@ class Session:
     def zone_at(self, x: int, y: int) -> tuple[int, int] | None:
         """The (panel, label) under a page-space point, or None.
 
-        Read off the label map, like `segment_at`, and for the same reason:
-        bounds overlap for interlocking zones and a press has to resolve to
-        the zone the artist actually pointed at. Unlike `segment_at` this one
-        works before `generate_flats` has invented a single segment.
+        Read off the label map: bounds overlap for interlocking zones, and a
+        press has to resolve to the zone the artist actually pointed at.
         """
         with self.lock:
             for panel in self.panels:
@@ -909,57 +893,49 @@ class Session:
                 ).items()
             }
 
+
     def _remember_zones(self, panel: PanelState) -> None:
         """Keep this panel's zones as they are, so the next edit can be undone.
 
         Called by the mutators once they know they will write — a refused merge
         or a cut that separates nothing must not push a state nothing changed.
+        The planes travel with the zones; the colours do not, since they are
+        given again after every edit.
         """
         assert panel.label_map is not None
-        proposed = {
-            key: entry for key, entry in self._auto_entry.items() if key[0] == panel.order
-        }
-        self._undo.append(
-            (panel.order, panel.label_map.copy(), dict(panel.assignments), proposed)
-        )
+        self._undo.append([(panel.order, panel.label_map.copy(), dict(panel.planes))])
         del self._undo[:-_UNDO_DEPTH]
 
-    def _recolour_panel(self, panel: PanelState) -> None:
-        """Rebuild one panel's segments after its zones moved under the flats.
+    def _assign_colours(self) -> None:
+        """Give every zone of the page one of the eight fake flats.
 
-        Only this panel's: the others' segments, and every snap on them, stay
-        the objects they were. The segments keep their place in the list, so
-        the page's order does not shuffle under the artist.
+        Again after every change to the zones: a merge can put two zones of
+        one colour side by side, and the guarantee — two touching zones never
+        alike — is over the whole page, not over the panel that moved.
         """
-        if not self._flats_done or panel.label_map is None:
-            return
-        fresh = build_segments(
-            panel.order, panel.label_map, panel.assignments, (panel.x, panel.y)
+        cut = [panel for panel in self.panels if panel.label_map is not None]
+        colours = assign_flat_colours(
+            (self.width, self.height), [(panel.x, panel.y, panel.label_map) for panel in cut]
         )
-        for segment in fresh:
-            segment.snapped = segment.palette_entry_id != self._auto_entry.get(segment.key)
-        at = next(
-            (i for i, segment in enumerate(self.segments) if segment.panel == panel.order),
-            len(self.segments),
-        )
-        kept = [segment for segment in self.segments if segment.panel != panel.order]
-        self.segments = kept[:at] + fresh + kept[at:]
+        for panel, assignments in zip(cut, colours):
+            panel.assignments = assignments
 
     def undo_zones(self) -> dict:
-        """Put back the zones as they were before the last merge or cut."""
+        """Put back the page as it was before the last merge, cut or plane change."""
         with self.lock:
             self._require_zone_stage()
             if not self._undo:
                 raise StepError("nothing_to_undo")
-            order, label_map, assignments, proposed = self._undo.pop()
-            panel = self._panel_for(order)
-            panel.label_map = label_map
-            panel.assignments = assignments
-            self._auto_entry = {
-                key: entry for key, entry in self._auto_entry.items() if key[0] != order
-            } | proposed
-            self._recolour_panel(panel)
-            self._save(maps=[panel.order])
+            moved = []
+            for order, label_map, planes in self._undo.pop():
+                panel = self._panel_for(order)
+                panel.planes = planes
+                if label_map is not None:
+                    panel.label_map = label_map
+                    moved.append(order)
+            if moved:
+                self._assign_colours()
+            self._save(maps=moved)
             return {"panel": order, "left": len(self._undo)}
 
     def merge_zones(self, panel_order: int, labels) -> dict:
@@ -971,7 +947,7 @@ class Session:
         Zones need not touch: the panes of a glass and a shirt split by an arm
         are one thing to colour and one thing here. A zone is a set of pixels,
         not a blob. What they must share is a panel — labels are panel-local,
-        and the same shirt in the next panel is the palette's job.
+        and the same shirt in the next panel is another zone.
         """
         with self.lock:
             self._require_zone_stage()
@@ -992,11 +968,14 @@ class Session:
             others = [label for label in present if label != survivor]
             self._remember_zones(panel)
             panel.label_map[np.isin(panel.label_map, others)] = survivor
-            # Over the flats the survivor's colour is the merged zone's colour.
+            # The merged zone votes again on the depth under all of it, unless
+            # the artist called it a character, which no depth says.
+            kept = panel.planes.get(survivor)
             for label in others:
-                panel.assignments.pop(label, None)
-                self._auto_entry.pop((panel.order, label), None)
-            self._recolour_panel(panel)
+                panel.planes.pop(label, None)
+            if kept != CHARACTER:
+                self._revote(panel, [survivor])
+            self._assign_colours()
             self._save(maps=[panel.order])
             return {
                 "panel": panel_order,
@@ -1092,17 +1071,16 @@ class Session:
                 )
                 panel.label_map[seam] = panel.label_map[rows[seam], cols[seam]]
 
-            # Over the flats every piece keeps the zone's colour, snapped or
-            # not: a cut changes where a colour stops, never what it is.
+            # Every piece votes again on the depth under it: the plane belongs
+            # to the pixels, not to the zone they came from. A character stays
+            # one: only the artist says so, and no depth does.
             parent = int(label)
-            for piece in made[1:]:
-                if parent in panel.assignments:
-                    panel.assignments[piece] = panel.assignments[parent]
-                if (panel.order, parent) in self._auto_entry:
-                    self._auto_entry[(panel.order, piece)] = self._auto_entry[
-                        (panel.order, parent)
-                    ]
-            self._recolour_panel(panel)
+            if panel.planes.get(parent) == CHARACTER:
+                for piece in made[1:]:
+                    panel.planes[piece] = CHARACTER
+            else:
+                self._revote(panel, made)
+            self._assign_colours()
             self._save(maps=[panel.order])
             return {"panel": panel_order, "labels": made, "pieces": len(made)}
 
@@ -1177,13 +1155,8 @@ class Session:
     ) -> np.ndarray:
         """The extractor's own output, greyscale, before any threshold.
 
-        `structural_mask` binarises this for trapped-ball; the proposer wants
-        it as it comes. Cobra's `app.py` conditions its DiT on the soft output
-        of its own line model, never on the artist's file, so handing it the
-        raw scan puts heavy brush, spot black and hatching into a network that
-        saw none of them in training. §7 already calls the soft-to-binary
-        threshold a parameter of the pipeline rather than a detail — this is
-        the consumer for which the threshold is simply wrong.
+        `structural_mask` binarises it for trapped-ball; the page keeps it as
+        it comes (`project.save_page`), so reopening skips the extractor.
 
         Shares the cache with `structural_mask`: one extractor pass per page.
         """
@@ -1198,51 +1171,6 @@ class Session:
                 result = self.extractor.extract(self.grey)
             self._structural_lines = result.lines
         return self._structural_lines
-
-    def reference_images(self) -> list[ReferenceImage]:
-        """The book's references, with the kind the artist gave each one.
-
-        `kind` travels with the pixels because the proposer decides how to fit
-        a reference to a panel, and the right answer differs between one
-        composed page and a montage of separate character drawings.
-        """
-        return [
-            ReferenceImage(
-                pixels=self.reference_store.image(reference.id),
-                kind=reference.kind,
-                label=reference.label,
-            )
-            for reference in self.reference_store
-            if reference.kind != PALETTE_KIND
-        ]
-
-    def _line_art_for(self, panel: PanelState) -> np.ndarray:
-        """The panel crop, masked to the panel's own polygon.
-
-        The crop is a bounding box, and a bounding box is only the panel for a
-        rectangle. For an L-shaped or a round panel it also contains whatever
-        the neighbouring panel put in the corner, and the proposer would be
-        reasoning about — and retrieving references for — a scene that is
-        partly not this panel. Everything outside the polygon becomes paper
-        white here, which for a rectangular panel is a no-op.
-
-        What is *painted* outside the polygon has never mattered: zones there
-        come back UNASSIGNED from `_blocked_for` and are never coloured. What
-        the model sees is the part that did.
-
-        The crop comes from `structural_lines`, not from `self.grey`. The
-        proposer and trapped-ball then read the same drawing, which is what
-        makes a zone boundary and the colour proposed inside it agree.
-        """
-        lines = self.structural_lines()
-        crop = lines[
-            panel.y : panel.y + panel.height, panel.x : panel.x + panel.width
-        ]
-        inside = rasterize_protected_for_panel(
-            [panel.polygon], panel.x, panel.y, panel.width, panel.height
-        )
-        masked = np.where(inside, crop, 255).astype(np.uint8)
-        return np.repeat(masked[:, :, None], 3, axis=2)
 
     def _blocked_for(self, panel: PanelState) -> np.ndarray:
         """Protected areas plus everything outside the panel polygon.
@@ -1262,594 +1190,105 @@ class Session:
         )
         return protected | ~inside
 
-    # -- palette / references --------------------------------------------
+    # -- 5. planes (may be skipped) --------------------------------------
     #
-    # A reference and the palette are two different things, and conflating
-    # them was costing the artist both. A reference is an image: it is what
-    # Cobra is shown, and it is where candidate colours are *found*. The
-    # palette is the artist's list: it is what zones snap to, and nothing
-    # reaches it without being chosen.
-    #
-    # The palette used to be re-derived from the references on every change,
-    # which made two things impossible at once — keeping a colour whose
-    # reference had been deleted, and editing a colour at all, since the next
-    # rebuild would put it back. So the palette is now held, not derived, and
-    # ids are handed out once and never renumbered: a zone stores an id, and
-    # an id that means a different colour tomorrow is worse than no id at all.
+    # Depth is read panel by panel and votes: each zone takes the plane that
+    # dominates under it, so the boundaries stay the ink's (§G2). The artist
+    # then moves zones between planes, and is the only one who says
+    # "character".
 
-    def add_reference(
-        self, path: str | Path, original_name: str = "", kind: str = "sheet"
-    ) -> list[Reference]:
-        """Store a drawing and read its colours out. Neither joins the palette.
-
-        `kind` is `page`, `panel` or `sheet`. It is recorded because the
-        proposal-time fitting step needs it and only the artist knows it.
-
-        A character sheet is a drawing that happens to contain colours, so
-        which of them the book actually uses is a judgement — the extraction
-        offers, the artist chooses. That is the whole difference from
-        `add_palette`, where choosing has already happened.
-
-        A finished *page* is stored whole **and** as the panels it is made of:
-        see `_split_into_panels`.
-        """
-        if kind == PALETTE_KIND:
-            raise StepError("palette_kind")
+    def detect_planes(self) -> dict[str, int]:
         with self.lock:
-            label = original_name or Path(path).name
-            stored = [self.reference_store.add(path, label=label, kind=kind)]
-            if kind == "page":
-                stored += self._split_into_panels(path, label)
-            return stored
-
-    def _split_into_panels(self, path: str | Path, label: str) -> list[Reference]:
-        """The panels of a finished page, stored *alongside* the page itself.
-
-        The page is kept whether or not this returns anything. A panel dropped
-        below the guard is not just unused, its colours leave the pool
-        entirely — four of `laurine_colo`'s six go — and those colours are
-        still in the page. Scored in `reports/10-retrieval`, page-plus-panels
-        matches the best arm exactly, so keeping both costs nothing.
-
-        Cobra retrieves patches: it cuts the reference into tiles, ranks them
-        against the panel being coloured, and reads the colour out of whichever
-        ones match. Most patches of a whole page are backgrounds and props, so
-        the tile covering a face can retrieve something that is not a face —
-        measured, and the reason a tight crop of one coloured face reproduced a
-        character's skin where a whole finished page of the same character in
-        the same colour world produced a cold blue one.
-
-        Splitting on the way in is that finding made automatic: each panel is
-        one composition, and its tiles come from one scene.
-
-        Panels are cropped to their boxes and not masked to their polygons. A
-        diagonal panel's crop catches a sliver of its neighbour, which is drawn
-        colour; masking it out would put white in the patches the retrieval
-        ranks, and a reference exists to supply colour (`cobra._tiles`).
-
-        A page whose panels cannot be found — one that bleeds, one drawn
-        without frames — comes back empty, and the caller stores the page
-        whole. Half a split is worse than none.
-
-        A panel too small for the proposer's frame is dropped, and if fewer
-        than two survive the page is kept whole. Nothing reaches the model at
-        its own size: `cobra._tiles` resizes every reference to the target
-        bucket, so a 490 px panel against a 1024 px frame arrives blown up
-        twice over. Measured in `reports/10-retrieval`, that smear outranks the
-        sharp tile that actually holds the character — the face falls from rank
-        1 to rank 22 of 80 — because line-art-against-colour similarity is
-        decided on low frequencies, which is exactly what upscaling invents.
-        Restoring the guard puts it back at rank 1.
-
-        The target is not known here: it follows the aspect of whichever panel
-        is being coloured, and that panel does not exist at upload time. The
-        nominal long side below is `CobraProposer.resolution`'s default, and
-        the buckets sit close enough together for the approximation to hold.
-        """
-        try:
-            line_mask, _ = load_line_art(path)
-            found = segment_panels(line_mask)
-        except (OSError, ValueError):
-            return []
-        found = [
-            panel
-            for panel in found
-            if max(panel.width, panel.height) >= _NOMINAL_TARGET / _MAX_UPSCALE
-        ]
-        if len(found) < 2:
-            return []
-
-        stored: list[Reference] = []
-        with Image.open(path) as opened:
-            page = opened.convert("RGB")
-            for order, panel in enumerate(found):
-                crop = page.crop(
-                    (panel.x, panel.y, panel.x + panel.width, panel.y + panel.height)
-                )
-                staged = self.workdir / f"_panel{order + 1}_{Path(str(path)).name}"
-                staged = staged.with_suffix(".png")
-                crop.save(staged)
-                try:
-                    stored.append(
-                        self.reference_store.add(
-                            staged,
-                            label=f"{label} — panel {order + 1}",
-                            kind="panel",
+            self._require_zone_stage()
+            if self.depth_estimator is None:
+                self.depth_estimator = DepthEstimator()
+            reading = [panel for panel in self.panels if panel.label_map is not None]
+            # Every panel is read before any is written, so a stopped run
+            # leaves the page as it was before the press.
+            found: list[dict[int, int]] = []
+            try:
+                with self.progress.run(len(reading), cancellable=True) as progress:
+                    for number, panel in enumerate(reading, start=1):
+                        progress.at("depth", number, len(reading))
+                        window = (
+                            slice(panel.y, panel.y + panel.height),
+                            slice(panel.x, panel.x + panel.width),
                         )
-                    )
-                finally:
-                    staged.unlink(missing_ok=True)
-        return stored
+                        inside = rasterize_protected_for_panel(
+                            [flatten_polygon(panel.polygon)],
+                            panel.x,
+                            panel.y,
+                            panel.width,
+                            panel.height,
+                        )
+                        found.append(
+                            panel_planes(
+                                self.depth_estimator,
+                                self.grey[window],
+                                panel.label_map,
+                                inside,
+                            )
+                        )
+                        progress.tick(1)
+            except Cancelled:
+                raise StepError("cancelled") from None
 
-    def add_palette(self, path: str | Path, original_name: str = "") -> list[PaletteEntry]:
-        """Store a palette image and take every colour in it.
-
-        Same extraction as a character sheet's, without the choosing: a
-        palette *is* the artist's decision about which colours this book uses,
-        already made, in the file. Asking them to confirm each swatch of a
-        strip they made on purpose is asking them to do the same work twice.
-
-        It is not shown to the proposer. See `references.PALETTE_KIND`.
-        """
-        with self.lock:
-            reference = self.reference_store.add(
-                path, label=original_name or Path(path).name, kind=PALETTE_KIND
-            )
-            return [
-                self.include_candidate(reference.id, rgb)
-                for rgb in self.candidates(reference.id)
-            ]
-
-    def remove_reference(self, reference_id: int) -> bool:
-        """Delete an image, and the colours it is answerable for.
-
-        A palette image *is* its colours, so they go with it. A character
-        sheet is not: the artist picked those colours out of a drawing one at
-        a time, and deleting the drawing must not silently repaint every zone
-        snapped to them — that is a page-wide change made by a click that said
-        nothing about colour.
-
-        Neither kind throws the flats away. A reference's flats were proposed
-        from an image that is no longer there, but the artist's snaps are
-        built on them and a saved page may be finished: the page says so
-        instead (`flats_stale` in `state()`), and generating again is the
-        artist's call.
-        """
-        with self.lock:
-            reference = self.reference_store.get(reference_id)
-            if reference is None or not self.reference_store.remove(reference_id):
-                return False
-            self._candidates.pop(reference_id, None)
-
-            if reference.kind == PALETTE_KIND:
-                for (owner, _), entry_id in list(self._taken.items()):
-                    if owner == reference_id:
-                        self.delete_palette_entry(entry_id)
-            return True
-
-    def palette_images(self) -> list[Reference]:
-        return [r for r in self.reference_store if r.kind == PALETTE_KIND]
-
-    def candidates(self, reference_id: int) -> list[tuple[int, int, int]]:
-        """The colours found in one reference, in extraction order.
-
-        Cached because `extract_palette` is a median cut over a full-size
-        image and `state()` is called after every button. Deterministic, so
-        the cache can never disagree with a re-extraction — it only skips it.
-        """
-        with self.lock:
-            if reference_id not in self._candidates:
-                image = Image.fromarray(self.reference_store.image(reference_id))
-                try:
-                    found = extract_palette(image, sheet_mode=True)
-                except EmptyImageError:
-                    # A panel of solid black, or one of bare paper. It offers
-                    # nothing, which is an answer — not a reason for the whole
-                    # sidebar to fail to load.
-                    found = []
-                self._candidates[reference_id] = [colour.rgb for colour in found]
-            return self._candidates[reference_id]
-
-    def include_candidate(self, reference_id: int, rgb) -> PaletteEntry:
-        """Put one of a reference's colours into the palette."""
-        with self.lock:
-            wanted = _rgb(rgb)
-            if wanted not in self.candidates(reference_id):
-                raise StepError("colour_not_offered")
-            existing = self._taken.get((reference_id, wanted))
-            if existing is not None:
-                return self._entry(existing)
-
-            # Named after the image it came from: "colour 397" tells the
-            # artist nothing, and the id it is named after is an accident of
-            # how many zones the last page happened to have.
-            reference = self.reference_store.get(reference_id)
-            position = self.candidates(reference_id).index(wanted) + 1
-            entry = PaletteEntry(
-                project_id=0,
-                rgb=wanted,
-                label=f"{reference.label if reference else 'colour'} {position}",
-                id=self._next_entry_id,
-            )
-            self._next_entry_id += 1
-            self._palette.append(entry)
-            self._taken[(reference_id, wanted)] = int(entry.id or 0)
-            self._save_palette()
-            return entry
-
-    def add_colour(self, rgb, label: str = "") -> PaletteEntry:
-        """A colour the artist mixed, straight into the palette.
-
-        Until this existed a colour could only come out of an image — a
-        reference's candidates or a palette image — and the first tester had a
-        page, a palette in their head, and no way to put one in the other. The
-        id is taken from the same counter and never reused, so a colour mixed
-        here is a palette entry like any other: zones point at it, and changing
-        it repaints every one of them (rule 1).
-        """
-        with self.lock:
-            wanted = _rgb(rgb)
-            entry = PaletteEntry(
-                project_id=0,
-                rgb=wanted,
-                label=label.strip() or f"colour {self._next_entry_id}",
-                id=self._next_entry_id,
-            )
-            self._next_entry_id += 1
-            self._palette.append(entry)
-            self._save_palette()
-            return entry
-
-    def set_palette_colour(self, entry_id: int, rgb) -> PaletteEntry:
-        """Change what one palette entry *is*.
-
-        Every zone holding this id changes with it, everywhere on the page, in
-        one row — which is the whole reason regions store `palette_entry_id`
-        and never an RGB (rule 1). Nothing is invalidated and nothing is
-        re-segmented: the flats raster and the PSD are both resolved through
-        the palette at the moment they are asked for.
-        """
-        with self.lock:
-            entry = self._entry(entry_id)
-            entry.rgb = _rgb(rgb)
-            entry.revision += 1
-            self._save_palette()
-            return entry
-
-    def delete_palette_entry(self, entry_id: int) -> None:
-        """Take a colour out of the palette, and off every zone using it.
-
-        A zone cannot point at an entry that is gone, so the segments snapped
-        to it go back to the colour the model proposed for them. That is the
-        same thing `unsnap_segment` does, done for the artist rather than to
-        them.
-        """
-        with self.lock:
-            entry = self._entry(entry_id)
-            self._palette.remove(entry)
-            for key, taken in list(self._taken.items()):
-                if taken == entry_id:
-                    del self._taken[key]
-
-            for segment in self.segments:
-                if segment.palette_entry_id != entry_id:
-                    continue
-                original = self._auto_entry.get(segment.key)
-                if original is None:
-                    continue
-                segment.palette_entry_id = original
-                segment.snapped = False
-                self.panels[segment.panel].assignments[segment.label] = original
-            self._save_palette()
-            # A closed page holding this id catches up when it is opened
-            # (`project.open_page`).
-            self._save()
-
-    def _entry(self, entry_id: int) -> PaletteEntry:
-        for entry in self._palette:
-            if entry.id == entry_id:
-                return entry
-        raise StepError("palette_entry_missing", id=entry_id)
-
-    # The palette outlives the page and the process, exactly as the reference
-    # pool does: it belongs to the book. Without this a restart would empty a
-    # palette the artist had built while leaving the references that fed it
-    # sitting on disk, which looks like a bug and is one.
-    @property
-    def _palette_path(self) -> Path:
-        return self.workdir / "palette.json"
-
-    def _save_palette(self) -> None:
-        self._palette_path.write_text(
-            json.dumps(
-                {
-                    "next_id": self._next_entry_id,
-                    "entries": [
-                        {"id": e.id, "rgb": list(e.rgb), "label": e.label,
-                         "revision": e.revision}
-                        for e in self._palette
-                    ],
-                    # Which reference each colour was taken from, so the chips
-                    # under it can show what is already in.
-                    "taken": [
-                        {"reference": ref, "rgb": list(rgb), "entry": entry}
-                        for (ref, rgb), entry in self._taken.items()
-                    ],
-                },
-                indent=1,
-            ),
-            encoding="utf-8",
-        )
-
-    def _load_palette(self) -> None:
-        self._palette = []
-        self._taken = {}
-        self._next_entry_id = 1
-        if not self._palette_path.exists():
-            return
-        try:
-            stored = json.loads(self._palette_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return  # A corrupt palette is an empty one, not a dead app.
-        self._palette = [
-            PaletteEntry(
-                project_id=0,
-                rgb=_rgb(entry["rgb"]),
-                label=entry.get("label", ""),
-                id=int(entry["id"]),
-                revision=int(entry.get("revision", 0)),
-            )
-            for entry in stored.get("entries", [])
-        ]
-        self._taken = {
-            (int(row["reference"]), _rgb(row["rgb"])): int(row["entry"])
-            for row in stored.get("taken", [])
-        }
-        self._next_entry_id = int(stored.get("next_id", 1))
-
-    @property
-    def palette(self) -> list[PaletteEntry]:
-        """What zones snap to, then the private entries flats invented."""
-        return [*self._palette, *self._created_palette]
-
-    @property
-    def references(self) -> list[np.ndarray]:
-        return self.reference_store.images()
-
-    @property
-    def reference_names(self) -> list[str]:
-        return [reference.label for reference in self.reference_store]
-
-    @property
-    def palette_by_id(self) -> dict[int, PaletteEntry]:
-        return {int(entry.id): entry for entry in self.palette if entry.id is not None}
-
-    # -- 5. generate flats -----------------------------------------------
-
-    def generate_flats(self, plain: bool = False) -> dict[str, int]:
-        """Colour every zone. `plain` is the artist saying they will do it
-        themselves: one distinct colour per zone, no model, no GPU, nothing
-        bought. It is the same pass either way, because what step 5 really
-        writes is one palette entry per zone — without that, steps 6 and 7
-        have nothing to work on.
-        """
-        with self.lock:
-            self._require_page()
-            if not self._zones_done:
-                raise StepError("zones_first")
-
-            proposer = DistinctColourProposer() if plain else self.proposer
-            # Said here, in a sentence the artist's language has, rather than
-            # left to the proposer to refuse in English halfway through.
-            if getattr(proposer, "needs_references", False) and not self.reference_images():
-                raise StepError("flats_no_reference")
-
-            # `threshold=None` unconditionally: **flats never snap**. Every
-            # zone's modal colour becomes its own entry and stays that way
-            # until the artist says otherwise, one segment at a time.
-            #
-            # Snapping used to happen here, in the same pass, which left it
-            # the one stage of the pipeline with no boundary the artist could
-            # inspect or disagree with — and it is the stage that quietly
-            # folded every neutral zone into a sheet's ink black. Splitting it
-            # out is what makes "every place the machine got it wrong is one
-            # click to fix" true of colour and not only of geometry.
-            threshold = None
-
-            assigned = 0
-            colouring = [panel for panel in self.panels if panel.label_map is not None]
-            # One tick per panel, sized by its pixels: the proposer's cost
-            # grows with the panel, and nothing inside it reports.
-            total = sum(_megapixels(panel) for panel in colouring)
-            # One press, one generation: every panel of it carries the same id.
-            generation_id = str(uuid.uuid4())
-            with self.progress.run(total) as progress:
-                for number, panel in enumerate(colouring, start=1):
-                    progress.at("colour", number, len(colouring))
-                    request = PanelRequest(
-                        line_art=self._line_art_for(panel),
-                        label_map=panel.label_map,
-                        references=self.reference_images(),
-                        page_id=self.page_uid,
-                        generation_id=generation_id,
-                    )
-                    proposal = proposer.propose(request)
-
-                    assignments, created = assign_zones(
-                        proposal,
-                        panel.label_map,
-                        self.palette,
-                        threshold=threshold,
-                        next_id=self._next_entry_id,
-                        label_prefix=f"p{panel.order + 1}",
-                    )
-                    self._created_palette.extend(created)
-                    self._next_entry_id += len(created)
-
-                    panel.assignments = {a.label: a.palette_entry_id for a in assignments}
-                    panel.flagged = set()
-                    assigned += len(assignments)
-                    progress.tick(_megapixels(panel))
-
-            self.segments = []
-            for panel in self.panels:
-                if panel.label_map is None:
-                    continue
-                self.segments.extend(
-                    build_segments(
-                        panel.order, panel.label_map, panel.assignments, (panel.x, panel.y)
-                    )
-                )
-            self._auto_entry = {
-                segment.key: segment.palette_entry_id for segment in self.segments
-            }
-
-            self._flats_done = True
-            # A snapshot from before the colours holds no colours: undoing
-            # across this press would put back zones with nothing to show.
+            for panel, (planes, groups) in zip(reading, found):
+                panel.planes = planes
+                panel.depth_groups = groups
+            self._planes_done = True
+            # A snapshot from before the planes holds none: undoing across this
+            # press would put back zones with no plane to show.
             self._undo = []
-            self._flats_references = [
-                reference.id for reference in self.reference_store if reference.kind != PALETTE_KIND
-            ]
-            # The ids just handed to this page's proposed colours come off the
-            # book's counter: saved now, or another page could be given them.
-            self._save_palette()
-            self._save()
-            return {
-                "assigned": assigned,
-                "segments": len(self.segments),
-                "colours": len(self.palette),
-                "snapped": 0,
-            }
+            self._save(maps="all")
+            return self.plane_counts()
 
-    # -- 6. snap ---------------------------------------------------------
-
-    def _require_flats(self) -> None:
-        if not self._flats_done:
-            raise StepError("flats_first")
-
-    def segment(self, panel: int, label: int) -> Segment | None:
-        for candidate in self.segments:
-            if candidate.key == (panel, label):
-                return candidate
-        return None
-
-    def segment_at(self, x: int, y: int) -> Segment | None:
-        """The segment under a page-space point, or None.
-
-        Read off the label map rather than off segment bounds: bounds overlap
-        for interlocking zones, and a click has to resolve to the zone the
-        artist actually pointed at.
-        """
+    def set_planes(self, zones, plane: int) -> dict[str, int]:
+        """Put zones on one plane: the artist's correction, or "character"."""
         with self.lock:
-            for panel in self.panels:
-                if panel.label_map is None:
-                    continue
-                local_x, local_y = x - panel.x, y - panel.y
-                if not (0 <= local_x < panel.width and 0 <= local_y < panel.height):
-                    continue
-                label = int(panel.label_map[local_y, local_x])
-                if label == UNASSIGNED:
-                    continue
-                return self.segment(panel.order, label)
-            return None
-
-    def snap_suggestion(self, segment: Segment) -> tuple[PaletteEntry | None, float]:
-        """Nearest *reference* colour to what the proposer suggested, and its distance.
-
-        Measured against the reference half only. The created half holds the
-        segments' own private entries, so including it would offer every
-        segment itself at distance zero.
-
-        This suggests and never acts. The distance comes back with it so the
-        artist can see the number the old automatic snap decided on silently.
-        """
-        entry = self.palette_by_id.get(segment.palette_entry_id)
-        if entry is None or not self._palette:
-            return None, float("inf")
-        return nearest_entry(entry.rgb, self._palette)
-
-    def snap_segment(self, panel: int, label: int, entry_id: int | None = None) -> Segment:
-        """Point one segment at a palette entry. A single-row change.
-
-        `entry_id` of None takes the suggestion whatever its distance: the
-        artist asked for this one, and `SNAP_MAX_DELTA` orders their attention
-        rather than vetoing their instruction.
-        """
-        with self.lock:
-            self._require_flats()
-            segment = self._snap(panel, label, entry_id)
+            self._require_zone_stage()
+            if not self._planes_done:
+                raise StepError("planes_first")
+            if plane not in PLANES:
+                raise StepError("plane_unknown", plane=plane)
+            for order, label in zones:
+                if int(label) not in self._panel_for(int(order)).assignments:
+                    raise StepError("zone_missing", zone=int(label), panel=int(order) + 1)
+            touched = sorted({int(order) for order, _ in zones})
+            self._undo.append(
+                [(order, None, dict(self._panel_for(order).planes)) for order in touched]
+            )
+            del self._undo[:-_UNDO_DEPTH]
+            for order, label in zones:
+                self._panel_for(int(order)).planes[int(label)] = plane
             self._save()
-            return segment
+            return self.plane_counts()
 
-    def _snap(self, panel: int, label: int, entry_id: int | None) -> Segment:
-        """`snap_segment` without the lock or the save, so `snap_all` writes
-        the page once rather than once per segment."""
-        segment = self.segment(panel, label)
-        if segment is None:
-            raise StepError("segment_missing", segment=int(label), panel=panel + 1)
+    def _revote(self, panel: PanelState, labels) -> None:
+        """These zones' planes, voted again on the depth kept for the panel.
 
-        if entry_id is None:
-            entry, _ = self.snap_suggestion(segment)
-            if entry is None:
-                raise StepError("snap_no_palette")
-            entry_id = int(entry.id or 0)
-        elif entry_id not in self.palette_by_id:
-            raise StepError("palette_entry_missing", id=entry_id)
-
-        segment.palette_entry_id = entry_id
-        segment.snapped = entry_id != self._auto_entry.get(segment.key)
-        self.panels[panel].assignments[label] = entry_id
-        return segment
-
-    def unsnap_segment(self, panel: int, label: int) -> Segment:
-        """Put back what the proposer said. A snap the artist cannot undo is a
-        decision taken away from them, which is the thing this step exists to
-        stop."""
-        with self.lock:
-            self._require_flats()
-            segment = self.segment(panel, label)
-            if segment is None:
-                raise StepError("segment_missing", segment=int(label), panel=panel + 1)
-            original = self._auto_entry.get(segment.key)
-            if original is None:
-                raise StepError("segment_no_original", segment=int(label))
-            segment.palette_entry_id = original
-            segment.snapped = False
-            self.panels[panel].assignments[label] = original
-            self._save()
-            return segment
-
-    def snap_all(self, threshold: float | None = None) -> dict[str, int]:
-        """Snap every segment whose suggestion falls within `threshold`.
-
-        The bulk shortcut, for a page whose references are good enough that the
-        artist would have agreed with the machine anyway. It goes through the
-        same per-segment call, so it can never do something clicking could not,
-        and every segment it touches stays individually reversible.
-
-        `threshold=None` snaps every segment to its nearest reference colour
-        whatever the distance. That is the artist overriding the guard
-        deliberately, and it is the one call that repaints a page wholesale.
+        Before the planes exist there is nothing to vote on; a page saved
+        before the depth was kept has none either, and its zones keep the
+        plane they had.
         """
-        with self.lock:
-            self._require_flats()
-            snapped = skipped = 0
-            for segment in self.segments:
-                entry, distance = self.snap_suggestion(segment)
-                if entry is None or (threshold is not None and distance > threshold):
-                    skipped += 1
-                    continue
-                self._snap(segment.panel, segment.label, int(entry.id or 0))
-                snapped += 1
-            self._save()
-            return {
-                "snapped": snapped,
-                "skipped": skipped,
-                "segments": len(self.segments),
-            }
+        if not self._planes_done or panel.depth_groups is None or panel.label_map is None:
+            return
+        voted = planes_from(panel.label_map, panel.depth_groups)
+        for label in labels:
+            if int(label) in voted:
+                panel.planes[int(label)] = voted[int(label)]
 
-    # -- 7. export -------------------------------------------------------
+    def plane_counts(self) -> dict[str, int]:
+        counts = {str(plane): 0 for plane in PLANES}
+        for panel in self.panels:
+            for plane in panel.planes.values():
+                counts[str(plane)] += 1
+        return counts
+
+    def plane_of(self, panel_order: int, label: int) -> int | None:
+        return self._panel_for(panel_order).planes.get(int(label))
+
+    # -- 6. export -------------------------------------------------------
 
     def _panel_flats(self) -> list[PanelFlats]:
         return [
@@ -1859,20 +1298,29 @@ class Session:
                 y=panel.y,
                 label_map=panel.label_map,
                 assignments=panel.assignments,
+                planes=panel.planes if self._planes_done else None,
             )
             for panel in self.panels
             if panel.label_map is not None
         ]
+
+    def _balloon_masks(self) -> list[np.ndarray]:
+        masks = []
+        for polygon in self.protected:
+            mask = np.zeros((self.height, self.width), np.uint8)
+            cv2.fillPoly(mask, [np.array(flatten_polygon(polygon), np.int32)], 1)
+            masks.append(mask.astype(bool))
+        return masks
 
     def export_psd(
         self,
         path: str | Path | None = None,
         granularity: str | None = None,
         support_grey: bool | None = None,
+        names: dict[str, str] | None = None,
     ) -> Path:
         with self.lock:
-            if not self._flats_done:
-                raise StepError("flats_first")
+            self._require_zone_stage()
             if granularity is not None:
                 if granularity not in GRANULARITIES:
                     raise StepError("granularity_unknown", value=granularity)
@@ -1890,62 +1338,48 @@ class Session:
                 self.granularity,
                 line_mask=self.line_mask if self.support_grey else None,
                 support_grey=self.support_grey,
+                balloons=self._balloon_masks(),
+                names=names,
             )
 
     def flats_rgba(self) -> np.ndarray:
+        """The fake flats as they land in the PSD. Also what step 4 shows: the
+        zone map, in the colours the export will carry."""
         with self.lock:
             return flats_preview(
                 (self.width, self.height), self._panel_flats(), self.palette_by_id
             )
 
-    def unsnapped_mask(self) -> np.ndarray:
-        """Every segment the artist has not resolved, as a page-space mask.
-
-        Step 6's remaining workload, made visible: everything the machine
-        declined to decide. The same array backs the browser overlay and
-        `luikki flatten --steps`, so what the artist sees on screen and
-        what the run writes to disk cannot drift apart.
-        """
-        with self.lock:
-            canvas = np.zeros((self.height, self.width), dtype=bool)
-            for segment in self.segments:
-                if segment.snapped:
-                    continue
-                panel = self.panels[segment.panel]
-                if panel.label_map is None:
-                    continue
-                mask = panel.label_map == segment.label
-                rows = min(mask.shape[0], self.height - panel.y)
-                cols = min(mask.shape[1], self.width - panel.x)
-                window = canvas[panel.y : panel.y + rows, panel.x : panel.x + cols]
-                np.logical_or(window, mask[:rows, :cols], out=window)
-            return canvas
-
     def zones_rgba(self) -> np.ndarray:
-        """Zone map as a preview, one arbitrary colour per zone.
+        return self.flats_rgba()
 
-        Deliberately not the proposal raster and deliberately not the flats:
-        this shows where the boundaries fell, which is the only question
-        "Segment zones" answers.
-        """
-        from ..colour.proposer import distinct_colour
-
-        canvas = np.zeros((self.height, self.width, 4), dtype=np.uint8)
-        for panel in self.panels:
-            if panel.label_map is None:
-                continue
-            labels = panel.label_map
-            table = np.zeros((int(labels.max()) + 1, 4), dtype=np.uint8)
-            present = np.unique(labels)
-            for index, label in enumerate(present[present != UNASSIGNED]):
-                table[label] = (*distinct_colour(index), 255)
-            rows = min(labels.shape[0], self.height - panel.y)
-            cols = min(labels.shape[1], self.width - panel.x)
-            patch = table[labels[:rows, :cols]]
-            window = canvas[panel.y : panel.y + rows, panel.x : panel.x + cols]
-            painted = labels[:rows, :cols] != UNASSIGNED
-            window[painted] = patch[painted]
-        return canvas
+    def planes_rgba(self, tints: dict[int, tuple[int, int, int]] | None = None) -> np.ndarray:
+        """The planes first, the zones inside them (tester 3 was frightened by
+        every zone at once): one tint per plane, and each zone's edge drawn a
+        shade darker within it."""
+        tints = tints or PLANE_TINTS
+        with self.lock:
+            canvas = np.zeros((self.height, self.width, 4), dtype=np.uint8)
+            for panel in self.panels:
+                labels = panel.label_map
+                if labels is None:
+                    continue
+                table = np.zeros((int(labels.max()) + 1, 4), dtype=np.uint8)
+                for label, plane in panel.planes.items():
+                    if 0 < label < table.shape[0]:
+                        table[label] = (*tints[plane], 255)
+                rows = min(labels.shape[0], self.height - panel.y)
+                cols = min(labels.shape[1], self.width - panel.x)
+                cropped = labels[:rows, :cols]
+                patch = table[cropped]
+                edge = np.zeros(cropped.shape, bool)
+                edge[:, 1:] |= cropped[:, 1:] != cropped[:, :-1]
+                edge[1:, :] |= cropped[1:, :] != cropped[:-1, :]
+                patch[edge & (cropped != UNASSIGNED), :3] //= 2
+                window = canvas[panel.y : panel.y + rows, panel.x : panel.x + cols]
+                painted = patch[:, :, 3] > 0
+                window[painted] = patch[painted]
+            return canvas
 
     # -- bookkeeping -----------------------------------------------------
 
@@ -1953,50 +1387,15 @@ class Session:
         for panel in self.panels:
             panel.label_map = None
             panel.assignments = {}
-            panel.flagged = set()
-        self.segments = []
-        self._auto_entry = {}
+            panel.planes = {}
+            panel.depth_groups = None
         self._undo = []
         self._zones_done = False
-        self._flats_done = False
-
-    def set_proposer(self, name: str) -> dict:
-        """Cobra or distinct colours for the next press of step 5. Flats
-        already made stay as they are: regenerating them is the artist's call."""
-        with self.lock:
-            if name not in self.proposers:
-                raise StepError("proposer_unknown", name=name)
-            self.proposer = self.proposers[name]
-            project.save_project(self)
-        return self.state()
-
-    def gpu_status(self) -> dict:
-        """What step 5 knows before it is pressed, when it runs on the GPU server.
-
-        Not part of `state()`, which runs after every press: this asks
-        Supabase, and only step 5 wants the answer. Taken without the session
-        lock, so it answers while a step runs.
-        """
-        remote = self.proposer.name == "remote"
-        account = self.account
-        quota = None
-        if remote and account is not None and account.email:
-            try:
-                quota = account.status(self.page_uid)
-            except AccountError:
-                # Unreachable, or the session ended — which `email` now says.
-                quota = None
-        signed_in = bool(account is not None and account.email)
-        return {
-            "remote": remote,
-            "signed_in": signed_in,
-            "needs_sign_in": remote and not signed_in,
-            "quota": quota,
-        }
+        self._planes_done = False
 
     def state(self) -> dict:
         with self.lock:
-            chosen = {e.id for e in self._palette}
+            flats = self._panel_flats()
             return {
                 "account": {"email": self.account.email if self.account else None},
                 "page_id": self.page_id,
@@ -2021,87 +1420,26 @@ class Session:
                     for p in self.panels
                 ],
                 "protected": self.protected,
-                # `source` splits the palette the way the artist thinks about
-                # it: the colours a reference brought in are the ones worth
-                # showing as swatches and worth snapping *to*. The proposed
-                # half is one private entry per segment — after a real page
-                # that is hundreds of them, and offering a segment its own
-                # colour to snap to is offering it nothing.
-                "palette": [
-                    {
-                        "id": e.id,
-                        "rgb": list(e.rgb),
-                        "label": e.label,
-                        "source": "palette" if e.id in chosen else "proposed",
-                    }
-                    for e in self.palette
-                ],
-                # Each reference carries the colours found in it and, for
-                # each, the palette entry the artist made from it — or null.
-                # That pair is the whole of the chips under the thumbnail:
-                # what this image offers, and what has been taken.
-                "references": [
-                    {
-                        "id": r.id,
-                        "label": r.label,
-                        "kind": r.kind,
-                        "added": r.added,
-                        "candidates": [
-                            {"rgb": list(rgb), "entry_id": self._taken.get((r.id, rgb))}
-                            for rgb in self.candidates(r.id)
-                        ],
-                    }
-                    for r in self.reference_store
-                    if r.kind != PALETTE_KIND
-                ],
-                # A palette image has no chips to click: every colour in it is
-                # already in. What it shows is what it brought, and what
-                # deleting it would take away again.
-                "palettes": [
-                    {
-                        "id": r.id,
-                        "label": r.label,
-                        "added": r.added,
-                        "colours": [list(rgb) for rgb in self.candidates(r.id)],
-                    }
-                    for r in self.palette_images()
-                ],
                 # Which geometry the artist may still correct. Detection
                 # proposes it, they settle it, and once the zones are cut from
-                # it the shape is no longer a proposal — it is what the flats
-                # were built on, and moving it silently would leave the zones
-                # describing a page that no longer exists.
+                # it the shape is no longer a proposal.
                 "editable": {
                     "panels": bool(self.panels) and not self._zones_done,
                     "bubbles": self._bubbles_done and not self._zones_done,
-                    # Zones are corrected between the cut and the colour, and
-                    # the corrections are permanent — there is no unmerge.
                     "zones": self._zones_done,
+                    "planes": self._planes_done,
                 },
-                # Step 6 is per-segment and never "done" — what the sidebar
-                # reports is how much of the page the artist has resolved.
-                "segments": {
-                    "count": len(self.segments),
-                    "snapped": sum(1 for s in self.segments if s.snapped),
-                    "snappable": bool(self._palette),
-                    "threshold": SNAP_MAX_DELTA,
-                },
-                # A reference these flats were proposed from has been deleted
-                # since. Said, never acted on (`remove_reference`).
-                "flats_stale": self._flats_done
-                and any(self.reference_store.get(ref) is None for ref in self._flats_references),
-                "proposer": self.proposer.name,
-                "proposers": sorted(self.proposers),
-                "extractor": self.extractor.name,
+                # zones per plane, keyed by plane.
+                "planes": {"counts": self.plane_counts()},
+                "extract_lines": self.extract_lines,
                 "leak_gap": self.leak_gap,
-                # How many merges and cuts step 4 can still take back.
+                # How many merges and cuts can still be taken back.
                 "undo": len(self._undo),
                 "export": {
                     "granularity": self.granularity,
-                "support_grey": self.support_grey,
-                    "warn_at": EXPORT_LAYER_WARNING,
+                    "support_grey": self.support_grey,
                     "layers": {
-                        name: layer_count(self._panel_flats(), self.palette_by_id, name)
+                        name: layer_count(flats, self.palette_by_id, name, len(self.protected))
                         for name in GRANULARITIES
                     },
                 },
@@ -2110,6 +1448,6 @@ class Session:
                     "panels": bool(self.panels),
                     "bubbles": self._bubbles_done,
                     "zones": self._zones_done,
-                    "flats": self._flats_done,
+                    "planes": self._planes_done,
                 },
             }

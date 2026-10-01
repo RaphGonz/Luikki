@@ -11,7 +11,6 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 
-import numpy as np
 import pytest
 
 httpx = pytest.importorskip("httpx")
@@ -21,9 +20,6 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from luikki import account as account_module  # noqa: E402
 from luikki.account import Account, AccountError  # noqa: E402
-from luikki.cloud.protocol import encode_png  # noqa: E402
-from luikki.colour.proposer import PanelRequest  # noqa: E402
-from luikki.colour.remote import RemoteProposer  # noqa: E402
 from luikki.extract.passthrough import PassthroughExtractor  # noqa: E402
 from luikki.web.app import create_app  # noqa: E402
 
@@ -177,26 +173,6 @@ def test_an_auth_server_that_does_not_answer_is_named():
     with pytest.raises(AccountError) as caught:
         _account(_Auth(down=True)).send_code(EMAIL)
     assert caught.value.code == "accounts_unreachable"
-
-
-def test_step_five_goes_up_as_the_signed_in_artist():
-    account = _signed_in(_Auth())
-    sent = []
-
-    def gpu(request: httpx.Request) -> httpx.Response:
-        request.read()
-        sent.append(request)
-        return httpx.Response(200, content=encode_png(np.zeros((4, 5, 3), dtype=np.uint8)))
-
-    remote = RemoteProposer(
-        url="http://gpu", client=httpx.Client(transport=httpx.MockTransport(gpu)), account=account
-    )
-    remote.propose(
-        PanelRequest(line_art=np.zeros((4, 5, 3), dtype=np.uint8), label_map=np.zeros((4, 5), dtype=np.int32))
-    )
-
-    assert sent[0].headers["authorization"] == "Bearer access-1"
-    assert account.device_id().encode() in sent[0].content
 
 
 def test_the_rail_signs_in_and_out_through_the_api(tmp_path):

@@ -37,6 +37,22 @@ def _no_system_vault(monkeypatch):
     monkeypatch.setattr(account, "KeyringVault", MemoryVault)
 
 
+class FakeDepth:
+    """Depth that grows down the panel: its top is far, its bottom near."""
+
+    def depth(self, crop: np.ndarray) -> np.ndarray:
+        height, width = crop.shape
+        return np.tile(np.linspace(0.0, 1.0, height, dtype=np.float32)[:, None], (1, width))
+
+
+@pytest.fixture(autouse=True)
+def _no_depth_model(monkeypatch):
+    """No test loads Depth Anything: the planes step reads `FakeDepth`."""
+    from luikki.web import session
+
+    monkeypatch.setattr(session, "DepthEstimator", FakeDepth)
+
+
 def boundary_crossing_page(
     width: int = 600, height: int = 400
 ) -> tuple[np.ndarray, np.ndarray, list[tuple[int, int, int, int]]]:

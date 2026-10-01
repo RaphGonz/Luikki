@@ -47,17 +47,6 @@ def page(tmp_path):
 
 
 @pytest.fixture
-def swatch(tmp_path):
-    """A four-chip swatch image."""
-    image = np.zeros((40, 160, 3), dtype=np.uint8)
-    for index, bgr in enumerate([(40, 30, 200), (200, 120, 30), (60, 180, 60), (180, 60, 180)]):
-        image[:, index * 40 : (index + 1) * 40] = bgr
-    path = tmp_path / "swatch.png"
-    cv2.imwrite(str(path), image)
-    return path
-
-
-@pytest.fixture
 def client(tmp_path):
     """Passthrough extractor: these tests are about the button wiring.
 
@@ -80,17 +69,17 @@ def upload(client, route, path):
 def test_every_button_in_order_yields_a_psd(client, page, tmp_path):
     assert upload(client, "/api/page", page).status_code == 200
 
-    for route in ("/api/panels", "/api/bubbles", "/api/zones", "/api/flats"):
+    for route in ("/api/panels", "/api/bubbles", "/api/zones", "/api/planes"):
         response = client.post(route)
         assert response.status_code == 200, (route, response.text)
 
     state = response.json()
     assert state["done"] == {
-        "page": True, "panels": True, "bubbles": True, "zones": True, "flats": True,
+        "page": True, "panels": True, "bubbles": True, "zones": True, "planes": True,
     }
     assert state["panels"], "no panels detected on a two-panel page"
     assert sum(panel["zones"] for panel in state["panels"]) > 0
-    assert state["result"]["assigned"] > 0
+    assert sum(state["planes"]["counts"].values()) == sum(p["zones"] for p in state["panels"])
 
     export = client.post("/api/export")
     assert export.status_code == 200
@@ -100,26 +89,72 @@ def test_every_button_in_order_yields_a_psd(client, page, tmp_path):
     out.write_bytes(export.content)
     from psd_tools import PSDImage
 
-    # The default stack is one layer per colour, over the page: no groups, and
-    # exactly as many layers as the sidebar said it was about to write.
+    # The default stack is one layer per plane, balloons on top: no groups,
+    # and exactly as many layers as the sidebar said it was about to write.
     top = list(PSDImage.open(out))
     assert top and not any(layer.is_group() for layer in top)
-    assert len(top) == state["export"]["layers"]["colour"]
+    assert len(top) == state["export"]["layers"]["plane"]
+    assert top[-1].name == "Balloons"
 
     # The other stack, on the same page, from the same button.
-    grouped = client.post("/api/export?granularity=panel")
+    grouped = client.post("/api/export?granularity=colour")
     assert grouped.status_code == 200
     out.write_bytes(grouped.content)
     groups = [layer for layer in PSDImage.open(out) if layer.is_group()]
     assert groups and all(len(group) for group in groups)
-    assert sum(len(group) for group in groups) == state["export"]["layers"]["panel"]
+    assert sum(len(group) for group in groups) + 1 == state["export"]["layers"]["colour"]
+
+
+def test_the_planes_may_be_skipped(client, page, tmp_path):
+    """Planes are optional: straight from the zones to one layer of flats."""
+    _zoned(client, page)
+    export = client.post("/api/export", json={"names": {"flats": "Aplats", "balloons": "Bulles"}})
+    assert export.status_code == 200
+    out = tmp_path / "out.psd"
+    out.write_bytes(export.content)
+    from psd_tools import PSDImage
+
+    assert [layer.name for layer in PSDImage.open(out)] == ["Aplats", "Bulles"]
+
+
+def test_the_artist_moves_zones_between_planes(client, page):
+    _zoned(client, page)
+    zone = client.get("/api/zone?x=40&y=40").json()
+    body = {"zones": [{"panel": zone["panel"], "label": zone["label"]}], "plane": 3}
+
+    refused = client.put("/api/planes", json=body)
+    assert refused.status_code == 409
+    assert refused.json()["code"] == "planes_first"
+
+    client.post("/api/planes")
+    moved = client.put("/api/planes", json=body)
+    assert moved.status_code == 200
+    assert moved.json()["planes"]["counts"]["3"] == 1
+    assert client.get("/api/zone?x=40&y=40").json()["plane"] == 3
+
+    unknown = client.put("/api/planes", json={**body, "plane": 7})
+    assert unknown.json()["code"] == "plane_unknown"
+
+    # Ctrl+Z takes a plane change back, like a merge or a cut.
+    back = client.post("/api/zones/undo")
+    assert back.status_code == 200
+    assert back.json()["planes"]["counts"]["3"] == 0
+
+
+def test_every_zone_lands_on_one_plane(client, page):
+    """Depth votes: a zone is never split across two layers."""
+    _zoned(client, page)
+    state = client.post("/api/planes").json()
+    zones = sum(panel["zones"] for panel in state["panels"])
+    assert sum(state["planes"]["counts"].values()) == zones
+    assert state["planes"]["counts"]["3"] == 0, "no model calls anything a character"
 
 
 def test_buttons_refuse_out_of_order(client):
     """Rule 2's corollary: a step that has not run cannot be skipped past."""
     assert client.post("/api/panels").status_code == 409
     assert client.post("/api/zones").status_code == 409
-    assert client.post("/api/flats").status_code == 409
+    assert client.post("/api/planes").status_code == 409
     assert client.post("/api/export").status_code == 409
 
 
@@ -135,33 +170,30 @@ def test_rerunning_a_step_invalidates_what_depended_on_it(client, page):
     upload(client, "/api/page", page)
     client.post("/api/panels")
     client.post("/api/zones")
-    assert client.post("/api/flats").json()["done"]["flats"] is True
+    assert client.post("/api/planes").json()["done"]["planes"] is True
 
     state = client.post("/api/bubbles").json()
     assert state["done"]["zones"] is False
-    assert state["done"]["flats"] is False
-    assert client.post("/api/flats").status_code == 409
+    assert state["done"]["planes"] is False
+    assert client.post("/api/planes").status_code == 409
 
-
-def test_a_swatch_gives_the_page_a_palette_to_snap_to(client, page, swatch):
-    upload(client, "/api/page", page)
-    state = _take_every_colour(client, upload(client, "/api/reference", swatch).json())
-    assert len(state["palette"]) >= 2
-
-    client.post("/api/panels")
     client.post("/api/zones")
-    result = client.post("/api/flats").json()["result"]
-
-    assert result["assigned"] > 0
+    client.post("/api/planes")
+    assert client.post("/api/zones").json()["done"]["planes"] is False, "new zones, no planes"
 
 
 def test_previews_exist_for_every_stage_that_renders_one(client, page):
     upload(client, "/api/page", page)
     client.post("/api/panels")
     client.post("/api/zones")
-    client.post("/api/flats")
+    assert client.get("/api/planes.png").status_code == 404
+    client.post("/api/planes")
 
-    for route in ("/api/page.png", "/api/zones.png", "/api/flats.png"):
+    # The browser sends the tints its stylesheet holds.
+    assert client.get("/api/planes.png?tints=eb5a3c,78c850,3ca0e6,c83cc8").status_code == 200
+    assert client.get("/api/planes.png?tints=nothex").status_code == 422
+
+    for route in ("/api/page.png", "/api/zones.png", "/api/planes.png"):
         response = client.get(route)
         assert response.status_code == 200, route
         assert response.headers["content-type"] == "image/png"
@@ -198,19 +230,6 @@ def test_saying_there_are_no_bubbles_still_needs_panels(client, page):
     assert refused.json()["code"] == "panels_first"
 
 
-def test_step_five_has_a_second_end_that_costs_nothing(client, page):
-    """"Continue without generating" is not a step skipped: it writes one
-    palette entry per zone, which is what steps 6 and 7 read."""
-    _zoned(client, page)
-    plain = client.post("/api/flats?plain=true")
-    assert plain.status_code == 200
-    assert plain.json()["done"]["flats"] is True
-    assert plain.json()["segments"]["count"] > 0
-    # Every zone holds a colour by id, so step 6 has something to snap.
-    assert plain.json()["result"]["segments"] == plain.json()["segments"]["count"]
-    assert client.post("/api/export").status_code == 200
-
-
 def test_bubbles_wait_for_panels(client, page):
     """The steps run in one order. A balloon traced onto a page whose panels
     are about to be re-detected is work the artist cannot get back."""
@@ -226,7 +245,7 @@ def test_bubbles_wait_for_panels(client, page):
 def test_a_panel_keeps_the_corners_the_artist_left_it_with(client, page):
     upload(client, "/api/page", page)
     state = client.post("/api/panels").json()
-    assert state["editable"] == {"panels": True, "bubbles": False, "zones": False}
+    assert state["editable"] == {"panels": True, "bubbles": False, "zones": False, "planes": False}
 
     order = state["panels"][0]["order"]
     moved = client.put(f"/api/panel/{order}", json={"polygon": SQUARE})
@@ -292,6 +311,7 @@ def test_correcting_a_panel_invalidates_what_was_cut_from_it(client, page):
         "panels": False,
         "bubbles": False,
         "zones": True,
+        "planes": False,
     }
 
     # Detecting panels again reopens it, exactly as the message says.
@@ -382,12 +402,8 @@ def _zones_of(client, panel=0):
     return state
 
 
-def test_zones_are_correctable_from_the_cut_through_the_colour(client, page):
-    """Not before the zones exist; from then on, flats or not.
-
-    The second tester found the bad zones only once they were coloured, so
-    the corrections stay open over the flats (step 6).
-    """
+def test_zones_are_correctable_from_the_cut_through_the_planes(client, page):
+    """Not before the zones exist; from then on, planes or not."""
     upload(client, "/api/page", page)
     client.post("/api/panels")
     assert client.get("/api/state").json()["editable"]["zones"] is False
@@ -395,46 +411,45 @@ def test_zones_are_correctable_from_the_cut_through_the_colour(client, page):
     _zoned(client, page)
     assert client.get("/api/state").json()["editable"]["zones"] is True
 
-    client.post("/api/flats")
+    client.post("/api/planes")
     assert client.get("/api/state").json()["editable"]["zones"] is True
 
 
-def _colours(client):
-    """(panel, label) -> palette entry, for every segment on the page."""
-    listed = client.get("/api/segments").json()["segments"]
-    return {(s["panel"], s["label"]): s["palette_entry_id"] for s in listed}
+def _plane(client, zone):
+    left, top, right, bottom = zone["bounds"]
+    found = client.post(
+        "/api/zones/along", json={"points": [[left, top], [right, bottom]]}
+    ).json()["zones"]
+    return {(z["panel"], z["label"]): z["plane"] for z in found}[(zone["panel"], zone["label"])]
 
 
-def test_a_merge_over_the_flats_keeps_the_survivors_colour(client, page):
+def test_a_merged_zone_votes_again_unless_it_is_a_character(client, page):
     _zoned(client, page)
-    client.post("/api/flats")
-    before = _colours(client)
+    client.post("/api/planes")
+    session = client.app.state.session
     crossed, untouched = _stacked_pair(client)
+    labels = [crossed["label"], untouched["label"]]
 
-    merged = client.post(
-        "/api/zones/merge",
-        json={"panel": 0, "labels": [crossed["label"], untouched["label"]]},
-    )
-    assert merged.status_code == 200
-    survivor = merged.json()["result"]["label"]
-    gone = ({crossed["label"], untouched["label"]} - {survivor}).pop()
+    merged = client.post("/api/zones/merge", json={"panel": 0, "labels": labels}).json()
+    survivor = merged["result"]["label"]
+    panel = session.panels[0]
+    from luikki.segmentation.planes import planes_from
 
-    after = _colours(client)
-    assert after[(0, survivor)] == before[(0, survivor)]
-    assert (0, gone) not in after
-    # Nothing else on the page moved.
-    assert {k: v for k, v in before.items() if k != (0, gone)} == after
+    assert session.plane_of(0, survivor) == planes_from(panel.label_map, panel.depth_groups)[survivor]
+    zones = sum(each["zones"] for each in merged["panels"])
+    assert sum(merged["planes"]["counts"].values()) == zones
+
+    client.post("/api/zones/undo")
+    client.put("/api/planes", json={"zones": [crossed, untouched], "plane": 3})
+    merged = client.post("/api/zones/merge", json={"panel": 0, "labels": labels}).json()
+    assert session.plane_of(0, merged["result"]["label"]) == 3
 
 
-def test_a_cut_over_the_flats_gives_every_piece_the_colour(client, page):
+def test_a_cut_over_the_planes_gives_every_piece_the_plane(client, page):
     _zoned(client, page)
-    client.post("/api/flats")
+    client.post("/api/planes")
     crossed, _ = _stacked_pair(client)
-    # Snapped first, so the pieces have to carry the artist's colour and the
-    # snap with it, not fall back to the proposal.
-    colour = client.post("/api/palette/colour", json={"rgb": [10, 200, 30]}).json()["entry_id"]
-    snap = client.post(f"/api/segment/0/{crossed['label']}/snap?entry_id={colour}")
-    assert snap.json()["snapped"] is True
+    client.put("/api/planes", json={"zones": [crossed], "plane": 3})
 
     left, top, right, bottom = crossed["bounds"]
     cut = client.post(
@@ -446,28 +461,43 @@ def test_a_cut_over_the_flats_gives_every_piece_the_colour(client, page):
         },
     )
     assert cut.status_code == 200
-    pieces = cut.json()["result"]["labels"]
-    assert len(pieces) == 2
-    after = _colours(client)
-    assert [after[(0, piece)] for piece in pieces] == [colour, colour]
-    listed = client.get("/api/segments").json()["segments"]
-    assert all(s["snapped"] for s in listed if s["panel"] == 0 and s["label"] in pieces)
-
-    # And the PSD still covers every pixel it covered before.
+    assert cut.json()["planes"]["counts"]["3"] == 2
     assert client.post("/api/export").status_code == 200
 
 
-def test_undo_over_the_flats_puts_the_colours_back(client, page):
+def test_each_piece_of_a_cut_votes_again_on_its_depth(client, page):
+    """The plane belongs to the pixels: a zone cut across the depth gives
+    pieces on different planes (the fake depth grows down the panel)."""
     _zoned(client, page)
-    client.post("/api/flats")
-    before = _colours(client)
+    client.post("/api/planes")
+    session = client.app.state.session
+    target = client.get("/api/zone?x=40&y=40").json()
+    left, top, right, bottom = target["bounds"]
+    cut = client.post(
+        "/api/zones/cut",
+        json={"panel": 0, "label": target["label"],
+              "stroke": [[left - 5, (top + bottom) // 2], [right + 5, (top + bottom) // 2]]},
+    ).json()["result"]
+    planes = {session.plane_of(0, label) for label in cut["labels"]}
+    assert len(planes) > 1, planes
+
+    # And a restart keeps the depth to vote on.
+    from luikki.web.session import Session
+
+    reopened = Session(session.workdir, extractor=session.raw_extractor)
+    assert reopened.panels[0].depth_groups is not None
+
+
+def test_undo_over_the_planes_puts_the_planes_back(client, page):
+    _zoned(client, page)
+    client.post("/api/planes")
+    before = client.get("/api/state").json()["planes"]["counts"]
     crossed, untouched = _stacked_pair(client)
     client.post(
         "/api/zones/merge",
         json={"panel": 0, "labels": [crossed["label"], untouched["label"]]},
     )
-    assert client.post("/api/zones/undo").status_code == 200
-    assert _colours(client) == before
+    assert client.post("/api/zones/undo").json()["planes"]["counts"] == before
 
 
 def test_a_press_resolves_to_the_zone_under_it(client, page):
@@ -665,8 +695,8 @@ def test_a_merge_and_a_cut_can_be_taken_back(client, page):
 
 
 def test_taking_back_a_zone_edit_stops_at_the_stage_boundary(client, page):
-    """Segmenting again, or colouring, ends the stack: an undo across either
-    would put back zones, or colours, the page no longer describes."""
+    """Segmenting again, or finding the planes, ends the stack: an undo across
+    either would put back zones, or planes, the page no longer describes."""
     _zoned(client, page)
     crossed, untouched = _stacked_pair(client)
     client.post(
@@ -682,7 +712,7 @@ def test_taking_back_a_zone_edit_stops_at_the_stage_boundary(client, page):
         "/api/zones/merge",
         json={"panel": 0, "labels": [crossed["label"], untouched["label"]]},
     )
-    client.post("/api/flats")
+    client.post("/api/planes")
     refused = client.post("/api/zones/undo")
     assert refused.status_code == 409
     assert refused.json()["code"] == "nothing_to_undo"
@@ -712,366 +742,21 @@ def _painted_pixels(client):
     return int((np.array(image)[:, :, 3] > 0).sum())
 
 
-# -- the palette, as its own thing ------------------------------------------
+def test_touching_zones_never_share_a_colour(client, page):
+    """The zone map is the fake flats the PSD carries: no two zones that touch
+    alike, so a magic wand takes one zone and no more."""
+    import io
 
+    from PIL import Image
 
-def _palette_of(state):
-    return [e for e in state["palette"] if e["source"] == "palette"]
+    from luikki.export.flat_colours import adjacency
 
-
-def test_changing_a_palette_colour_repaints_every_zone_holding_it(
-    client, page, tmp_path
-):
-    """Rule 1, as the thing the artist actually feels.
-
-    A zone stores `palette_entry_id` and never an RGB, so changing the entry
-    is the repaint — no re-segmentation, no re-proposal, and the snapped
-    zones stay snapped to the colour they were pointed at.
-    """
-    state = _through_flats(client, page, tmp_path)
-    entry = _palette_of(state)[0]
-
-    snapped = client.post("/api/snap-all?threshold=inf").json()
-    assert snapped["result"]["snapped"] > 0
-    before = client.get("/api/flats.png").content
-
-    recoloured = client.put(f"/api/palette/{entry['id']}", json={"rgb": [7, 240, 13]})
-    assert recoloured.status_code == 200
-    assert [e for e in recoloured.json()["palette"] if e["id"] == entry["id"]][0][
-        "rgb"
-    ] == [7, 240, 13]
-
-    # Still snapped, still the same segments — only the colour moved.
-    assert recoloured.json()["segments"]["snapped"] == snapped["segments"]["snapped"]
-    assert client.get("/api/flats.png").content != before
-
-
-def test_a_colour_can_come_from_no_image_at_all(client, page):
-    """Until this existed a colour could only be taken out of a reference or a
-    palette image, and the first tester had a palette in their head and no way
-    to put it in the app. A mixed colour is a palette entry like any other: it
-    takes an id that is never reused, and zones point at it."""
     _zoned(client, page)
-    mixed = client.post("/api/palette/colour", json={"rgb": [12, 200, 90]})
-    assert mixed.status_code == 200
-    entry_id = mixed.json()["entry_id"]
-    chosen = [e for e in mixed.json()["palette"] if e["source"] == "palette"]
-    assert [e["rgb"] for e in chosen if e["id"] == entry_id] == [[12, 200, 90]]
-
-    # And it is a colour step 6 can snap a zone to.
-    client.post("/api/flats?plain=true")
-    zone = client.get("/api/segment?x=40&y=40").json()
-    snapped = client.post(
-        f"/api/segment/{zone['panel']}/{zone['label']}/snap?entry_id={entry_id}"
-    )
-    assert snapped.status_code == 200
-    assert snapped.json()["palette_entry_id"] == entry_id
-
-    # Deleting it never hands its id to the next colour.
-    client.delete(f"/api/palette/{entry_id}")
-    again = client.post("/api/palette/colour", json={"rgb": [1, 2, 3]})
-    assert again.json()["entry_id"] > entry_id
-
-
-def test_a_colour_that_is_not_a_colour_is_refused(client, page, tmp_path):
-    state = _through_flats(client, page, tmp_path)
-    entry = _palette_of(state)[0]
-    off_scale = client.put(f"/api/palette/{entry['id']}", json={"rgb": [7, 300, 13]})
-    assert off_scale.status_code == 409
-    assert off_scale.json()["code"] == "colour_invalid"
-    assert client.put("/api/palette/9999", json={"rgb": [7, 24, 13]}).status_code == 409
-
-
-def test_dropping_a_colour_unsnaps_what_was_pointed_at_it(client, page, tmp_path):
-    """A zone cannot hold an id that is gone, so it goes back to what the
-    model proposed — the same thing Undo does, done for the artist."""
-    state = _through_flats(client, page, tmp_path)
-    entry = _palette_of(state)[0]
-    client.post("/api/snap-all?threshold=inf")
-
-    segment = client.get("/api/segments?limit=1").json()["segments"][0]
-    client.post(
-        f"/api/segment/{segment['panel']}/{segment['label']}/snap?entry_id={entry['id']}"
-    )
-
-    dropped = client.delete(f"/api/palette/{entry['id']}").json()
-    assert not [e for e in dropped["palette"] if e["id"] == entry["id"]]
-
-    back = client.get(f"/api/segment?x={segment['anchor'][0]}&y={segment['anchor'][1]}").json()
-    assert back["palette_entry_id"] != entry["id"]
-    assert back["snapped"] is False
-
-
-def test_a_colour_the_reference_does_not_have_is_refused(client, tmp_path):
-    state = _add_reference(client, _sheet(tmp_path / "sheet.png")).json()
-    reference_id = state["references"][0]["id"]
-    refused = client.post(
-        "/api/palette", json={"reference_id": reference_id, "rgb": [1, 2, 3]}
-    )
-    assert refused.status_code == 409
-    assert refused.json()["code"] == "colour_not_offered"
-
-
-def test_a_palette_image_needs_no_clicking(client, tmp_path):
-    """Upload, and the colours are in. No chips, and not a reference."""
-    swatches = _sheet(tmp_path / "swatches.png")
-    with swatches.open("rb") as handle:
-        state = client.post(
-            "/api/palette/image",
-            files={"file": (swatches.name, handle, "image/png")},
-        ).json()
-
-    assert len(state["palettes"]) == 1
-    assert state["references"] == [], "a palette image is not a reference"
-    assert len(_palette_of(state)) == len(state["palettes"][0]["colours"])
-
-
-def test_removing_a_palette_leaves_the_colours_picked_from_a_sheet(client, tmp_path):
-    sheet = _add_reference(client, _sheet(tmp_path / "sheet.png")).json()
-    candidate = sheet["references"][0]["candidates"][0]
-    kept = client.post(
-        "/api/palette",
-        json={"reference_id": sheet["references"][0]["id"], "rgb": candidate["rgb"]},
-    ).json()["entry_id"]
-
-    swatches = _sheet(tmp_path / "swatches.png")
-    with swatches.open("rb") as handle:
-        state = client.post(
-            "/api/palette/image",
-            files={"file": (swatches.name, handle, "image/png")},
-        ).json()
-    assert len(_palette_of(state)) > 1
-
-    dropped = client.request(
-        "DELETE", f"/api/reference/{state['palettes'][0]['id']}"
-    ).json()
-    assert [e["id"] for e in _palette_of(dropped)] == [kept]
-    assert dropped["palettes"] == []
-
-
-# -- step 6, the way the browser presses it ---------------------------------
-
-
-def _through_flats(client, page, tmp_path):
-    _take_every_colour(client, _add_reference(client, _sheet(tmp_path / "sheet.png")).json())
-    upload(client, "/api/page", page)
-    client.post("/api/panels")
-    client.post("/api/zones")
-    return client.post("/api/flats").json()
-
-
-def test_the_sidebar_can_count_what_step_six_has_left(client, page, tmp_path):
-    """`state.segments` is what the snap step's note is written from.
-
-    Without it the browser has no way to say "501 snapped, 251 still the
-    model's guess" without pulling every segment down to count them.
-    """
-    state = _through_flats(client, page, tmp_path)
-    segments = state["segments"]
-    assert segments["count"] > 0
-    assert segments["snapped"] == 0, "flats never snap"
-    assert segments["snappable"] is True
-    assert segments["threshold"] > 0
-
-    sources = {entry["source"] for entry in state["palette"]}
-    assert sources == {"palette", "proposed"}
-
-
-def test_clicking_a_zone_snaps_it_and_unsnapping_puts_it_back(client, page, tmp_path):
-    """The inspector's whole loop: click, see the suggestion, snap, undo."""
-    state = _through_flats(client, page, tmp_path)
-
-    listed = client.get("/api/segments?limit=1").json()["segments"]
-    assert listed, "flats produced no segments to click"
-    biggest = listed[0]
-    x, y = biggest["anchor"]
-
-    clicked = client.get(f"/api/segment?x={x}&y={y}").json()
-    assert clicked["panel"] == biggest["panel"]
-    assert clicked["label"] == biggest["label"]
-    assert clicked["snapped"] is False
-    assert clicked["suggestion"]["delta"] >= 0
-
-    entry = clicked["suggestion"]["palette_entry_id"]
-    snapped = client.post(
-        f"/api/segment/{clicked['panel']}/{clicked['label']}/snap?entry_id={entry}"
-    ).json()
-    assert snapped["palette_entry_id"] == entry
-    assert snapped["snapped"] is True
-    assert client.get("/api/state").json()["segments"]["snapped"] == 1
-
-    back = client.post(
-        f"/api/segment/{clicked['panel']}/{clicked['label']}/unsnap"
-    ).json()
-    assert back["palette_entry_id"] == clicked["palette_entry_id"]
-    assert back["snapped"] is False
-    assert client.get("/api/state").json()["segments"]["snapped"] == 0
-
-
-def test_a_click_on_the_gutter_resolves_to_nothing(client, page, tmp_path):
-    _through_flats(client, page, tmp_path)
-    assert client.get("/api/segment?x=0&y=0").status_code == 404
-
-
-def test_snap_all_ignores_the_guard_unless_asked(client, page, tmp_path):
-    """The default is the artist's palette, not the guard.
-
-    Pressing Snap all with nothing typed in the box sends no threshold, and
-    every segment goes to its nearest palette colour. What the artist wants by
-    default is their own colours; a segment snapped from far away is still one
-    click from `unsnap`. The guard is what they turn on, not what they turn off.
-    """
-    _through_flats(client, page, tmp_path)
-
-    # The guard first, while nothing has moved: asked for, it still refuses.
-    guarded = client.post("/api/snap-all?threshold=0").json()["result"]
-    assert guarded["snapped"] == 0
-
-    everything = client.post("/api/snap-all").json()["result"]
-    assert everything["skipped"] == 0
-    assert everything["snapped"] == everything["segments"]
-
-
-def test_what_step_six_has_left_is_a_picture(client, page, tmp_path):
-    """The "left to snap" overlay. 404 before flats: there is no workload yet."""
-    assert client.get("/api/unsnapped.png").status_code == 404
-
-    _through_flats(client, page, tmp_path)
-    response = client.get("/api/unsnapped.png")
-    assert response.status_code == 200
-    assert response.headers["content-type"] == "image/png"
-
-
-def test_the_proposal_raster_is_not_reachable(client, page):
-    """Rule 6: Cobra's raw output never reaches the artist's eye.
-
-    There is no route that returns it, and adding one is the mistake this
-    guards against.
-    """
-    assert client.get("/api/proposal.png").status_code == 404
-    routes = {route.path for route in client.app.routes}
-    assert not any("proposal" in route for route in routes)
-
-
-# -- the reference pool over HTTP -------------------------------------------
-
-
-def _sheet(path):
-    """A character sheet: flat colour bands on paper, with an ink edge."""
-    import numpy as np
-    from PIL import Image
-
-    image = np.full((120, 120, 3), 250, dtype=np.uint8)
-    for i, colour in enumerate(((200, 30, 40), (30, 90, 200), (240, 220, 60))):
-        image[10 + i * 30 : 34 + i * 30, 10:110] = colour
-    image[:4, :] = 0
-    Image.fromarray(image).save(path)
-    return path
-
-
-def _add_reference(client, path, kind="sheet"):
-    with path.open("rb") as handle:
-        return client.post(
-            "/api/reference",
-            files={"file": (path.name, handle, "image/png")},
-            data={"kind": kind},
-        )
-
-
-def _take_every_colour(client, state):
-    """Choose the whole of every reference's offer, the way clicking each chip
-    would. Upload extracts; only this puts anything in the palette."""
-    for reference in state["references"]:
-        for candidate in reference["candidates"]:
-            state = client.post(
-                "/api/palette",
-                json={"reference_id": reference["id"], "rgb": candidate["rgb"]},
-            ).json()
-    return state
-
-
-def test_reference_round_trip_over_http(tmp_path, client):
-    """Upload, see it listed with its kind, fetch its thumbnail, delete it.
-    Rule 3: a route with no way to reach it is a feature that does not exist,
-    so every one of these has a button behind it in `app.js`."""
-    sheet = _sheet(tmp_path / "sheet.png")
-
-    # `panel` rather than `page`: a page is stored as the panels it splits
-    # into, which is its own test below.
-    response = _add_reference(client, sheet, kind="panel")
-    assert response.status_code == 200
-    state = response.json()
-    assert len(state["references"]) == 1
-    assert state["references"][0]["kind"] == "panel"
-    assert state["palette"] == [], "an upload put colours in the palette by itself"
-
-    candidates = state["references"][0]["candidates"]
-    assert candidates, "a sheet with three colour bands must offer colours"
-    assert all(candidate["entry_id"] is None for candidate in candidates)
-
-    reference_id = state["references"][0]["id"]
-    thumbnail = client.get(f"/api/reference/{reference_id}.png")
-    assert thumbnail.status_code == 200
-    assert thumbnail.headers["content-type"] == "image/png"
-
-    taken = client.post(
-        "/api/palette",
-        json={"reference_id": reference_id, "rgb": candidates[0]["rgb"]},
-    ).json()
-    assert len(taken["palette"]) == 1
-    assert taken["references"][0]["candidates"][0]["entry_id"] == taken["entry_id"]
-
-    deleted = client.request("DELETE", f"/api/reference/{reference_id}")
-    assert deleted.status_code == 200
-    assert deleted.json()["references"] == []
-    # The image is gone; the colour taken from it is the artist's and stays.
-    assert len(deleted.json()["palette"]) == 1
-
-
-def test_uploading_a_finished_page_adds_its_panels(client, tmp_path):
-    """One upload, several references — and the artist sees which."""
-    import numpy as np
-    from PIL import Image
-
-    image = np.full((400, 600, 3), 255, dtype=np.uint8)
-    for index, fill in enumerate([(200, 60, 50), (60, 90, 200)]):
-        left = 20 + index * 300
-        image[20:380, left : left + 260] = fill
-        image[20:26, left : left + 260] = 0
-        image[374:380, left : left + 260] = 0
-        image[20:380, left : left + 6] = 0
-        image[20:380, left + 254 : left + 260] = 0
-        image[120:220, left + 60 : left + 200] = (250, 230, 180)
-    finished = tmp_path / "finished.png"
-    # At a real page's scale: `_split_into_panels` drops panels too small for
-    # the proposer's frame, and none of a 600 px page's would survive.
-    page = Image.fromarray(image)
-    page.resize((page.width * 3, page.height * 3), Image.NEAREST).save(finished)
-
-    state = _add_reference(client, finished, kind="page").json()
-
-    assert len(state["references"]) == 3
-    assert [r["kind"] for r in state["references"]] == ["page", "panel", "panel"]
-    assert state["result"] == {"added": 3, "kind": "page", "panels": 2}
-
-
-def test_deleting_an_absent_reference_is_404(client):
-    assert client.request("DELETE", "/api/reference/99").status_code == 404
-
-
-def test_unknown_kind_is_refused_by_the_api(tmp_path, client):
-    response = _add_reference(client, _sheet(tmp_path / "sheet.png"), kind="nonsense")
-    assert response.status_code == 422
-    assert client.get("/api/state").json()["references"] == []
-
-
-def test_a_reference_that_is_not_an_image_is_refused(tmp_path, client):
-    broken = tmp_path / "broken.png"
-    broken.write_bytes(b"not a png")
-    with broken.open("rb") as handle:
-        response = client.post(
-            "/api/reference", files={"file": ("broken.png", handle, "image/png")}
-        )
-    assert response.status_code == 422
-    assert response.json()["code"] == "image_unreadable"
-    assert client.get("/api/state").json()["references"] == []
+    session = client.app.state.session
+    rgba = np.array(Image.open(io.BytesIO(client.get("/api/zones.png").content)))
+    panel = session.panels[0]
+    for a, b in adjacency(panel.label_map).tolist():
+        assert panel.assignments[a] != panel.assignments[b]
+    assert set(map(tuple, rgba[rgba[:, :, 3] > 0][:, :3])) <= {
+        entry.rgb for entry in session.palette
+    }

@@ -14,7 +14,6 @@ import cv2
 import numpy as np
 import pytest
 
-from luikki.colour.proposer import DistinctColourProposer
 from luikki.extract.passthrough import PassthroughExtractor
 from luikki.model.masks import UNASSIGNED
 from luikki.web import project
@@ -32,88 +31,39 @@ def _page(path, shift=0):
     return path
 
 
-def _swatch(path):
-    image = np.zeros((40, 160, 3), dtype=np.uint8)
-    for index, bgr in enumerate([(40, 30, 200), (200, 120, 30), (60, 180, 60), (180, 60, 180)]):
-        image[:, index * 40 : (index + 1) * 40] = bgr
-    cv2.imwrite(str(path), image)
-    return path
-
-
 def _start(workdir):
     """What starting the app does."""
     return Session(workdir, extractor=PassthroughExtractor())
-
-
-class _NeedsReferences:
-    """A proposer that colours *from* reference images, like Cobra."""
-
-    needs_references = True
-
-    @property
-    def name(self) -> str:
-        return "needy"
-
-    def propose(self, request):  # pragma: no cover - never reached
-        raise AssertionError("asked to colour with no references")
 
 
 def _zones(labels):
     return sorted(int(label) for label in np.unique(labels) if label != UNASSIGNED)
 
 
-def test_colours_made_from_references_say_so_before_they_run(tmp_path):
-    """The refusal used to come out of Cobra as an English sentence wrapped in
-    a 503 — the one refusal in the app with no phrase of its own. Most artists
-    have no reference sheets at all, so this is the common path, and it has to
-    be sayable in their language."""
-    session = _start(tmp_path / "work")
-    session.proposer = _NeedsReferences()
-    session.load_page(_page(tmp_path / "page.png"), original_name="page.png")
-    session.detect_panels()
-    session.segment_zones()
-
-    with pytest.raises(StepError) as refused:
-        session.generate_flats()
-    assert refused.value.code == "flats_no_reference"
-
-    # And the way on is the same press with the other end of the step.
-    session.generate_flats(plain=True)
-    assert session.state()["done"]["flats"] is True
-
-
-def _through_flats(session, page):
-    session.load_page(page, original_name=page.name)
-    session.detect_panels()
-    session.segment_zones()
-    session.generate_flats()
-
-
 def test_a_page_reopens_exactly_as_it_was_left(tmp_path):
     work = tmp_path / "work"
     first = _start(work)
-    first.add_palette(_swatch(tmp_path / "swatch.png"), original_name="swatch.png")
     first.load_page(_page(tmp_path / "page.png"), original_name="page.png")
     first.detect_panels()
     moved = [(x + 3, y) if i == 0 else (x, y) for i, (x, y) in enumerate(first.panels[0].polygon)]
     first.set_panel_polygon(0, moved)
     first.segment_zones()
     first.merge_zones(0, _zones(first.panels[0].label_map)[:2])
-    first.generate_flats()
-    segment = first.segments[0]
-    first.snap_segment(segment.panel, segment.label)
+    first.detect_planes()
+    panel, label = first.zone_at(150, 300)
+    first.set_planes([(panel, label)], 3)
 
     second = _start(work)
 
-    # Everything but what the artist can still take back. The step-4 undo
-    # stack is the memory of this run of the app, not a property of the page:
-    # a merge made before a restart is as permanent as one made before the
-    # flats, and the reopened session says so by having nothing to undo.
+    # Everything but what the artist can still take back. The undo stack is
+    # the memory of this run of the app, not a property of the page, and the
+    # reopened session says so by having nothing to undo.
     assert {**second.state(), "undo": 0} == {**first.state(), "undo": 0}
     assert second.state()["undo"] == 0
     np.testing.assert_array_equal(second.zones_rgba(), first.zones_rgba())
     np.testing.assert_array_equal(second.flats_rgba(), first.flats_rgba())
-    np.testing.assert_array_equal(second.unsnapped_mask(), first.unsnapped_mask())
+    np.testing.assert_array_equal(second.planes_rgba(), first.planes_rgba())
+    assert second.plane_of(panel, label) == 3
 
 
 def test_a_cut_survives_a_restart(tmp_path):
@@ -150,8 +100,8 @@ def test_two_pages_keep_their_own_work(tmp_path):
 
 
 def test_a_page_keeps_one_uuid_for_life(tmp_path):
-    """The GPU quota counts pages by it. Folder numbers are reused after a
-    deletion and repeat from project to project, so they cannot."""
+    """Folder numbers are reused after a deletion and repeat from project to
+    project, so a page that must be told apart carries its own id."""
     session = _start(tmp_path / "work")
     session.load_page(_page(tmp_path / "a.png"))
     first_id, first_uid = session.page_id, session.page_uid
@@ -174,29 +124,6 @@ def test_a_page_saved_before_uuids_gets_one_and_keeps_it(tmp_path):
     given = _start(tmp_path / "work").page_uid
     assert given
     assert _start(tmp_path / "work").page_uid == given
-
-
-class _Recorder(DistinctColourProposer):
-    def __init__(self):
-        self.requests = []
-
-    def propose(self, request):
-        self.requests.append(request)
-        return super().propose(request)
-
-
-def test_every_panel_of_one_press_shares_its_generation(tmp_path):
-    recorder = _Recorder()
-    session = Session(tmp_path / "work", proposer=recorder, extractor=PassthroughExtractor())
-    _through_flats(session, _page(tmp_path / "page.png"))
-    session.generate_flats()
-
-    first, second = recorder.requests[:2], recorder.requests[2:]
-    assert len(first) == len(second) == 2
-    assert {request.page_id for request in recorder.requests} == {session.page_uid}
-    assert len({request.generation_id for request in first}) == 1
-    assert len({request.generation_id for request in second}) == 1
-    assert first[0].generation_id != second[0].generation_id
 
 
 def test_rerunning_a_step_leaves_no_stale_zone_files(tmp_path):
@@ -232,35 +159,41 @@ def test_deleting_a_page_opens_the_newest_one_left(tmp_path):
         session.delete_page()
 
 
-def test_a_deleted_reference_warns_and_keeps_the_flats(tmp_path):
+def test_a_page_saved_with_colours_reopens_with_fake_flats(tmp_path):
+    """A page saved before ROADMAP G holds the ids of colours that are gone,
+    and a `flats` stage. It opens at its zones, in the eight fake flats."""
     session = _start(tmp_path / "work")
-    stored = session.add_reference(_swatch(tmp_path / "sheet.png"), original_name="sheet.png")
-    _through_flats(session, _page(tmp_path / "page.png"))
-    assert session.state()["flats_stale"] is False
+    session.load_page(_page(tmp_path / "page.png"))
+    session.detect_panels()
+    session.segment_zones()
+    path = project.page_folder(session.workdir, session.page_id) / project.PAGE_FILE
+    record = json.loads(path.read_text(encoding="utf-8"))
+    record["done"] = {"bubbles": False, "zones": True, "flats": True}
+    for panel in record["panels"]:
+        panel["assignments"] = {label: 400 for label in panel["assignments"]}
+        del panel["planes"]
+    record["proposed"], record["auto_entry"] = [], []
+    path.write_text(json.dumps(record), encoding="utf-8")
 
-    session.remove_reference(stored[0].id)
+    reopened = _start(tmp_path / "work")
 
-    state = session.state()
-    assert state["done"]["flats"] is True
-    assert state["flats_stale"] is True
-    assert _start(tmp_path / "work").state()["flats_stale"] is True
+    assert reopened.state()["done"]["zones"] is True
+    assert reopened.state()["done"]["planes"] is False
+    assert set(reopened.panels[0].assignments.values()) <= set(range(1, 9))
+    assert reopened.state()["pages"][0]["stage"] == "zones"
 
 
-def test_a_colour_deleted_while_its_page_was_closed_lets_go_on_opening(tmp_path):
+def test_line_extraction_is_kept_per_page(tmp_path):
     session = _start(tmp_path / "work")
-    session.add_palette(_swatch(tmp_path / "swatch.png"))
-    _through_flats(session, _page(tmp_path / "a.png"))
-    key = session.segments[0].key
-    entry = session.snap_segment(*key).palette_entry_id
-    closed = session.page_id
-
+    session.load_page(_page(tmp_path / "a.png"))
+    session.detect_panels()
+    session.segment_zones(extract_lines=True)
+    first = session.page_id
     session.load_page(_page(tmp_path / "b.png"))
-    session.delete_palette_entry(entry)
-    session.open_page(closed)
+    assert session.extract_lines is False, "off by default on a new page"
 
-    reopened = session.segment(*key)
-    assert reopened.snapped is False
-    assert reopened.palette_entry_id != entry
+    session.open_page(first)
+    assert session.extract_lines is True
 
 
 def test_a_page_that_cannot_be_read_does_not_stop_the_app(tmp_path):

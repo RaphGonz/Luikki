@@ -21,7 +21,7 @@ from collections.abc import Callable
 from typing import Any
 
 from ..billing import BILLING_URL
-from .billing import LINES, PORTAL_METADATA, Line, as_dict, checkout_options
+from .billing import ARCHIVED, LINES, PORTAL_METADATA, Line, as_dict, checkout_options
 
 # What Luikki is, for tax: a downloaded app whose colours are made by a service
 # in the cloud, sold to professionals ("SaaS - electronic download - business
@@ -31,10 +31,13 @@ from .billing import LINES, PORTAL_METADATA, Line, as_dict, checkout_options
 # use only matters for sales in the US.
 TAX_CODE = "txcd_10103101"
 CURRENCY = "eur"
-# B5's monthly subscription, sold before panels were the unit.
-RETIRED_PRICES = ("luikki_cloud_monthly",)
+# B5's monthly subscription, sold before panels were the unit, and everything
+# B5c sold before the single licence (ROADMAP G4). Archived, not deleted: what
+# was bought with them stays valid, and a Studio subscription runs on.
+RETIRED_PRICES = ("luikki_cloud_monthly", *(line.lookup_key for line in ARCHIVED.values()))
 # A code is 100 % off, once: a free Luikki, for someone Raph chooses.
-CODE_COUPON = "code-luikki-offert"
+# Its own coupon: the first one only applies to the archived Luikki product.
+CODE_COUPON = "code-luikki-base-offert"
 # How long someone has to use a code.
 CODE_DAYS = 60
 
@@ -118,7 +121,7 @@ def _coupon(stripe: Any):
             name="Luikki offert",
             percent_off=100,
             duration="once",
-            applies_to={"products": [LINES["luikki"].product]},
+            applies_to={"products": [LINES["base"].product]},
         )
 
 

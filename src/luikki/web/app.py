@@ -1,4 +1,4 @@
-"""The five buttons, over HTTP.
+"""The six buttons, over HTTP.
 
 One route per button and nothing else — rule 3: a route with no button is a
 feature that does not exist, and the inverse is what this file exists to
@@ -12,24 +12,20 @@ threadpool instead of stalling the event loop with them.
 from __future__ import annotations
 
 import io
-import os
 import shutil
 import tempfile
 from pathlib import Path
 
 import numpy as np
-from fastapi import FastAPI, Form, HTTPException, UploadFile
+from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
+from pydantic import BaseModel
+
 from .. import billing
 from ..account import Account, AccountError
-from ..colour.extract import EmptyImageError
-from ..colour.references import UnknownKind
-from ..colour.remote import RemoteUnavailable
-from ..colour.snap import SNAP_MAX_DELTA
-from pydantic import BaseModel
 
 from .project import default_workdir
 from .session import Session, StepError
@@ -68,36 +64,28 @@ class Cut(BaseModel):
     stroke: list[tuple[int, int]]
 
 
-class Colour(BaseModel):
-    """One colour, as the picker left it."""
-
-    rgb: tuple[int, int, int]
-
-
-class Pick(BaseModel):
-    """One of a reference's extracted colours, chosen for the palette."""
-
-    reference_id: int
-    rgb: tuple[int, int, int]
-
-
-class Mixed(BaseModel):
-    """A colour the artist mixed, rather than took from an image."""
-
-    rgb: tuple[int, int, int]
-    label: str = ""
-
-
 class Purchase(BaseModel):
     """One line of `cloud/billing.py`'s `LINES`."""
 
     line: str
 
 
-class Colours(BaseModel):
-    """The proposer step 5 uses, by name: `remote` or `distinct`."""
+class Zone(BaseModel):
+    panel: int
+    label: int
 
-    name: str
+
+class Planes(BaseModel):
+    """Zones the artist put on one plane (`segmentation.planes`)."""
+
+    zones: list[Zone]
+    plane: int
+
+
+class Export(BaseModel):
+    """The PSD's layer names, in the artist's language, by `LAYER_NAMES` key."""
+
+    names: dict[str, str] = {}
 
 
 class Email(BaseModel):
@@ -123,100 +111,17 @@ class _Fresh(StaticFiles):
         response.headers["cache-control"] = "no-store"
         return response
 
-def _build_proposer(account: Account | None = None):
-    """`LUIKKI_PROPOSER=cobra` swaps the model in without a code edit.
-
-    `remote` is the same model on a GPU elsewhere (`colour/remote.py`).
-    Anything else — including unset — is the deterministic distinct-colour
-    proposer, which needs no GPU and no weights. Read at call time, not import
-    time, so `luikki serve --proposer cobra` works whatever the import
-    order turns out to be.
-    """
-    choice = os.environ.get("LUIKKI_PROPOSER", "distinct")
-    if choice == "remote":
-        from ..colour.remote import RemoteProposer
-
-        return RemoteProposer(account=account)
-    if choice != "cobra":
-        from ..colour.proposer import DistinctColourProposer
-
-        return DistinctColourProposer()
-
-    from ..colour.cobra import CobraProposer
-
-    return CobraProposer()
-
-
-def _build_extractor():
-    """`LUIKKI_EXTRACTOR=raw` turns the line extractor off.
-
-    The default is MangaLineExtraction, which is what §2.2's A/B chose: raw ink
-    hands trapped-ball every stroke edge and every spot black as a zone. `raw`
-    exists for the case where the artist's ink layer really is already a clean
-    line image, and for tests that must not load 172 MB of weights.
-    """
-    if os.environ.get("LUIKKI_EXTRACTOR", "manga") == "raw":
-        from ..extract.passthrough import PassthroughExtractor
-
-        return PassthroughExtractor()
-    return None  # Session picks MangaLineExtraction on the best device.
-
-
-def _gpu_refusal(exc: RemoteUnavailable) -> StepError:
-    """The GPU server's refusal (`cloud/server.py`, `cloud/accounts.py`), or the
-    remote proposer's own, as a step error in the artist's words."""
-    match exc.code:
-        case "not_signed_in":
-            return StepError("gpu_sign_in", status=401)
-        case "unauthorized":
-            return StepError("gpu_unauthorized", status=401)
-        case "unreachable":
-            return StepError("gpu_unreachable", status=503)
-        case "no_subscription":
-            return StepError("gpu_no_subscription", status=402)
-        case "too_many_devices":
-            return StepError("gpu_too_many_devices", status=403)
-        case "job_running":
-            return StepError("gpu_job_running")
-        case "job_elsewhere":
-            return StepError("gpu_job_elsewhere")
-        case "quota_cases":
-            return StepError("gpu_quota_cases", status=429)
-        case "protocol_unsupported":
-            return StepError("gpu_update", status=426)
-        case "proposer_refused":
-            return StepError("gpu_proposer_refused", status=422, detail=str(exc.params.get("detail", "")))
-        case _:
-            # A request the app itself got wrong: nothing the artist can fix,
-            # so the code is kept for whoever reads the report.
-            return StepError("gpu_refused", status=502, reason=exc.code)
-
-
 def create_app(
     workdir: str | Path | None = None,
-    proposer=None,
     extractor=None,
     account: Account | None = None,
     updater: Updater | None = None,
+    depth=None,
 ) -> FastAPI:
     app = FastAPI(title="Luikki")
     workdir = Path(workdir) if workdir else default_workdir()
     account = account or Account()
-    chosen = proposer or _build_proposer(account)
-    # Cobra on the GPU, or distinct colours: where the app runs Cobra remotely
-    # it offers both, and the artist chooses at step 5 (ROADMAP B2, B5b).
-    proposers = {chosen.name: chosen}
-    if chosen.name == "remote":
-        from ..colour.proposer import DistinctColourProposer
-
-        proposers["distinct"] = DistinctColourProposer()
-    session = Session(
-        workdir,
-        proposer=chosen,
-        extractor=extractor or _build_extractor(),
-        account=account,
-        proposers=proposers,
-    )
+    session = Session(workdir, extractor=extractor, account=account, depth=depth)
     app.state.session = session
     updater = updater or Updater()
     app.state.updater = updater
@@ -301,15 +206,30 @@ def create_app(
         billing.manage(session.account)
         return {}
 
-    @app.put("/api/proposer")
-    def choose_proposer(body: Colours):
-        """Cobra or distinct colours for the next press of step 5."""
-        return session.set_proposer(body.name)
-
     @app.get("/api/account/status")
-    def gpu_status():
-        """What step 5 will meet on the GPU server, asked before it is pressed."""
-        return session.gpu_status()
+    def licence():
+        """The licence, as `my_status` tells it (ROADMAP G4). Taken without
+        the session lock: it asks Supabase, and answers while a step runs.
+        `licence` is null when signed out or when the server does not answer
+        — unknown, never a refusal."""
+        account = session.account
+        found = None
+        if account is not None and account.email:
+            try:
+                found = account.status()
+            except AccountError:
+                found = None
+        licence = None
+        if found:
+            licence = {
+                # `studio` and `tester` from before G4 stay valid, as does a
+                # paid year (`luikki`, whatever line bought it).
+                "active": found.get("plan") is not None,
+                "plan": found.get("plan"),
+                "until": found.get("colours_until"),
+                "customer": bool(found.get("customer")),
+            }
+        return {"signed_in": bool(account is not None and account.email), "licence": licence}
 
     # -- 1. pages --------------------------------------------------------
 
@@ -406,9 +326,10 @@ def create_app(
     # -- 4. zones --------------------------------------------------------
 
     @app.post("/api/zones")
-    def segment_zones(gap: float | None = None):
-        """`gap` is §1.3's gap allowance, kept for the rest of the book."""
-        session.segment_zones(leak_gap=gap)
+    def segment_zones(gap: float | None = None, extract: bool | None = None):
+        """`gap` is §1.3's gap allowance, kept for the rest of the book;
+        `extract` turns line extraction on for this page (ROADMAP G5)."""
+        session.segment_zones(leak_gap=gap, extract_lines=extract)
         return session.state()
 
     @app.get("/api/lines.png")
@@ -422,8 +343,8 @@ def create_app(
         """
         if session.grey is None:
             raise HTTPException(404, "no page loaded")
-        if session._structural is None:
-            raise HTTPException(404, "lines not extracted yet")
+        if session._structural is None or not session.extract_lines:
+            raise HTTPException(404, "lines not extracted on this page")
         return _png(np.where(session._structural, 0, 255).astype(np.uint8))
 
     @app.get("/api/zones.png")
@@ -436,8 +357,7 @@ def create_app(
     #
     # Trapped-ball leaks a garment into the background through a gap in the
     # ink, and splits a pair of trousers into forty scraps. These are the two
-    # corrections, and they are permanent: they happen at step 4, before a
-    # single colour is proposed.
+    # corrections; Ctrl+Z takes the last few back.
 
     @app.get("/api/zone")
     def zone_at(x: int, y: int):
@@ -447,7 +367,12 @@ def create_app(
             raise HTTPException(404, "no zone at that point")
         panel, label = found
         _, bounds = session.zone_mask_rgba(panel, label)
-        return {"panel": panel, "label": label, "bounds": list(bounds)}
+        return {
+            "panel": panel,
+            "label": label,
+            "bounds": list(bounds),
+            "plane": session.plane_of(panel, label),
+        }
 
     @app.post("/api/zones/along")
     def zones_along(stroke: Stroke):
@@ -459,7 +384,12 @@ def create_app(
         boxes = {panel: session.zone_bounds(panel) for panel, _ in found}
         return {
             "zones": [
-                {"panel": panel, "label": label, "bounds": list(boxes[panel][label])}
+                {
+                    "panel": panel,
+                    "label": label,
+                    "bounds": list(boxes[panel][label]),
+                    "plane": session.plane_of(panel, label),
+                }
                 for panel, label in found
             ]
         }
@@ -492,222 +422,56 @@ def create_app(
         result = session.undo_zones()
         return {**session.state(), "result": result}
 
-    # -- palette / references --------------------------------------------
+    # -- 5. planes -------------------------------------------------------
 
-    @app.post("/api/reference")
-    def upload_reference(file: UploadFile, kind: str = Form("sheet")):
-        name = file.filename or "reference.png"
-        with tempfile.NamedTemporaryFile(
-            delete=False, suffix=Path(name).suffix, dir=session.workdir
-        ) as handle:
-            shutil.copyfileobj(file.file, handle)
-            staged = Path(handle.name)
-        try:
-            stored = session.add_reference(staged, original_name=name, kind=kind)
-        except UnknownKind as exc:
-            raise HTTPException(422, str(exc)) from exc
-        except EmptyImageError as exc:
-            raise StepError("image_empty", status=422) from exc
-        except (OSError, ValueError) as exc:
-            raise StepError("image_unreadable", status=422, detail=str(exc)) from exc
-        finally:
-            # The store keeps its own copy, so the upload never lingers.
-            staged.unlink(missing_ok=True)
-        # A finished page arrives as one file and is stored as several
-        # references — itself, plus the panels big enough to be worth cutting
-        # out. The artist pressed one button, so the answer says what actually
-        # happened to it.
-        return {
-            **session.state(),
-            "result": {
-                "added": len(stored),
-                "kind": stored[0].kind,
-                "panels": sum(1 for r in stored if r.kind == "panel"),
-            },
-        }
-
-    @app.delete("/api/reference/{reference_id}")
-    def delete_reference(reference_id: int):
-        if not session.remove_reference(reference_id):
-            raise HTTPException(404, f"no reference {reference_id}")
+    @app.post("/api/planes")
+    def detect_planes():
+        session.detect_planes()
         return session.state()
 
-    @app.get("/api/reference/{reference_id}.png")
-    def reference_thumbnail(reference_id: int):
-        try:
-            thumbnail = session.reference_store.thumbnail(reference_id)
-        except KeyError as exc:
-            raise HTTPException(404, str(exc)) from exc
-        buffer = io.BytesIO()
-        thumbnail.save(buffer, format="PNG")
-        return Response(buffer.getvalue(), media_type="image/png")
-
-    @app.post("/api/palette/image")
-    def upload_palette(file: UploadFile):
-        """A palette image: every colour in it, straight into the palette.
-
-        The other door. A character sheet is a drawing whose colours are a
-        proposal; a palette is the decision already made, so there is nothing
-        to confirm. It is never shown to the proposer.
-        """
-        name = file.filename or "palette.png"
-        with tempfile.NamedTemporaryFile(
-            delete=False, suffix=Path(name).suffix, dir=session.workdir
-        ) as handle:
-            shutil.copyfileobj(file.file, handle)
-            staged = Path(handle.name)
-        try:
-            session.add_palette(staged, original_name=name)
-        except EmptyImageError as exc:
-            raise StepError("image_empty", status=422) from exc
-        except (OSError, ValueError) as exc:
-            raise StepError("image_unreadable", status=422, detail=str(exc)) from exc
-        finally:
-            staged.unlink(missing_ok=True)
+    @app.put("/api/planes")
+    def set_planes(body: Planes):
+        """Zones the artist moved to a plane, or called characters."""
+        session.set_planes([(zone.panel, zone.label) for zone in body.zones], body.plane)
         return session.state()
 
-    @app.post("/api/palette")
-    def include_colour(pick: Pick):
-        """Take one of a reference's colours into the palette."""
-        entry = session.include_candidate(pick.reference_id, pick.rgb)
-        return {**session.state(), "entry_id": entry.id}
+    @app.get("/api/planes.png")
+    def planes_png(tints: str | None = None):
+        """`tints` is four hex colours, by plane, from the tokens of
+        `app.css`: the interface owns its colours, the server only paints."""
+        if not session.state()["done"]["planes"]:
+            raise HTTPException(404, "planes not found yet")
+        chosen = None
+        if tints:
+            try:
+                chosen = {
+                    plane: tuple(int(tint[i : i + 2], 16) for i in (0, 2, 4))
+                    for plane, tint in enumerate(tints.split(","))
+                }
+            except ValueError:
+                raise HTTPException(422, "tints are four hex colours") from None
+            if len(chosen) != 4:
+                raise HTTPException(422, "tints are four hex colours")
+        return _png(session.planes_rgba(chosen))
 
-    @app.post("/api/palette/colour")
-    def mix_colour(mixed: Mixed):
-        """A colour from the colour box, with no image behind it."""
-        entry = session.add_colour(mixed.rgb, mixed.label)
-        return {**session.state(), "entry_id": entry.id}
-
-    @app.put("/api/palette/{entry_id}")
-    def recolour(entry_id: int, colour: Colour):
-        """Change a palette colour — and with it every zone holding that id.
-
-        No re-segmentation and no invalidation: the flats raster and the PSD
-        both resolve through the palette when they are asked for, so one row
-        changing is the whole repaint (rule 1).
-        """
-        session.set_palette_colour(entry_id, colour.rgb)
-        return session.state()
-
-    @app.delete("/api/palette/{entry_id}")
-    def drop_colour(entry_id: int):
-        session.delete_palette_entry(entry_id)
-        return session.state()
-
-    # -- 5. flats --------------------------------------------------------
-
-    @app.post("/api/flats")
-    def generate_flats(plain: bool = False):
-        """Step 5's two ends. `plain` is "Continue without generating": the
-        same pass, one distinct colour per zone, no model and no GPU. It does
-        not change the artist's proposer — it is a press, not a setting."""
-        try:
-            result = session.generate_flats(plain=plain)
-        except RemoteUnavailable as exc:
-            raise _gpu_refusal(exc) from exc
-        except RuntimeError as exc:
-            if isinstance(exc, (StepError, AccountError)):
-                raise
-            # CobraUnavailable and friends: the artist needs the sentence, not
-            # a traceback.
-            raise HTTPException(503, str(exc)) from exc
-        return {**session.state(), "result": result}
-
-    @app.get("/api/flats.png")
-    def flats_png():
-        if not session.state()["done"]["flats"]:
-            raise HTTPException(404, "flats not generated")
-        return _png(session.flats_rgba())
-
-    # -- 6. snap ---------------------------------------------------------
-
-    def _segment_payload(segment):
-        entry, distance = session.snap_suggestion(segment)
-        return {
-            "panel": segment.panel,
-            "label": segment.label,
-            "palette_entry_id": segment.palette_entry_id,
-            "area": segment.area,
-            "bounds": list(segment.bounds),
-            "anchor": list(segment.anchor),
-            "snapped": segment.snapped,
-            "suggestion": None
-            if entry is None
-            else {
-                "palette_entry_id": entry.id,
-                "rgb": list(entry.rgb),
-                # The number the old automatic snap decided on without showing
-                # anyone. Above SNAP_MAX_DELTA it is a warning, not a veto.
-                "delta": round(distance, 2),
-                "within_threshold": distance <= SNAP_MAX_DELTA,
-            },
-        }
-
-    @app.get("/api/segments")
-    def segments(unsnapped: bool = False, limit: int = 0):
-        """Every segment, worst suggestion first.
-
-        Sorted by descending area so the artist meets the background before a
-        300px speck: the ordering is the whole ergonomics of clicking through
-        a page one zone at a time.
-        """
-        chosen = [s for s in session.segments if not (unsnapped and s.snapped)]
-        chosen.sort(key=lambda s: -s.area)
-        if limit:
-            chosen = chosen[:limit]
-        return {"count": len(chosen), "segments": [_segment_payload(s) for s in chosen]}
-
-    @app.get("/api/segment")
-    def segment_at(x: int, y: int):
-        """The segment under a page-space point — what a click resolves to."""
-        found = session.segment_at(x, y)
-        if found is None:
-            raise HTTPException(404, "no segment at that point")
-        return _segment_payload(found)
-
-    @app.post("/api/segment/{panel}/{label}/snap")
-    def snap_segment(panel: int, label: int, entry_id: int | None = None):
-        """Snap one segment. `entry_id` omitted takes the suggestion."""
-        segment = session.snap_segment(panel, label, entry_id)
-        return _segment_payload(segment)
-
-    @app.post("/api/segment/{panel}/{label}/unsnap")
-    def unsnap_segment(panel: int, label: int):
-        return _segment_payload(session.unsnap_segment(panel, label))
-
-    @app.get("/api/unsnapped.png")
-    def unsnapped_png():
-        """What step 6 has left to do, as a mask over the page.
-
-        Flats show what the page currently resolves to; this shows which of it
-        is still the machine's guess. Without it "251 segments left as
-        proposed" is a number with nowhere to point.
-        """
-        if not session.state()["done"]["flats"]:
-            raise HTTPException(404, "flats not generated")
-        mask = session.unsnapped_mask()
-        rgba = np.zeros((*mask.shape, 4), dtype=np.uint8)
-        rgba[mask] = (240, 163, 94, 110)
-        return _png(rgba)
-
-    @app.post("/api/snap-all")
-    def snap_all(threshold: float | None = None):
-        """The bulk shortcut. `threshold` of null ignores the guard entirely."""
-        # Snap first, then read the state: inside one dict literal the state
-        # is built before the call that changes it, and the sidebar ends up
-        # reporting the page as it was a moment before the artist pressed.
-        result = session.snap_all(threshold)
-        return {**session.state(), "result": result}
-
-    # -- 7. export -------------------------------------------------------
+    # -- 6. export -------------------------------------------------------
 
     @app.post("/api/export")
-    def export(granularity: str | None = None, support_grey: bool | None = None):
-        """`granularity` is "colour" (one layer per palette entry, whole page)
-        or "panel" (one group per panel). `support_grey` adds the printer's two
-        ink layers over the flats. Omitted, either keeps what the session was
-        last given — the choice is the artist's, not the request's."""
-        path = session.export_psd(granularity=granularity, support_grey=support_grey)
+    def export(
+        granularity: str | None = None,
+        support_grey: bool | None = None,
+        body: Export | None = None,
+    ):
+        """`granularity` is "plane" (one layer per plane) or "colour" (one
+        group per plane, one layer per colour inside it). `support_grey` adds
+        the printer's two ink layers over the flats. Omitted, either keeps
+        what the session was last given — the choice is the artist's, not the
+        request's."""
+        path = session.export_psd(
+            granularity=granularity,
+            support_grey=support_grey,
+            names=body.names if body else None,
+        )
         return FileResponse(
             path, media_type="image/vnd.adobe.photoshop", filename=path.name
         )

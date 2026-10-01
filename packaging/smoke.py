@@ -3,9 +3,9 @@
     python packaging/smoke.py <page> [dist/Luikki]
 
 `Luikki flatten` loads the page, finds panels and balloons (the RT-DETR model),
-extracts lines (MangaLineExtraction), segments with LineFiller, proposes with
-`distinct` and writes the PSD — every library and model file the bundle has to
-carry. A missing one fails here rather than on a tester's machine. The app has
+extracts lines (MangaLineExtraction, asked for by `--extract-lines`), segments
+with LineFiller, reads depth for the planes (Depth Anything) and writes the PSD
+— every library and model file the bundle has to carry. A missing one fails here rather than on a tester's machine. The app has
 no console, so what it printed is read back from its log.
 """
 
@@ -31,7 +31,7 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory() as out:
         started = time.monotonic()
-        code = subprocess.run([str(executable), "flatten", str(page), "-o", out], timeout=900).returncode
+        code = subprocess.run([str(executable), "flatten", str(page), "-o", out, "--extract-lines"], timeout=900).returncode
         seconds = time.monotonic() - started
         psds = list(Path(out).rglob("*.psd"))
 

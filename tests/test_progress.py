@@ -106,15 +106,15 @@ def test_segmenting_reports_every_panel_and_ends_at_100(client, page, monkeypatc
     }
 
 
-def test_generating_flats_reports_its_panels(client, page, monkeypatch):
+def test_finding_the_planes_reports_its_panels(client, page, monkeypatch):
     _upload(client, page)
     client.post("/api/panels")
     client.post("/api/zones")
     seen = _watch(client.app.state.session, monkeypatch)
 
-    assert client.post("/api/flats").status_code == 200
+    assert client.post("/api/planes").status_code == 200
 
-    assert seen and all(snapshot["phase"] == "colour" for snapshot in seen)
+    assert seen and all(snapshot["phase"] == "depth" for snapshot in seen)
     final = client.get("/api/progress").json()
     assert final["running"] is False
     assert final["percent"] == 100.0
@@ -124,7 +124,7 @@ def test_only_a_cancellable_run_stops():
     progress = Progress()
     assert progress.cancel() is False, "nothing is running"
     with progress.run(10):
-        assert progress.cancel() is False, "a generation is never stopped"
+        assert progress.cancel() is False, "a run that says it cannot stop does not"
         progress.tick(1)
     with pytest.raises(Cancelled):
         with progress.run(10, cancellable=True):
@@ -138,13 +138,13 @@ def test_only_a_cancellable_run_stops():
 
 def test_stopping_segmentation_leaves_the_page_as_it_was(client, page, monkeypatch):
     """Stop lands between two passes, and nothing of the run is kept: the
-    zones, merges and flats from before the press are all still there."""
+    zones and planes from before the press are all still there."""
     _upload(client, page)
     client.post("/api/panels")
     client.post("/api/zones")
-    client.post("/api/flats")
+    client.post("/api/planes")
     before = client.get("/api/state").json()
-    before_segments = client.get("/api/segments").json()
+    before_planes = client.get("/api/planes.png").content
 
     session = client.app.state.session
     tick = session.progress.tick
@@ -162,8 +162,25 @@ def test_stopping_segmentation_leaves_the_page_as_it_was(client, page, monkeypat
     assert stopped.json()["code"] == "cancelled"
 
     assert client.get("/api/state").json() == before
-    assert client.get("/api/segments").json() == before_segments
+    assert client.get("/api/planes.png").content == before_planes
     assert client.get("/api/progress").json()["running"] is False
 
     monkeypatch.setattr(session.progress, "tick", tick)
     assert client.post("/api/zones").status_code == 200, "a stopped run can be run again"
+
+
+def test_stopping_the_planes_leaves_none(client, page, monkeypatch):
+    _upload(client, page)
+    client.post("/api/panels")
+    client.post("/api/zones")
+    session = client.app.state.session
+    tick = session.progress.tick
+
+    def press_stop(units):
+        client.post("/api/cancel")
+        tick(units)
+
+    monkeypatch.setattr(session.progress, "tick", press_stop)
+    stopped = client.post("/api/planes")
+    assert stopped.json()["code"] == "cancelled"
+    assert client.get("/api/state").json()["done"]["planes"] is False

@@ -36,6 +36,16 @@ MANGA_LINE_URL = "https://github.com/RaphGonz/Luikki/releases/download/models-1/
 # The export read against torch on teddy and laurine (`reports/onnx_parity/`).
 MANGA_LINE_SHA256 = "0395b38ae61258b81485b7ba60b857df6542d923801fee2f17470439c7bcbf58"
 
+DEPTH = "depth_small.onnx"
+# Depth Anything V2 *Small*, the only size under Apache-2.0: Base and Large are
+# CC-BY-NC-4.0 and must never be fetched here (ROADMAP G0).
+DEPTH_URL = (
+    "https://huggingface.co/onnx-community/depth-anything-v2-small/"
+    "resolve/main/onnx/model.onnx"
+)
+# The file the planes were judged with on the test pages (`reports/depth/`).
+DEPTH_SHA256 = "afb6a5c28f3b6bf1618c6e43f02073ef9dfdc70e937502d51603e57b0a1df10c"
+
 _REPO = Path(__file__).resolve().parents[2]
 ERIKA = _REPO / "third_party" / "MangaLineExtraction" / "erika.pth"
 ERIKA_URL = "https://github.com/ljsabc/MangaLineExtraction_PyTorch/releases/download/v1/erika.pth"
@@ -69,6 +79,7 @@ def fetch_models(log: Callable[[str], None] = print) -> None:
     for name, url, sha256 in (
         (BUBBLE_DETECTOR, DETECTOR_URL, DETECTOR_SHA256),
         (MANGA_LINE, MANGA_LINE_URL, MANGA_LINE_SHA256),
+        (DEPTH, DEPTH_URL, DEPTH_SHA256),
     ):
         path = folder / name
         if not path.exists():

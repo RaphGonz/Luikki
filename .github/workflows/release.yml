@@ -89,8 +89,6 @@ jobs:
           codesign -dv dist/Luikki.app
 
       - name: Smoke test
-        env:
-          LUIKKI_PROPOSER: distinct
         run: |
           python packaging/synthetic_page.py build/page.png
           python packaging/smoke.py build/page.png ${{ matrix.bundle }}

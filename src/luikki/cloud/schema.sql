@@ -43,6 +43,10 @@ create table if not exists public.purchases (
     refunded          boolean not null default false,
     created_at        timestamptz not null default now()
 );
+-- G4: the single licence, 10 € a year. The older lines stay recorded.
+alter table public.purchases drop constraint if exists purchases_line_check;
+alter table public.purchases add constraint purchases_line_check
+    check (line in ('luikki', 'pass', 'pack', 'founder', 'base'));
 create index if not exists purchases_user on public.purchases (user_id);
 create index if not exists purchases_payment_intent on public.purchases (payment_intent);
 

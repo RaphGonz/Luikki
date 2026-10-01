@@ -1,4 +1,4 @@
-"""Selling colours and panels: the billing server's doors, and the app's buttons.
+"""Selling the licence: the billing server's doors, and the app's buttons.
 
 Stripe does not run here. `_Stripe` answers the SDK calls the server makes
 with real `StripeObject`s, and webhooks are signed the way Stripe signs them,
@@ -31,7 +31,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from luikki import billing  # noqa: E402
 from luikki.account import AccountError  # noqa: E402
 from luikki.cloud.accounts import TokenVerifier  # noqa: E402
-from luikki.cloud.billing import FOUNDERS, LINES, PERIOD_GRACE, WEBHOOK_ROUTE, Store, create_billing  # noqa: E402
+from luikki.cloud.billing import LINES, PERIOD_GRACE, RECORDED, WEBHOOK_ROUTE, Store, create_billing  # noqa: E402
 
 PROJECT = "https://project.supabase.co"
 USER = str(uuid.uuid4())
@@ -144,13 +144,13 @@ def _subscription(**changes) -> dict:
 
 def test_a_one_time_purchase_is_a_payment_for_this_account_with_an_invoice():
     fake = _Stripe()
-    answer = _buy(fake, _Database(), "luikki")
+    answer = _buy(fake, _Database(), "base")
 
     assert answer.json() == {"url": "https://checkout.stripe.test/c/1"}
     [session] = fake.sessions
     assert session["mode"] == "payment"
-    assert session["line_items"] == [{"price": "price_luikki_colours_year", "quantity": 1}]
-    assert session["metadata"] == {"user_id": USER, "line": "luikki"}
+    assert session["line_items"] == [{"price": "price_luikki_base_year", "quantity": 1}]
+    assert session["metadata"] == {"user_id": USER, "line": "base"}
     assert session["client_reference_id"] == USER
     assert session["allow_promotion_codes"] is True
     assert session["invoice_creation"] == {"enabled": True}
@@ -158,27 +158,22 @@ def test_a_one_time_purchase_is_a_payment_for_this_account_with_an_invoice():
     assert "subscription_data" not in session
 
 
-def test_studio_is_the_one_subscription():
-    fake = _Stripe()
-    _buy(fake, _Database(), "studio")
-
-    [session] = fake.sessions
-    assert session["mode"] == "subscription"
-    assert session["subscription_data"] == {"metadata": {"user_id": USER}}
-    assert session["payment_method_collection"] == "if_required"
-    assert "invoice_creation" not in session
+def test_one_licence_ten_euros_a_year():
+    """ROADMAP G4: one line for sale, and nothing else."""
+    assert list(LINES) == ["base"]
+    assert (LINES["base"].cents, LINES["base"].years, LINES["base"].monthly) == (1000, 1, False)
 
 
 def test_a_second_purchase_is_made_by_the_same_customer():
     fake = _Stripe()
-    _buy(fake, _Database(customer="cus_1", bought=True), "pack")
+    _buy(fake, _Database(customer="cus_1", bought=True), "base")
     assert fake.sessions[0]["customer"] == "cus_1"
     assert "customer_creation" not in fake.sessions[0]
 
 
 def test_buying_needs_a_session():
     fake = _Stripe()
-    answer = _server(fake, _Database()).post("/v1/checkout", json={"line": "luikki"})
+    answer = _server(fake, _Database()).post("/v1/checkout", json={"line": "base"})
     assert answer.status_code == 401
     assert fake.sessions == []
 
@@ -186,11 +181,10 @@ def test_buying_needs_a_session():
 @pytest.mark.parametrize(
     ("line", "buyer", "status", "code"),
     [
-        ("studio", {"studio": True}, 409, "already_subscribed"),
-        ("luikki", {"bought": True}, 409, "already_bought"),
-        ("pass", {"bought": False}, 409, "needs_luikki"),
-        ("founder", {"founder": True, "bought": True}, 409, "already_bought"),
-        ("founder", {"founders_sold": FOUNDERS}, 410, "sold_out"),
+        ("studio", {}, 400, "bad_line"),
+        ("luikki", {}, 400, "bad_line"),
+        ("pack", {}, 400, "bad_line"),
+        ("founder", {}, 400, "bad_line"),
         ("lifetime", {}, 400, "bad_line"),
     ],
 )
@@ -201,10 +195,9 @@ def test_what_an_account_may_not_buy_never_reaches_stripe(line, buyer, status, c
     assert fake.sessions == []
 
 
-def test_the_pass_extends_luikki_and_packs_need_nothing():
+def test_the_licence_can_be_bought_again_to_extend_it():
     fake = _Stripe()
-    assert _buy(fake, _Database(bought=True), "pass").status_code == 200
-    assert _buy(fake, _Database(), "pack").status_code == 200
+    assert _buy(fake, _Database(bought=True), "base").status_code == 200
 
 
 def test_the_portal_needs_a_stripe_customer():
@@ -222,8 +215,9 @@ def test_the_portal_opens_with_luikkis_configuration():
 # -- the webhook ----------------------------------------------------------------
 
 
-@pytest.mark.parametrize("line", ["luikki", "pass", "pack", "founder"])
+@pytest.mark.parametrize("line", ["base", "luikki", "pass", "pack", "founder"])
 def test_a_paid_session_records_what_its_line_gives(line):
+    """Archived lines too: a payment that arrives late is still recorded."""
     database = _Database()
     payload, headers = _signed("checkout.session.completed", "cs_1")
     fake = _Stripe(session=_session(metadata={"user_id": USER, "line": line}))
@@ -237,14 +231,14 @@ def test_a_paid_session_records_what_its_line_gives(line):
         "p_session": "cs_1",
         "p_payment_intent": "pi_1",
         "p_customer": "cus_1",
-        "p_cases": LINES[line].cases,
-        "p_years": LINES[line].years,
+        "p_cases": RECORDED[line].cases,
+        "p_years": RECORDED[line].years,
     }
 
 
 def test_founders_get_panels_that_never_expire_and_packs_a_thousand():
-    assert (LINES["founder"].cases, LINES["founder"].years) == (5000, 1)
-    assert (LINES["pack"].cases, LINES["pack"].years) == (1000, 0)
+    assert (RECORDED["founder"].cases, RECORDED["founder"].years) == (5000, 1)
+    assert (RECORDED["pack"].cases, RECORDED["pack"].years) == (1000, 0)
 
 
 @pytest.mark.parametrize(
@@ -329,8 +323,8 @@ def _answering(status: int, body: dict, seen: list | None = None) -> httpx.Clien
 def test_buying_sends_the_line_and_opens_the_page_in_the_browser():
     opened, sent = [], []
     client = _answering(200, {"url": "https://checkout.stripe.test/c/1"}, sent)
-    billing.buy(_Account(), "pack", open_url=opened.append, client=client)
-    assert sent == [{"line": "pack"}]
+    billing.buy(_Account(), "base", open_url=opened.append, client=client)
+    assert sent == [{"line": "base"}]
     assert opened == ["https://checkout.stripe.test/c/1"]
 
 
@@ -348,14 +342,14 @@ def test_buying_sends_the_line_and_opens_the_page_in_the_browser():
 )
 def test_a_refusal_comes_back_as_a_code_the_app_words(status, code, worded):
     with pytest.raises(AccountError) as refused:
-        billing.buy(_Account(), "luikki", open_url=lambda url: None, client=_answering(status, {"code": code}))
+        billing.buy(_Account(), "base", open_url=lambda url: None, client=_answering(status, {"code": code}))
     assert refused.value.code == worded
 
 
 def test_signed_out_opens_nothing():
     opened = []
     with pytest.raises(AccountError) as refused:
-        billing.buy(_Account(token=None), "luikki", open_url=opened.append)
+        billing.buy(_Account(token=None), "base", open_url=opened.append)
     assert refused.value.code == "signed_out"
     assert opened == []
 
@@ -369,6 +363,6 @@ def test_the_account_buttons_reach_billing(tmp_path, monkeypatch):
     monkeypatch.setattr(billing, "manage", lambda account: pressed.append("manage"))
     client = TestClient(create_app(tmp_path / "work", extractor=PassthroughExtractor()))
 
-    assert client.post("/api/account/buy", json={"line": "founder"}).status_code == 200
+    assert client.post("/api/account/buy", json={"line": "base"}).status_code == 200
     assert client.post("/api/account/manage").status_code == 200
-    assert pressed == ["founder", "manage"]
+    assert pressed == ["base", "manage"]
