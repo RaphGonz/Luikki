@@ -2,7 +2,7 @@
 
 Nothing downloads at launch. An installed app carries `models/` inside its
 bundle (B4); a source checkout, and the release build, fill `models/` once with
-`luikki models`. Both files are too large for git history, which is why they
+`luikki models`. The files are too large for git history, which is why they
 are fetched rather than committed, and each is checked against a pinned sha256.
 
 - `manga_line.onnx` — MangaLineExtraction (MIT), exported from the upstream
@@ -11,6 +11,8 @@ are fetched rather than committed, and each is checked against a pinned sha256.
   build needs torch either; `export_manga_line` is how that file was made.
 - `comic_bubble_detector.onnx` — RT-DETR-v2 (Apache-2.0), downloaded as
   published and checked against the file the test pages were measured with.
+- `depth_small.onnx` — Depth Anything V2 Small (Apache-2.0), as published by
+  onnx-community, for the planes (`segmentation/planes.py`).
 """
 
 from __future__ import annotations

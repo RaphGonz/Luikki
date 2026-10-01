@@ -56,12 +56,8 @@ the artist away from what they were doing, except the one confirmation that
 rule 4 of `SPEC.md` asks for.
 
 A panel pinned to the object it is about is not one of those, and section 15
-already asks for the opposite: the right-click menu and the merge and cut
-actions belong on the page, not off it. Step 6's decision — the colour a zone
-holds, the nearest one, Snap, Choose another — sits in a window beside the
-zone (`.near`, `renderNear`), because the first tester never found those
-buttons at the far edge of the screen while their hand was on the zone. It is
-placed clear of the zone it describes and never covers it.
+already asks for the opposite: the right-click menu and the merge, cut and
+plane actions belong on the page, not off it.
 
 **R8 — One gradient.** Section 6 names the only place a gradient appears.
 
@@ -252,7 +248,7 @@ If the server gives no percent for a step, show an indeterminate bar of
 Three columns and two bars. The canvas takes the space that is left.
 
     ┌──────────────────────────────────────────────────────────────┐
-    │ HEADER 44px   page name                        [⇥ inspector] │
+    │ HEADER 44px   page name                account [⇥ inspector] │
     ├────────────┬────────────────────────────────┬────────────────┤
     │ STEP RAIL  │            CANVAS              │   INSPECTOR    │
     │ 232px      │                                │   300px        │
@@ -261,12 +257,12 @@ Three columns and two bars. The canvas takes the space that is left.
     │ 2 Panels   │      │   the page   │          │  selected,     │
     │ 3 Bubbles  │      │              │          │  and its       │
     │ 4 Zones    │      │  on --canvas │          │  properties.   │
-    │ 5 Flats    │      │              │          │                │
-    │ 6 Snap     │      └──────────────┘          │                │
-    │ 7 Export   │                                │                │
+    │ 5 Planes   │      │              │          │                │
+    │ 6 Export   │      └──────────────┘          │                │
+    │            │                                │                │
     │ ───────    │                                │                │
-    │ References │                                │                │
-    │ Palette    │                                ├────────────────┤
+    │ Pages      │                                │                │
+    │            │                                ├────────────────┤
     │            │                                │ panel footer   │
     ├────────────┴────────────────────────────────┴────────────────┤
     │ FOOTER 32px  status + progress bar    ☐ lines   ☐ neutral    │
@@ -286,9 +282,9 @@ The rail, the inspector, the header and the footer are `--panel`. The app
 background `--bg` shows in the 1px gaps between them, which is how the structure
 reads without a border.
 
-The header holds the name of the page and one button that hides the inspector. It
-holds no logo. A tool that runs every day does not need a logo in its own
-interface.
+The header holds the name of the page, the account (the address, or « Sign
+in »: tester 3 looked for it at the top), and one button that hides the
+inspector.
 
 Each column scrolls on its own. The canvas never scrolls the page.
 
@@ -316,11 +312,14 @@ A locked step gives the reason in plain words: `Detect panels first`. A closed
 stage gives the way back: `Segment zones again to change the panels. This deletes
 your merges and cuts.`
 
-Below the seven steps, and after a `--separator` line, put **Pages**,
-**References** and **Palette**. They are not steps. Give each one a summary:
-`3 pages`, `4 references`, `11 colours`. Pages lists every page of the project
-in the inspector, with how far each has got; clicking one opens it as it was
+Below the six steps, and after a `--separator` line, put **Pages**. It is not
+a step. Its summary is `3 pages`; it lists every page of the project in the
+inspector, with how far each has got, and clicking one opens it as it was
 left.
+
+What the artist rarely turns sits folded under « Advanced » in its step: the
+gap allowance and line extraction at step 4. The dial alone made tester 3
+doubt the whole step.
 
 ## 9. The inspector
 
@@ -332,18 +331,9 @@ is selected, it says what to click.
 | 2 Panels | The number of the panel, its corner count, and Delete panel. |
 | 3 Bubbles | The same, for the balloon. |
 | 4 Zones | The count of selected zones, their area, Merge, Cut and Clear. |
-| 5 Flats | The count of segments, and the count that holds a private entry. |
-| 6 Snap | The colour of the zone, the nearest palette colour, the distance, and Snap, Pick another colour, Put the proposal back. |
-| References | The thumbnail, the kind, and the chips of the candidate colours. |
-| Palette | The swatch grid. Click a swatch to edit that colour. |
-
-The distance at step 6 is the number that the old automatic pass used in silence.
-Show it in `--fs-num` with `font-variant-numeric: tabular-nums`. Above
-`SNAP_MAX_DELTA` it is `--attention`. Below it, it is `--text-dim`. The number
-orders the attention of the artist. It does not refuse the instruction of the
-artist.
-
-Put the secondary actions of a panel in a panel footer at its bottom.
+| 5 Planes | Without a selection: the four planes, their tint and their zone count. With one: the zones, a button per plane, and Merge, Cut, Clear, Undo. |
+| 6 Export | The layer count of each stack. |
+| Account | The address, the licence and until when, Buy or Add a year, Invoices, Sign out. |
 
 ## 10. The canvas and the surround
 
@@ -405,6 +395,13 @@ Never fill a zone with a hue to show that it is selected. The artist is looking
 at the colour of that zone. `--attention` never touches the page: it is a skin
 colour, and a comic page holds skin.
 
+**The planes are the one tint over the artwork.** At step 5 each plane is a
+flat tint under the ink (`--plane-near`, `--plane-middle`, `--plane-far`,
+`--plane-character`), each zone's edge a shade darker inside it. Hue is the
+point there: four planes told apart at a glance. Raph's call, like the panel
+and balloon outlines. The tints are tokens; the browser sends them to
+`/api/planes.png` and the server only paints.
+
 ## 12. Controls, type and space
 
 **Button.** Height 28px, radius `--r-control`, padding `0 var(--s-3)`, text
@@ -420,43 +417,8 @@ colour, and a comic page holds skin.
 One primary button at a time. It belongs to the current step. A disabled button
 keeps a tooltip that says why it is disabled.
 
-**Palette swatch.** 24px square, radius `--r-control`, 1px `--border`. The
-selected swatch takes a 2px `--action-ring`. Show the id below in `--fs-num`,
-`--text-dim`. The id never changes, and the interface must show that.
-
-**Candidate chip.** Not taken: 60 % alpha, 1px dashed `--separator`. Taken: full
-alpha, 1px solid `--border`, and a check mark. The difference is alpha and
-border, not hue.
-
-**Toggle.** Three options or fewer: radio buttons or a switch. More: a dropdown.
-
-**Scrollbar.** Style it. There are many of them.
-
-```css
-* { scrollbar-width: thin; scrollbar-color: var(--control-press) transparent; }
-*::-webkit-scrollbar { width: 10px; height: 10px; }
-*::-webkit-scrollbar-thumb {
-  background: var(--control-press); border-radius: 5px;
-  border: 3px solid transparent; background-clip: padding-box;
-}
-*::-webkit-scrollbar-thumb:hover { background: var(--border); background-clip: padding-box; }
-*::-webkit-scrollbar-track { background: transparent; }
-```
-
-**Focus.** `:focus-visible` takes a 2px `--action-ring` outline, 2px offset. Never
-remove the outline.
-
-**Motion.** 120ms on a background colour and on an opacity. The progress bar
-moves on its width. Nothing else moves. Respect `prefers-reduced-motion: reduce`,
-and stop the dashes of a selected zone under it.
-
-**Type.** One family, `--font`. Body 13px / 1.45. Labels 12px, `--text-dim`,
-sentence case. Do not use capitals for a label. Numbers take
-`font-variant-numeric: tabular-nums`: the snap distance, the zone count, the
-panel number, the palette id. A number that changes must not move the text next
-to it.
-
-**Space.** Every margin and every padding is a `--s-*` token.
+**Plane button.** A `--btn` with a 14px swatch of the plane's tint before its
+name, two to a row.
 
 ## 13. The tasks, in order
 
@@ -498,7 +460,7 @@ again? This deletes 14 merges and 2 cuts.` An error says what to do next.
 ## 14. Acceptance
 
 - `pytest` passes, and `tests/test_web.py` is not edited.
-- Every one of the seven steps is reachable, in order, from the rail.
+- Every one of the six steps is reachable, in order, from the rail.
 - The six colours of the scheme are all in the interface, at their exact value.
 - `grep` finds no hex value outside the `:root` block.
 - The gradient appears in the progress bar, and in no other place.

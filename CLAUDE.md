@@ -3,12 +3,13 @@
 
 **Luikki**
 
-A layered colour-flatting application for comic and manga production. An artist
-uploads their line art pages, character sheets and palette; the app segments
-panels and colour zones deterministically, proposes colours with a generative
-model, and returns an editable, layered PSD that drops straight into Photoshop
-or Clip Studio. Every stage boundary is inspectable and correctable by the
-artist — that is the product, not a feature of it.
+A layered flatting application for comic and manga production. An artist
+uploads their line art pages; the app cuts them deterministically into panels,
+balloons, zones and depth planes, and returns an editable, layered PSD — one
+layer per plane, fake flat colours the professional replaces — that drops
+straight into Photoshop or Clip Studio. It proposes no colour (ROADMAP G).
+Every stage boundary is inspectable and correctable by the artist — that is
+the product, not a feature of it.
 
 For v1 the users are professional colourists, observed rather than served: the
 app runs on one machine (Raph's), and testing happens live over video call with
@@ -23,13 +24,14 @@ wrong is one click to fix.
   video call; nobody else runs it. Later hosting is a separate, deliberately
   deferred concern.
 
-- **Hardware**: Local NVIDIA GPU — Cobra needs it. No CPU path in v1.
+- **Hardware**: Any machine. The models (line extraction, balloons, depth)
+  run on onnxruntime, on a GPU when there is one, else on the CPU.
 - **Tech stack**: Python 3.11+, numpy/opencv/scipy/pillow, SQLite, pytest —
   Established by the existing codebase; the web layer is the only open choice.
 
-- **Licence**: OpenRAIL++-M via Cobra's runtime PixArt pull — Its use-based
-  restrictions propagate to derivatives. Keep the dependency pinned to the
-  diffusers repo; the raw-`.pth` mirror is AGPL and "research purpose only".
+- **Model licences**: Depth Anything V2 *Small* only (Apache-2.0); Base and
+  Large are CC-BY-NC-4.0 and must never be fetched. The bubble detector is
+  Apache-2.0. Cobra and its OpenRAIL++-M pull are gone (ROADMAP G1).
 
 - **Licence**: Source-available under PolyForm Shield 1.0.0 (`LICENSE`): any use, commercial included, except supplying a product that competes with Luikki — Vendored dependencies
   (LineFiller, MangaLineExtraction) are MIT, which is compatible.
@@ -37,8 +39,8 @@ wrong is one click to fix.
 - **Export**: PSD only — `.clip` is an undocumented SQLite container; CSP
   imports PSD with groups intact, so one path serves both applications.
 
-- **Data model**: Regions store `palette_entry_id`, never RGB — This is what
-  makes "change the hair colour everywhere" a single-row update. Non-negotiable.
+- **Data model**: Regions store `palette_entry_id`, never RGB — The entries are
+  eight fake flats (`export/flat_colours.py`). Non-negotiable.
 
 - **Evaluation**: Real ink layers, never extracted lines — Extracted lines are
   closed, gap-free and uniformly weighted. Real ink is none of those, and an
@@ -59,8 +61,8 @@ wrong is one click to fix.
 
 ## Frameworks
 
-- FastAPI + uvicorn (`[web]` extra) - The local app in `src/luikki/web/`. One route per button, plus one per correction and one per preview PNG. Handlers are plain `def`, not `async def`: segmentation and generation are seconds of CPU or GPU work, and FastAPI runs sync handlers in a threadpool instead of stalling the event loop.
-- pydantic - Request bodies for the corrections (`Shape`, `Stroke`, `Merge`, `Cut`, `Colour`, `Pick` in `web/app.py`)
+- FastAPI + uvicorn (`[web]` extra) - The local app in `src/luikki/web/`. One route per button, plus one per correction and one per preview PNG. Handlers are plain `def`, not `async def`: segmentation and depth are seconds of CPU or GPU work, and FastAPI runs sync handlers in a threadpool instead of stalling the event loop.
+- pydantic - Request bodies for the corrections (`Shape`, `Stroke`, `Merge`, `Cut`, `Planes`, `Export` in `web/app.py`)
 - Frontend: no framework and no build step - `web/static/` is one HTML, one CSS and one JS file, plus `locales/<lang>.json` (every word of the interface) and `favicon.svg`, served as they are. Hand-rolled 2D canvas, one screen↔image transform (`view` in `app.js`), zero runtime dependencies. Layout, colour tokens and the rules for lines on the artwork come from `UI.md`.
 - argparse (Python standard library) - Command-line interface in `src/luikki/cli.py`
 - pytest 8.0+ - Configured in `pyproject.toml`, run via `pytest tests/`
@@ -77,7 +79,7 @@ wrong is one click to fix.
 - onnxruntime >=1.20 - The RT-DETR balloon detector. Deliberately not `ultralytics`, which is AGPL-3.0 whatever licence its weights carry.
 - fastapi / uvicorn / python-multipart (`[web]`) - The local app and its uploads
 - httpx (`[dev]`) - Required by `fastapi.testclient`, which `tests/test_web.py` presses every button through
-- torch (PyTorch) - NOT a runtime dependency. The client runs MangaLineExtraction from `models/manga_line.onnx` on onnxruntime; torch (plus onnx, onnxscript: the `[models]` extra) is only needed to re-export that file from `third_party/MangaLineExtraction/erika.pth` (`models.export_manga_line`); `luikki models` downloads the published export from the `models-1` release, sha256-pinned. Cobra on Modal has its own torch.
+- torch (PyTorch) - NOT a runtime dependency. The client runs MangaLineExtraction from `models/manga_line.onnx` on onnxruntime; torch (plus onnx, onnxscript: the `[models]` extra) is only needed to re-export that file from `third_party/MangaLineExtraction/erika.pth` (`models.export_manga_line`); `luikki models` downloads the published export from the `models-1` release, sha256-pinned.
 - pytest >=8.0 - Unit testing framework
 
 ## Vendored Third-Party
@@ -95,14 +97,14 @@ wrong is one click to fix.
 
 ## Configuration
 
-- No `.env` file. Environment variables, all read at call time so a flag can set them: `LUIKKI_PROPOSER` (`distinct` | `cobra` | `remote`) and `LUIKKI_EXTRACTOR` (`manga` | `raw`), which `luikki serve --proposer/--extractor` set; `LUIKKI_REMOTE_URL` to point `remote` at another GPU server than `REMOTE_URL` in `colour/remote.py` (Cobra on Modal, `cloud/modal_app.py`; it goes up with the signed-in account's session, there is no other way in); `LUIKKI_SUPABASE_URL` and `LUIKKI_SUPABASE_KEY` to point the sign-in (`account.py`) at another Supabase project; `LUIKKI_BILLING_URL` to point Subscribe / Manage (`billing.py`) at another billing server than `BILLING_URL` (`cloud/billing.py` on a CPU Modal function); `LUIKKI_UPDATE_URL` to read another `latest.json` than the latest GitHub release's (`web/update.py`).
+- No `.env` file. Environment variables, all read at call time: `LUIKKI_SUPABASE_URL` and `LUIKKI_SUPABASE_KEY` to point the sign-in (`account.py`) at another Supabase project; `LUIKKI_BILLING_URL` to point Buy / Invoices (`billing.py`) at another billing server than `BILLING_URL` (`cloud/billing.py` on a CPU Modal function); `LUIKKI_UPDATE_URL` to read another `latest.json` than the latest GitHub release's (`web/update.py`); `LUIKKI_MODELS` for another model folder.
 - Otherwise configuration is CLI arguments only (see `src/luikki/cli.py`)
 - `pyproject.toml` - Standard Python project configuration, defines dependencies, entry point, test paths
 - CLI: `luikki = "luikki.cli:main"` - Command-line entry point in `src/luikki/cli.py`
 - Subcommands:
-  - `serve` - the local app, for a browser. `--port`, `--workdir`, `--proposer`, `--extractor`
-  - `app` - the same app in its own window (`desktop.py`: uvicorn on a free port of 127.0.0.1 in a thread, pywebview on it; the `[desktop]` extra). `--proposer` defaults to `remote`; `--debug` opens the inspector
-  - `flatten` - one page headlessly, then snap-all, then the PSD. `--reference`, `--threshold` (`inf` snaps everything), `--no-snap`, `--leak-gap` (§1.3's gap allowance, 0-1), `--steps` (one image per stage boundary)
+  - `serve` - the local app, for a browser. `--port`, `--workdir`
+  - `app` - the same app in its own window (`desktop.py`: uvicorn on a free port of 127.0.0.1 in a thread, pywebview on it; the `[desktop]` extra). `--debug` opens the inspector
+  - `flatten` - one page headlessly, then the PSD. `--layers` (`plane` | `colour`), `--no-planes`, `--extract-lines`, `--leak-gap` (§1.3's gap allowance, 0-1), `--steps` (one image per stage boundary)
   - `p3` / `ab` - the segmentation experiments; reports land in `reports/`
   - `models` - fill `models/` once: download the bubble detector (sha256-pinned), export `manga_line.onnx`
 
@@ -110,9 +112,7 @@ wrong is one click to fix.
 
 - `<workdir>` without `--workdir`: `%LOCALAPPDATA%\Luikki` / `~/Library/Application Support/Luikki` (`default_workdir` in `web/project.py`). A project left in the old `%TEMP%\luikki` is copied across once.
 - The signed-in session is not on disk: its refresh token, email and the device uuid sit in the system password store under the service `Luikki` (`keyring`). Tests swap in a memory vault (`tests/conftest.py`).
-- `<workdir>/references/` - the reference and palette images, plus `index.json`. Book-scoped: they survive a new page and a restart.
-- `<workdir>/palette.json` - the artist's palette. Held, not derived, since ids must never be reused and a colour must survive its reference being deleted.
-- `<workdir>/project.json` and `<workdir>/pages/NNNN/` - every page, saved on each edit (`web/project.py`): `page.json`, the source image, one `panelN.npy` zone map per panel, the extractor's lines. Files, not SQLite. One page is open at a time; the app reopens the last one.
+- `<workdir>/project.json` and `<workdir>/pages/NNNN/` - every page, saved on each edit (`web/project.py`): `page.json` (zones' planes, line extraction on or off), the source image, one `panelN.npy` zone map and one `depthN.npy` set of depth groups per panel, the extractor's lines. Files, not SQLite. One page is open at a time; the app reopens the last one.
 
 ## Database
 
@@ -123,19 +123,19 @@ wrong is one click to fix.
 
 ## Model & Weights
 
-- Cobra (SIGGRAPH 2025, github.com/zhuang2002/Cobra) - Runs on the artist's machine; `README.md` records what the first real runs measured.
+- Depth Anything V2 Small (`models/depth_small.onnx`, Apache-2.0, sha256-pinned in `models.py`) - relative depth per panel for the planes (`segmentation/planes.py`).
 
 ## Platform Requirements
 
 - Python 3.11+
 - pip and setuptools
 - MangaLineExtraction: CPU or GPU through onnxruntime providers (`best_providers` in `extract/manga_line.py`: CUDA with `onnxruntime-gpu`, DirectML with `onnxruntime-directml`, else CPU). It degrades to CPU rather than refusing.
-- Model files live in `models/` (`luikki/models.py`; `LUIKKI_MODELS` overrides, a frozen app reads its bundle). Nothing downloads at launch: `luikki models` fetches the bubble detector and exports the line extractor, once per checkout.
+- Model files live in `models/` (`luikki/models.py`; `LUIKKI_MODELS` overrides, a frozen app reads its bundle). Nothing downloads at launch: `luikki models` fetches the bubble detector, the line extractor and the depth model, once per checkout.
 - The installed app: `packaging/luikki.spec` (PyInstaller onedir, built from `.venv-build`, which never has torch) → `dist/Luikki`. `packaging/smoke.py <page>` checks a build end to end; the windowed exe logs to `%LOCALAPPDATA%\Luikki\Logs\luikki.log`. `packaging/luikki.iss` (Inno Setup 6, per-user, no admin) → `dist/installer/Luikki-<version>-setup.exe`; `packaging/TESTEURS.md` is what testers read. `.github/workflows/release.yml`: a tag `v*` builds Windows and the Mac (`Luikki.app`, DMG), smoke-tests each bundle on `packaging/synthetic_page.py`, and publishes the release with `latest.json`, which installed apps read to offer the update. The version lives in `luikki/__init__.py` only; the tag must match it.
 - For GUI/visualization: OpenCV with headless mode (cv2 works without display server)
 - Python 3.11+ runtime
 - No torch at runtime: the whole local pipeline runs on numpy, OpenCV and onnxruntime
-- No external services or APIs required (entirely self-contained except for future Cobra integration)
+- No external service for the pipeline: only the account and the licence (Supabase, Stripe through `cloud/billing.py`) are online
 - Storage: Local filesystem for SQLite database and image outputs
 
 ## Deployment Path
@@ -236,9 +236,8 @@ wrong is one click to fix.
 - Minimal, focused on contract
 
 ## The shape of the app
-
-Seven buttons, in one order, and nothing runs by itself: upload → panels →
-bubbles → zones → flats → snap → export. Re-running a step deletes what
+Six buttons, in one order, and nothing runs by itself: upload → panels →
+bubbles → zones → planes (optional) → export. Re-running a step deletes what
 depended on it, and a step that would delete the artist's own corrections asks
 first.
 
@@ -249,18 +248,22 @@ to its own stage:
   one, click empty page to draw a new shape, right-click to delete. The
   browser sends the whole polygon, never an edit.
 - zones (step 4) - press over a zone to select it, sweep to take several,
-  right-click to merge; or cut one with a stroke across it. Permanent, by
-  decision: there is no unmerge, and the stage boundary is the protection.
-  One dial sits beside the button: how open a border may be before the leak
-  audit (§1.3, `segmentation/leaks.py`) reads it as a passage rather than a
-  hole in a line. It is a property of the ink, not of the app, so the artist
-  turns it and presses again — it changes nothing until they do. Book-scoped,
-  like the palette.
-- palette - a reference *offers* colours as chips the artist clicks; a palette
-  image gives all of its own. Changing a palette colour repaints every zone
-  holding it, in one row, which is rule 1 made visible.
-- colour (step 6) - flats propose and never snap; snapping is per segment and
-  artist-driven.
+  right-click to merge; or cut one with a stroke across it. There is no
+  unmerge, only Ctrl+Z on the last few edits. Merge and cut stay open at
+  step 5. Under « Advanced »: how open a border may be before the leak audit
+  (§1.3, `segmentation/leaks.py`) reads it as a passage rather than a hole in
+  a line (book-scoped), and line extraction, off by default and per page —
+  MangaLineExtraction erases small dense detail it takes for hatching.
+- planes (step 5, may be skipped) - depth is read per panel and votes: each
+  zone takes the plane most of its pixels are on, so boundaries stay the
+  ink's. A zone cut or merged later votes again on the depth kept for its
+  panel. The same gestures as step 4 pick zones; the inspector or the right
+  click puts them on 1st plane, 2nd plane, background, or « characters » —
+  which only the artist decides. Ctrl+Z takes a plane change back.
+- export (step 6) - one layer per plane (Background, Middle ground,
+  Foreground, Characters, Balloons on top), or a group per plane with a layer
+  per colour. Inside a layer, eight fake flats, and two touching zones are
+  never alike, so the magic wand takes one zone.
 
 The interface is `UI.md`: a step rail on the left drives the canvas, and the
 inspector on the right shows what the canvas selected. Raph's choices sit on
@@ -277,38 +280,10 @@ pseudo-locale that shows any text left in the code.
 The long steps report real progress through `GET /api/progress`
 (`web/progress.py`), read without the session lock the step holds. The server
 sends codes (`phase`, `index`, `count`) and the browser supplies the words.
-Check the UI with `luikki serve --proposer distinct --extractor raw`: Cobra
-does not run on the development machine.
+Check the UI with `luikki serve`. The account sits in the header; it only
+holds the licence (one, 10 €/an).
 
 `ARCHITECTURE.md` is the fast way into the code: where things are and how the
 data moves. See `SPEC.md` for what is being built and why.
 
-<!-- tokenade-scaffold -->
-## Explore code with the `tokenade` CLI (cheaper than reading whole files)
-Use these only when you don't yet know where code lives — if you know the path, open it directly:
-`tokenade map` (repo structure; `map <path>` for one subtree) · `skeleton <file…>` (signatures) · `query <symbol…>` (locate a symbol) · `impact <file…>` (dependents) · `semantic "<query>"` (search by meaning). They take MANY targets per call (`tokenade skeleton a.rs b.rs c.rs`) — batch in ONE turn.
 
-## Reading documents & media
-tokenade extends your `Read` tool: reading .pdf .docx .xlsx .xls .xlsb .pptx .odt .ods .odp .odg .epub .rtf .fb2 (and their flat-XML, macro-enabled and template variants) returns extracted text instead of failing on the binary; .mp4 .mkv .mov .webm .avi .mp3 .wav .m4a .flac .ogg .opus (and other common containers) returns what the file is plus a transcript when one is available; and .png .jpg .jpeg .gif .webp .bmp .tif .tiff .ico .tga .pnm .pbm .pgm .ppm .qoi .hdr are decoded for you — any image format you cannot display yourself is converted to PNG automatically. Just Read the path as usual.
-For a big document, asking beats reading it whole — `tokenade read <file> --prompt "q1, q2"` returns only the passages that answer, and putting several questions in ONE comma-separated call is the CHEAPEST option in tokens spent: each is answered under its own heading in ONE round-trip, instead of re-sending the context once per question.
-
-## Fetching or searching several things
-Do them in ONE call — `tokenade web <url1> <url2> …` / `tokenade search "<q1>" "<q2>" …` — they run concurrently, so you pay ONE round-trip instead of N and never re-send the context each extra turn would have re-sent.
-
-## Compute over data with `tokenade exec`
-`tokenade exec --lang python --script '<code>'` (also bash/sh/node/ruby/awk/jq/perl) runs a capped subprocess with a scrubbed env — your permissions, not a jail — and returns ONLY its stdout. Data you PIPE in reaches the script's stdin (`cmd | tokenade exec …`), so a big output is filtered where it is produced instead of entering your context. Use it to COMPUTE over data — filter/aggregate a large or structured output, pull facts across SEVERAL files, or apply one mechanical edit across many files (migration, find-replace) — in ONE script, not one command per item. It is NOT a file reader: to read content, use the parallel reads above, not `exec`. Keep scripts SHORT (aim ≤ ~20 lines): exec is for throwaway one-shot computation, not for code you will edit and iterate on — every script char is billed as output, and a long script usually means a simpler command (or a real file you Write once and run) does it cheaper. Long or quote-heavy script? `--script-file <path>` (or `--script -` on stdin) avoids shell quoting entirely.
-
-## Commands
-If you do not have tokenade hooks, use `tokenade wrap '<cmd>'` to wrap all your commands — `tokenade health` says whether they are INSTALLED, and names the fix when they are not, so you never have to guess. If there is an opportunity for compacting noisy output, tokenade will find it — and you will waste fewer tokens. On Windows, if your commands are PowerShell or cmd (not bash), add `--shell powershell` or `--shell cmd` so they run under the right interpreter: `tokenade wrap --shell powershell '<cmd>'`.
-An absolute path (`/usr/bin/git`) is intercepted exactly like `git` when hooks are installed; where interception goes through your PATH instead, only the bare name is seen — so prefer the bare name if you are not sure which you have.
-`wrap` keeps the exit code exactly, and MERGES stderr into stdout — the two streams are compacted as one. `tokenade wrap '''cmd''' 2>err.log` therefore writes an empty err.log; redirect from the wrapped command instead (`tokenade wrap '''cmd 2>err.log'''`).
-
-## Keep output lean
-Keep prose terse and code minimal — every token you write is billed as output.
-- **Prose:** answer directly — no preamble, recap, tool-call narration, summary, or emoji. Drop articles, filler (*just/really/basically/simply*) and hedging; fragments fine; short word over long.
-- **Output:** don't paste long raw output — quote the shortest decisive line. No decorative tables.
-- **Code:** write the least that works; reuse before adding (`query` / `skeleton` / `impact`, stdlib, platform feature — YAGNI).
-- **Verbatim:** keep code, identifiers, API/CLI names and error strings exact — never abbreviate or paraphrase. Keep the user's language.
-- **Correctness first:** fix root causes not symptoms, don't downgrade the algorithm, don't guess APIs/flags/versions — verify.
-- **Full prose where terseness could mislead:** security/data-loss warnings, irreversible-action confirmations, multi-step sequences.
-<!-- /tokenade-scaffold -->

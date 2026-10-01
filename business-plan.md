@@ -4,6 +4,14 @@ Document status: draft 3
 Date: 25 September 2026
 Language: ASD-STE100 (Simplified Technical English)
 
+> **Superseded in part on 1 October 2026 (ROADMAP G).** Luikki no longer
+> makes colours: Cobra, the GPU and the panel quota are gone. Luikki cuts the
+> page into panels, balloons, zones and depth planes, and exports a PSD with
+> fake flat colours. There is one line: the licence, 10 € each year. The
+> sections about the AI licence, the packs, the Studio line, the panel as a
+> unit, the GPU cost and the revenue forecast (§2.2, §4, §5) describe the old
+> offer. Their numbers must be done again.
+
 Changes from draft 2: three lines only. No free line, no founder licence, no
 colour pass, no regional price. The individual lines are cheap on purpose.
 The studios are the target. The revenue forecast uses Jason Cohen's method:
