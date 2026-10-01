@@ -39,15 +39,13 @@
   --over-panel:  #3257A4;  /* --action.                              */
   --over-bubble: #7B4F37;  /* --attention's hue at the blue's L 0.47. */
   /* The planes (step 5): a tint per plane, under the ink, never in the PSD.
-     The three depths walk the app's own ramps, cool to warm as they come
-     forward: the action blue recedes, the frame mauve sits between, the
-     frame ramp's warm end comes forward. All light enough for black ink to
-     read on. The characters are the one hue the app never uses, a vivid
-     chartreuse opposite its violet, so they cannot be missed. */
-  --plane-far:       #8298CE;  /* Action ramp, step 12.          */
-  --plane-middle:    #A97589;  /* Frame ramp, step 9.            */
-  --plane-near:      #D99484;  /* Frame ramp, step 12.           */
-  --plane-character: #B6E33C;  /* Outside every ramp, on purpose. */
+     The three depths are the frame ramp of section 6, plum to peach as they
+     come forward, the middle plane halfway between. The characters leave the
+     ramp for a light grey, so they cannot be taken for a depth. */
+  --plane-far:       #88647E;  /* Frame ramp, step 7: the plum.  */
+  --plane-middle:    #BA7E8A;  /* Frame ramp, step 10: halfway.  */
+  --plane-near:      #E4A280;  /* Frame ramp, step 13: the peach. */
+  --plane-character: #C1C6D1;  /* Type ramp, step 13: light grey. */
 
   /* ---- Space. A 4px grid. Nothing off it. ---- */
   --s-1: 4px;  --s-2: 8px;  --s-3: 12px; --s-4: 16px;
