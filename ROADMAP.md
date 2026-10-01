@@ -829,6 +829,8 @@ cases achetées ; les cases achetées marchent sans pass. Testeurs :
 
 ### B5c — Trois offres (décidée le 2026-09-25, `business-plan.md` draft 3)
 
+**Remplacée le 2026-10-01 par G4** : un seul prix, 10 €/an, sans Cobra.
+
 Plus simple que B5b : trois offres, pas de gratuit, pas de fondateur, pas de
 pass, pas de prix régionaux. Les particuliers sont la vitrine, les studios la
 cible. Résumé en français : `business-canvas.md`.
@@ -1050,6 +1052,132 @@ Rien à réinventer côté segmentation — c'est de l'UI et de la persistance.
 - [ ] Export : séquence PSD, ou PNG/TGA numérotée par couleur. Vérifier ce qu'avalent TVPaint, Harmony, CSP, After Effects avant de trancher.
 - [ ] Observer un animateur comme on observe un coloriste : appel vidéo, son plan à lui, avant d'écrire l'UI.
 - [ ] Proposer : Cobra est pensé planche. Mesurer sa stabilité temporelle sur 24 images avant de supposer qu'elle tient.
+
+## G — Découpage pur (décidé le 2026-10-01)
+
+Luikki devient un outil de découpage : cases, bulles, plans, personnages,
+zones. Il n'y a plus de couleur proposée, plus de palette d'artiste, plus de
+Cobra. Le PSD porte des couleurs factices que le pro remplace dans son
+logiciel. Un seul prix : 10 €/an.
+
+Pourquoi : les couleurs de Cobra sont jugées inutilisables par Raph sur ses
+propres planches, et testeur 3 dit la même chose (« travail de sagouin »).
+Deux testeurs sur deux ont demandé les plans 1 / 2 / 3 + personnages sans
+qu'on le leur suggère (`business/asb/interviews/2026-10-01-testeur-3.md`).
+Refaire un Cobra sur Qwen coûterait environ 10 k€ : écarté.
+
+En interne, rien ne change : une zone stocke toujours un `palette_entry_id`,
+jamais un RGB.
+
+### G0 — Essai profondeur et personnages (avant tout code produit)
+
+- [ ] Depth Anything V2 **Small** en ONNX (`onnx-community/depth-anything-v2-small`,
+      Apache-2.0). Base et Large sont en CC-BY-NC-4.0 : interdits. Aucune
+      version « anime » sous licence commerciale trouvée (2026-10-01).
+- [ ] Personnages : `skytnt/anime-seg` `isnetis.onnx` (Apache-2.0, poids
+      compris : confirmé par l'auteur, discussion HF n° 4).
+- [ ] Sur les planches de `test_pages/`, case par case : carte de profondeur,
+      découpée en 3 plans, masque des personnages, rendus superposés au trait
+      dans `reports/depth/`. Raph juge à l'œil.
+- Fait quand : Raph dit oui ou non pour chaque modèle, et choisit entre
+  « plans par case » et « plans par page ».
+
+### G1 — Retirer Cobra et la couleur
+
+- [ ] Code : `colour/cobra.py`, `remote.py`, `references.py`, la proposition
+      et le snap ; `--proposer` ; la fonction GPU de `cloud/modal_app.py`,
+      `POST /v1/panel` et le quota en cases.
+- [ ] App : les étapes 5 (flats) et 6 (snap), les références, la palette, la
+      boîte de couleur, le compteur de cases. Les clés de `locales/*.json`
+      partent avec (`test_locales` refuse une clé inutilisée).
+- [ ] Ce qui reste du cloud : le compte (Supabase) et le paiement (fonction
+      Modal sans GPU). À revoir en G4 : Supabase Pro à 25 $/mois pour une
+      licence à 10 €/an.
+- [ ] Docs : `CLAUDE.md`, `SPEC.md`, `ARCHITECTURE.md`, `UI.md`, `README.md`,
+      `business-plan.md`, `business-canvas.md`, `packaging/TESTEURS.md`. La
+      clause OpenRAIL++-M des CGU disparaît avec PixArt.
+
+### G2 — Plans et personnages dans le pipeline
+
+G0 rendu (2026-10-01, `reports/depth/`) : la profondeur est « quasi parfaite »
+selon Raph, mais ses frontières sont floues et ne suivent pas le trait. Le
+détecteur de personnages (anime-seg) est écarté : il ne trouve aucun des
+personnages de la planche Tintin, et il prend la machine de Laurine pour un
+personnage.
+
+Parcours décidé (Raph, 2026-10-01) : planche → cases → bulles → zones →
+**plans (facultatif)** → export.
+
+- [ ] Étape « plans » après les zones, avec un bouton « Passer ». La
+      profondeur se calcule **case par case** et vote : chaque zone prend le
+      plan qui domine sous elle. Les frontières restent donc celles du trait.
+- [ ] Trois plans fixes (1er plan, 2e plan, fond) : c'est la norme du métier.
+      « Personnage » est une étiquette que seul l'artiste pose : il balaie les
+      zones, puis choisit le plan ou « Personnage ». **Un seul** calque
+      Personnages.
+- [ ] Relancer l'étape zones efface les plans (en demandant d'abord s'il y a
+      des corrections).
+- [x] Algorithme validé par Raph (2026-10-01) :
+      1. Profondeur par case : recadrage sur le polygone, Depth Anything V2
+         Small à 518 px sur le côté long, puis retour à la taille de la case.
+      2. k-means à 3 groupes sur les valeurs de la case seule. Le plus proche
+         = 1er plan, le plus lointain = fond. À surveiller : une case sans
+         relief (un gros plan) donne quand même 3 groupes.
+      3. Chaque zone prend le plan **majoritaire** sous ses pixels, jamais la
+         moyenne (un sol qui court du fond au 1er plan tomberait au milieu).
+         Une zone n'est jamais coupée.
+      4. On stocke `zone → plan` par case, à côté des `palette_entry_id`.
+      5. Les bulles et les noirs de l'artiste ne votent pas : les bulles ont
+         leur calque, les noirs restent dans le trait.
+
+### G3 — Moins de calques à l'export
+
+956 calques sur une planche aujourd'hui : un calque par entrée de palette, et
+une entrée par zone tant que personne ne peint. Proposition :
+
+- [ ] Un calque par plan et par personnage. Dans un calque, chaque zone a une
+      couleur factice, et deux zones qui se touchent n'ont jamais la même
+      (coloriage de graphe glouton sur l'adjacence, en connexité 8, avec une
+      petite série d'environ 8 couleurs bien séparées). Le pro sélectionne une
+      zone à la baguette magique (contiguë), comme sur des flats faits à la
+      main.
+- [ ] Ces 8 couleurs sont les entrées de palette : `palette_entry_id` intact.
+- [ ] Pile : le trait, Bulles, puis les plans (Personnages, 1er plan,
+      2e plan, Fond). Si l'étape Plans a été passée : un seul calque Aplats.
+- [ ] Granularité : « par plan » (défaut), ou « par couleur », proposé mais
+      pas par défaut (Raph, 2026-10-01). Environ 5 calques par page au lieu
+      de 956.
+
+### G4 — Offre unique à 10 €/an (remplace B5c)
+
+- [ ] `cloud/billing.py` et `stripe_setup.py` : une seule ligne `base` ;
+      archiver IA, packs et Studio. Les achats déjà faits restent valides.
+- [ ] Compte : statut de la licence et bouton d'achat, rien d'autre.
+- [ ] Décider ce que la licence ouvre (installeur, mises à jour, connexion).
+      Le contournement par GitHub reste un risque accepté.
+
+### G5 — Retour testeur 3 (2026-10-01), interface
+
+- [ ] Le compte en haut, à gauche ou à droite.
+- [ ] Glisser-déposer des images.
+- [ ] La phrase sur la segmentation est « trop technique » : la réécrire.
+- [ ] Le réglage d'ouverture le perturbe : le ranger dans « avancé ».
+- [ ] Bouton d'annulation pour les étapes longues.
+- [ ] Trait très fin : ce n'est pas un problème de seuil. MangaLineExtraction
+      **efface** les petits détails denses (fenêtres, tuyaux), qu'il prend pour
+      des hachures : valeur médiane de 247 sur les pixels perdus
+      (`reports/traits_fins/`). Décidé (Raph, 2026-10-01) : **tout le trait
+      gardé par défaut** (`raw`), et une option « Extraction de ligne » par
+      planche, sans réglage par livre. Mesuré : teddy_page_compliqué passe de
+      1 106 à 2 020 zones, moebius de 390 à 610, antoine de 581 à 624. Le
+      nombre de calques n'en dépend plus (G3).
+- [ ] `luikki flatten` ignore le choix d'extracteur (`Session` construit sans
+      `extractor`).
+- [ ] `load_line_art` utilise `cv2.imread`, qui n'ouvre pas un chemin accentué
+      sous Windows (`teddy_page_compliqué.jpg`). Passer par `np.fromfile` +
+      `cv2.imdecode`. Vérifier aussi le chemin d'import de l'app.
+- [ ] Toutes les zones découpées d'un coup lui ont fait peur. G2 montre les
+      plans d'abord, puis les zones à l'intérieur.
 
 ---
 
