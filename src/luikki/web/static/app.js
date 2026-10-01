@@ -981,6 +981,7 @@ async function exportPsd() {
       middle: t("layer.middle"),
       far: t("layer.far"),
       flats: t("layer.flats"),
+      colour: t("layer.colour"),
       lines: t("layer.lines"),
       support: t("layer.support"),
     };
@@ -1250,6 +1251,7 @@ function stepBody(id) {
             h("option", { value: "colour", selected: controls.granularity === "colour" }, t("export.per_colour")),
           ),
         ),
+        note(controls.granularity === "colour" ? t("export.per_colour_note") : t("export.per_plane_note")),
         note(t("export.count", { count })),
         state.done.planes ? null : note(t("export.no_planes")),
         // The one thing that puts the artist's ink in an export, asked for by

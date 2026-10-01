@@ -79,7 +79,8 @@ first, develop from it later.
 ### Export
 19. **Export** button. PSD, one layer per plane: Background, Middle ground,
     Foreground, Characters, Balloons on top; one layer of flats if the planes
-    were skipped. « One per colour » makes each plane a group of colour layers.
+    were skipped. « By plane and by colour » makes each plane a group of
+    colour layers, every object apart: 33 layers at most.
 20. Inside a layer, eight fake flat colours; two zones that touch never share
     one, so the magic wand takes one zone. Luikki proposes no colour.
 21. No line art in the export unless asked for (the printer's support grey).

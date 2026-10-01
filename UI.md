@@ -397,9 +397,10 @@ colour, and a comic page holds skin.
 
 **The planes are the one tint over the artwork.** At step 5 each plane is a
 flat tint under the ink (`--plane-near`, `--plane-middle`, `--plane-far`,
-`--plane-character`), each zone's edge a shade darker inside it. Hue is the
-point there: four planes told apart at a glance. Raph's call, like the panel
-and balloon outlines. The tints are tokens; the browser sends them to
+`--plane-character`), each zone's edge a shade darker inside it. The depths
+walk the app's own ramps, cool to warm as they come forward; the characters
+take the one hue the app never uses, a chartreuse, so they cannot be missed.
+Raph's call, like the panel and balloon outlines. The tints are tokens; the browser sends them to
 `/api/planes.png` and the server only paints.
 
 ## 12. Controls, type and space

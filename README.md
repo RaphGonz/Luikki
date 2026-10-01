@@ -119,8 +119,9 @@ Middle ground, Foreground, Characters, Balloons on top. Inside a layer every
 zone holds one of eight fake colours — palette entries, so `palette_entry_id`
 is untouched — given by a greedy colouring of the zones' 8-connected adjacency:
 two zones that touch are never alike, so the magic wand (contiguous) takes one
-zone, as on flats made by hand. « One per colour » turns each plane into a
-group with a layer per colour.
+zone, as on flats made by hand. « By plane and by colour » turns each plane
+into a group with a layer per colour, for objects apart: 8 × 4 + 1 = 33
+layers at most.
 
 Export was eight minutes before `_set_preview` in `export/psd.py` — read the
 comment there before anyone "simplifies" it back to a plain `psd.save()`.

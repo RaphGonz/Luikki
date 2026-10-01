@@ -319,7 +319,9 @@ page: one layer for each colour made 956. `granularity` says how they stack:
 
 - `plane` (the default): one layer for each plane, every zone in its fake
   flat.
-- `colour`: one group for each plane, one layer for each colour inside it.
+- `colour` (« By plane and by colour »): one group for each plane, one layer
+  for each colour inside it, named « Colour n ». Every object is apart, and
+  there are 8 × 4 + 1 = 33 layers at most.
 
 The app sends the layer names in the artist's language. `support_grey` adds
 the two ink layers a printer wants on top; it is the only thing that puts line

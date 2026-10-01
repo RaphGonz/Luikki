@@ -38,13 +38,16 @@
   /* Raph's exception: grey outlines vanish in black and white ink. */
   --over-panel:  #3257A4;  /* --action.                              */
   --over-bubble: #7B4F37;  /* --attention's hue at the blue's L 0.47. */
-  /* The planes (step 5): a tint per plane, under the ink. Hue is the point
-     here — four planes told apart at a glance — so these are the one place
-     colour covers the artwork, and they are never in the PSD. */
-  --plane-near:      #EB5A3C;
-  --plane-middle:    #78C850;
-  --plane-far:       #3CA0E6;
-  --plane-character: #C83CC8;
+  /* The planes (step 5): a tint per plane, under the ink, never in the PSD.
+     The three depths walk the app's own ramps, cool to warm as they come
+     forward: the action blue recedes, the frame mauve sits between, the
+     frame ramp's warm end comes forward. All light enough for black ink to
+     read on. The characters are the one hue the app never uses, a vivid
+     chartreuse opposite its violet, so they cannot be missed. */
+  --plane-far:       #8298CE;  /* Action ramp, step 12.          */
+  --plane-middle:    #A97589;  /* Frame ramp, step 9.            */
+  --plane-near:      #D99484;  /* Frame ramp, step 12.           */
+  --plane-character: #B6E33C;  /* Outside every ramp, on purpose. */
 
   /* ---- Space. A 4px grid. Nothing off it. ---- */
   --s-1: 4px;  --s-2: 8px;  --s-3: 12px; --s-4: 16px;

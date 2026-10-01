@@ -112,10 +112,10 @@ _UNDO_DEPTH = 20
 # tint over the page, never in the PSD. The app sends its own, from the
 # `--plane-*` tokens of `app.css`.
 PLANE_TINTS = {
-    NEAR: (235, 90, 60),
-    MIDDLE: (120, 200, 80),
-    FAR: (60, 160, 230),
-    CHARACTER: (200, 60, 200),
+    NEAR: (0xD9, 0x94, 0x84),
+    MIDDLE: (0xA9, 0x75, 0x89),
+    FAR: (0x82, 0x98, 0xCE),
+    CHARACTER: (0xB6, 0xE3, 0x3C),
 }
 
 

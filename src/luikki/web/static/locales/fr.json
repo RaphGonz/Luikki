@@ -138,8 +138,10 @@
   "export.layers": "Calques",
   "export.no_planes": "Pas de plans : les zones vont dans un seul calque d'aplats.",
   "export.note": "Aplats factices : deux zones qui se touchent n'ont jamais la même couleur, la baguette magique prend donc une zone. Posez votre propre calque de trait par-dessus.",
-  "export.per_colour": "Un par couleur",
-  "export.per_plane": "Un par plan",
+  "export.per_colour": "Par plan et par couleur",
+  "export.per_colour_note": "Un groupe par plan, un calque par couleur dedans : chaque objet sur son propre calque. 33 calques au plus.",
+  "export.per_plane": "Par plan",
+  "export.per_plane_note": "Un calque par plan, les bulles par-dessus : environ cinq calques.",
   "export.support_grey": "Gris de soutien pour l'impression",
   "export.support_grey_note": "Ajoute votre encre deux fois par-dessus les aplats : un calque en Produit, et sous lui la même encre en gris 20 % verrouillée en alpha, où peindre le soutien du trait.",
   "footer.language": "Langue",
@@ -167,12 +169,12 @@
     "other": "{count} coins"
   },
   "inspect.export.per_colour": {
-    "one": "Un par couleur : {count} calque",
-    "other": "Un par couleur : {count} calques"
+    "one": "Par plan et par couleur : {count} calque",
+    "other": "Par plan et par couleur : {count} calques"
   },
   "inspect.export.per_plane": {
-    "one": "Un par plan : {count} calque",
-    "other": "Un par plan : {count} calques"
+    "one": "Par plan : {count} calque",
+    "other": "Par plan : {count} calques"
   },
   "inspect.export.title": "Export",
   "inspect.page": "Planche",
@@ -206,6 +208,7 @@
   "inspector.label": "Inspecteur",
   "layer.balloons": "Bulles",
   "layer.characters": "Personnages",
+  "layer.colour": "Couleur {n}",
   "layer.far": "Fond",
   "layer.flats": "Aplats",
   "layer.lines": "Trait",

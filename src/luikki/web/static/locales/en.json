@@ -138,8 +138,10 @@
   "export.layers": "Layers",
   "export.no_planes": "No planes: the zones go in one layer of flats.",
   "export.note": "Fake flats: no two touching zones share a colour, so the magic wand takes one zone. Put your own line layer on top.",
-  "export.per_colour": "One per colour",
-  "export.per_plane": "One per plane",
+  "export.per_colour": "By plane and by colour",
+  "export.per_colour_note": "One group per plane, one layer per colour inside it: every object on a layer of its own. 33 layers at most.",
+  "export.per_plane": "By plane",
+  "export.per_plane_note": "One layer per plane, the balloons on top: about five layers.",
   "export.support_grey": "Supporting grey for print",
   "export.support_grey_note": "Adds your ink twice over the flats: one layer set to Multiply, and under it the same ink at 20% grey with its transparency locked, to paint the line's support into.",
   "footer.language": "Language",
@@ -167,12 +169,12 @@
     "other": "{count} corners"
   },
   "inspect.export.per_colour": {
-    "one": "One per colour: {count} layer",
-    "other": "One per colour: {count} layers"
+    "one": "By plane and by colour: {count} layer",
+    "other": "By plane and by colour: {count} layers"
   },
   "inspect.export.per_plane": {
-    "one": "One per plane: {count} layer",
-    "other": "One per plane: {count} layers"
+    "one": "By plane: {count} layer",
+    "other": "By plane: {count} layers"
   },
   "inspect.export.title": "Export",
   "inspect.page": "Page",
@@ -206,6 +208,7 @@
   "inspector.label": "Inspector",
   "layer.balloons": "Balloons",
   "layer.characters": "Characters",
+  "layer.colour": "Colour {n}",
   "layer.far": "Background",
   "layer.flats": "Flats",
   "layer.lines": "Lines",

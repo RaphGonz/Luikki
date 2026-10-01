@@ -79,7 +79,7 @@ def test_by_colour_a_group_per_plane(tmp_path):
     path = write_psd(tmp_path / "flats.psd", (100, 40), two_panels(planes), palette(), "colour")
     groups = [layer for layer in psd_tools.PSDImage.open(path) if layer.is_group()]
     assert [group.name for group in groups] == ["Background", "Foreground"]
-    assert [sorted(layer.name for layer in group) for group in groups] == [["hair"], ["coat", "hair"]]
+    assert [sorted(layer.name for layer in group) for group in groups] == [["Colour 1"], ["Colour 1", "Colour 2"]]
 
 
 def test_layer_colour_comes_from_the_palette_entry(tmp_path):
@@ -91,7 +91,7 @@ def test_layer_colour_comes_from_the_palette_entry(tmp_path):
     hair = next(
         layer
         for layer in psd_tools.PSDImage.open(path).descendants()
-        if layer.name == "hair"
+        if layer.name == "Colour 1"
     )
 
     # `composite`, not `topil`: the document is RGB, so psd-tools puts the
@@ -107,7 +107,7 @@ def test_layers_are_cropped_to_what_they_cover(tmp_path):
     coat = next(
         layer
         for layer in psd_tools.PSDImage.open(path).descendants()
-        if layer.name == "coat"
+        if layer.name == "Colour 2"
     )
     assert coat.size == (15, 13)
     assert coat.offset == (5, 22)
@@ -259,3 +259,23 @@ def test_the_eight_colours_are_spread_over_the_page():
         labels[2:8, index * 10 + 2 : index * 10 + 8] = index + 1
     colours = assign_flat_colours((160, 10), [(0, 0, labels)])[0]
     assert sorted(np.bincount(list(colours.values()))[1:].tolist()) == [2] * 8
+
+
+def test_by_plane_and_colour_is_33_layers_at_most(tmp_path):
+    """Every colour on every plane, plus the balloons: 8 x 4 + 1."""
+    from luikki.export.flat_colours import FLAT_PALETTE
+
+    labels = np.zeros((40, 320), np.int32)
+    for index in range(32):
+        labels[2:38, index * 10 + 1 : index * 10 + 9] = index + 1
+    panel = PanelFlats(
+        order=0, x=0, y=0, label_map=labels,
+        assignments={index + 1: index % 8 + 1 for index in range(32)},
+        planes={index + 1: index // 8 for index in range(32)},
+    )
+    balloon = np.zeros((40, 320), bool)
+    balloon[0:2, 0:10] = True
+    entries = {int(entry.id): entry for entry in FLAT_PALETTE}
+    path = write_psd(tmp_path / "f.psd", (320, 40), [panel], entries, "colour", balloons=[balloon])
+    written = [layer for layer in psd_tools.PSDImage.open(path).descendants() if not layer.is_group()]
+    assert len(written) == layer_count([panel], entries, "colour", balloons=1) == 33

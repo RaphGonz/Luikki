@@ -30,7 +30,8 @@ Two rules from the spec are enforced here rather than trusted:
 
 `granularity` is the artist's choice of stack: `"plane"` (the default) is the
 stack above; `"colour"` turns each plane into a group with one layer per
-colour inside it.
+colour inside it, for the artist who wants objects apart: 8 x 4 + 1 = 33
+layers at most.
 """
 
 from __future__ import annotations
@@ -63,6 +64,8 @@ LAYER_NAMES = {
     "middle": "Middle ground",
     "far": "Background",
     "flats": "Flats",
+    # One colour's layer inside a plane's group; `{n}` is its entry id.
+    "colour": "Colour {n}",
     "lines": "Lines",
     "support": "Support grey",
 }
@@ -185,7 +188,9 @@ def write_psd(
             for entry_id in sorted(palette):
                 mask = _page_mask(page_size, by_order, chosen, entry_id)
                 if mask.any():
-                    layers.append(_colour_layer(psd, mask, palette[entry_id]))
+                    layers.append(
+                        _ink_layer(psd, mask, palette[entry_id].rgb, named["colour"].format(n=entry_id))
+                    )
             if layers:
                 psd.create_group(layer_list=layers, name=named[name])
         else:
@@ -263,11 +268,6 @@ def _flats_layer(psd, page_size, by_order, chosen, palette, name: str):
         top=y0,
         left=x0,
     )
-
-
-def _colour_layer(psd, mask: np.ndarray, entry: PaletteEntry):
-    """One flat colour as a PSD pixel layer, cropped to what it covers."""
-    return _ink_layer(psd, mask, entry.rgb, entry.label)
 
 
 def _write_support(psd, line_mask: np.ndarray, named: dict[str, str]) -> None:
