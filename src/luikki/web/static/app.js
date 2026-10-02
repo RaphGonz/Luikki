@@ -1,4 +1,4 @@
-// Luikki — the interface: a rail of seven steps, one canvas, one inspector.
+// Luikki — the interface: a rail of six steps, one canvas, one inspector.
 //
 // Rule 5: exactly one screen <-> image transform, `view`, recomputed on every
 // render. Nothing else in this file converts coordinates. Every hit test goes
@@ -158,7 +158,7 @@ function applyStaticStrings() {
 
 // ---- elements ---------------------------------------------------------------
 
-// Text goes in as text, never as markup: a reference label is a file name,
+// Text goes in as text, never as markup: a page name is a file name,
 // and a file name is not HTML.
 function h(tag, props = {}, ...children) {
   const el = document.createElement(tag);
@@ -248,6 +248,8 @@ const tokens = (() => {
     chip: read("--bg"),
     chipText: read("--text"),
     font: read("--font"),
+    // By plane number: 1st plane, 2nd plane, background, characters.
+    planes: ["--plane-near", "--plane-middle", "--plane-far", "--plane-character"].map(read),
     surround: parseFloat(read("--s-6")),
   };
 })();
@@ -264,21 +266,19 @@ const ctx = stage.getContext("2d");
 let state = null;
 // The open step in the rail. Everything on the canvas follows it.
 let current = null;
-// `references` or `palette` when the inspector shows the book instead of the step.
+// `pages` or `account` when the inspector shows one of those instead of the step.
 let shelf = null;
 // The rail's one inline confirmation: {id, sentence}.
 let asking = null;
-const layers = { page: null, lines: null, zones: null, flats: null, left: null };
+const layers = { page: null, lines: null, zones: null, planes: null };
 const controls = {
   gap: 14,
-  threshold: 12,
-  ignoreGuard: true,
-  granularity: "colour",
+  // Line extraction, for the open page only (ROADMAP G5).
+  extract: false,
+  granularity: "plane",
   supportGrey: false,
-  refKind: "sheet",
   lines: false,
   neutral: false,
-  left: false,
 };
 
 // The artist's corrections since each stage last ran in this browser, so a
@@ -287,7 +287,7 @@ const controls = {
 let edits = freshEdits();
 
 function freshEdits() {
-  return { panels: 0, bubbles: 0, zones: { merges: 0, cuts: 0 } };
+  return { panels: 0, bubbles: 0, zones: { merges: 0, cuts: 0 }, planes: 0 };
 }
 
 const bump = (count) => (count === null ? null : count + 1);
@@ -457,7 +457,7 @@ async function tickWork() {
       if (work.timer && progress.running) {
         work.percent = progress.percent;
         work.phase = progressLabel(progress);
-        // Only segmentation stops: a generation is spent once it starts.
+        // The long steps stop; the server says which.
         $("stop").hidden = !progress.cancellable;
       }
     } catch {
@@ -475,8 +475,8 @@ function progressLabel(progress) {
       return t("progress.extract");
     case "segment":
       return t("progress.segment", { index: progress.index, total: progress.count });
-    case "colour":
-      return t("progress.colour", { index: progress.index, total: progress.count });
+    case "depth":
+      return t("progress.depth", { index: progress.index, total: progress.count });
     default:
       return null;
   }
@@ -522,34 +522,21 @@ function loadImage(url) {
     const image = new Image();
     image.onload = () => resolve(image);
     image.onerror = () => resolve(null);
-    image.src = url + "?t=" + Date.now();
+    image.src = url + (url.includes("?") ? "&" : "?") + "t=" + Date.now();
   });
-}
-
-// The server paints what is left to snap in orange, and orange on a comic page
-// is skin (§11). Keep its shape, drop its hue.
-function luminanceOnly(image) {
-  if (!image) return null;
-  const canvas = document.createElement("canvas");
-  canvas.width = image.naturalWidth;
-  canvas.height = image.naturalHeight;
-  const paint = canvas.getContext("2d");
-  paint.drawImage(image, 0, 0);
-  paint.globalCompositeOperation = "source-in";
-  paint.fillStyle = tokens.dark;
-  paint.fillRect(0, 0, canvas.width, canvas.height);
-  return canvas;
 }
 
 async function reloadLayers() {
   const done = state.done;
-  [layers.page, layers.lines, layers.zones, layers.flats, layers.left] = await Promise.all([
+  [layers.page, layers.lines, layers.zones, layers.planes] = await Promise.all([
     done.page ? loadImage("/api/page.png") : null,
-    // Extraction happens inside Segment zones, so this only exists afterwards.
-    done.zones ? loadImage("/api/lines.png") : null,
+    // Extraction happens inside Segment zones, and only on a page that asks.
+    done.zones && state.extract_lines ? loadImage("/api/lines.png") : null,
     done.zones ? loadImage("/api/zones.png") : null,
-    done.flats ? loadImage("/api/flats.png") : null,
-    done.flats ? loadImage("/api/unsnapped.png").then(luminanceOnly) : null,
+    // Painted by the server in the tints `app.css` holds.
+    done.planes
+      ? loadImage(`/api/planes.png?tints=${tokens.planes.map((tint) => tint.replace("#", "")).join(",")}`)
+      : null,
   ]);
 }
 
@@ -566,10 +553,10 @@ const STEPS = [
   { id: "panels", number: 2, needs: "page", done: (d) => d.panels },
   { id: "bubbles", number: 3, needs: "panels", done: (d) => d.bubbles },
   { id: "zones", number: 4, needs: "panels", done: (d) => d.zones },
-  { id: "flats", number: 5, needs: "zones", done: (d) => d.flats },
-  // Snapping is per segment and never finished; exporting can always happen again.
-  { id: "snap", number: 6, needs: "flats", done: () => false },
-  { id: "export", number: 7, needs: "flats", done: () => false },
+  // Optional: the export takes the zones with or without their planes.
+  { id: "planes", number: 5, needs: "zones", done: (d) => d.planes },
+  // Exporting can always happen again.
+  { id: "export", number: 6, needs: "zones", done: () => false },
 ];
 
 // The stages whose geometry the artist corrects, and which the next step closes.
@@ -581,8 +568,7 @@ function stepName(id) {
     case "panels": return t("step.panels.name");
     case "bubbles": return t("step.bubbles.name");
     case "zones": return t("step.zones.name");
-    case "flats": return t("step.flats.name");
-    case "snap": return t("step.snap.name");
+    case "planes": return t("step.planes.name");
     default: return t("step.export.name");
   }
 }
@@ -591,8 +577,7 @@ function lockedReason(needs) {
   switch (needs) {
     case "page": return t("locked.page");
     case "panels": return t("locked.panels");
-    case "zones": return t("locked.zones");
-    default: return t("locked.flats");
+    default: return t("locked.zones");
   }
 }
 
@@ -633,8 +618,7 @@ function furthest() {
   if (!done.page) return "upload";
   if (!done.panels) return "panels";
   if (!done.zones) return done.bubbles ? "zones" : "bubbles";
-  if (!done.flats) return "zones";
-  return "snap";
+  return done.planes ? "planes" : "zones";
 }
 
 function ensureCurrent() {
@@ -643,6 +627,18 @@ function ensureCurrent() {
 }
 
 const zoneCount = (source = state) => source.panels.reduce((sum, panel) => sum + panel.zones, 0);
+// The three planes and the characters, in the order the PSD stacks them.
+const PLANES = [3, 0, 1, 2];
+const usedPlanes = () => PLANES.filter((plane) => state.planes.counts[plane] > 0).length;
+
+function planeName(plane) {
+  switch (plane) {
+    case 0: return t("plane.near");
+    case 1: return t("plane.middle");
+    case 2: return t("plane.far");
+    default: return t("plane.character");
+  }
+}
 
 function stepMeta(id) {
   const done = state.done;
@@ -650,11 +646,7 @@ function stepMeta(id) {
     case "panels": return done.panels ? t("meta.panels", { count: state.panels.length }) : "";
     case "bubbles": return done.bubbles ? t("meta.bubbles", { count: state.protected.length }) : "";
     case "zones": return done.zones ? t("meta.zones", { count: zoneCount() }) : "";
-    case "flats": return done.flats ? t("meta.segments", { count: state.segments.count }) : "";
-    case "snap":
-      return done.flats
-        ? t("meta.snapped", { snapped: state.segments.snapped, count: state.segments.count })
-        : "";
+    case "planes": return done.planes ? t("meta.planes", { count: usedPlanes() }) : "";
     default: return "";
   }
 }
@@ -682,35 +674,24 @@ const RUNS = {
     done: () => t("done.bubbles_skip"),
   },
   zones: {
-    // The gap allowance rides along with the press that uses it: turning the
-    // dial changes nothing on its own, because the zones on screen were cut
-    // with the old one.
-    path: () => `/api/zones?gap=${controls.gap / 100}`,
+    // The gap allowance and the extraction ride along with the press that
+    // uses them: changing either changes nothing on its own, because the
+    // zones on screen were cut with the old one.
+    path: () => `/api/zones?gap=${controls.gap / 100}&extract=${controls.extract}`,
     polling: true,
     label: () => t("work.zones"),
     done: (next) => t("done.zones", { count: zoneCount(next) }),
   },
-  flats: {
-    path: () => "/api/flats",
+  planes: {
+    path: () => "/api/planes",
     polling: true,
-    label: () => t("work.flats"),
-    done: (next) => t("done.flats", { count: next.result.segments }),
-  },
-  // The other end of step 5: one colour per zone, no model and no GPU, for
-  // the artist who is going to choose the colours themselves. It runs the
-  // same pass, because what step 5 writes is a palette entry per zone — skip
-  // that and steps 6 and 7 have nothing to work on.
-  flats_plain: {
-    step: "flats",
-    path: () => "/api/flats?plain=true",
-    polling: true,
-    label: () => t("work.flats_plain"),
-    done: (next) => t("done.flats", { count: next.result.segments }),
+    label: () => t("work.planes"),
+    done: () => t("done.planes"),
   },
 };
 
 // A row click opens the step and never runs it. Every step has something to
-// decide before it runs — the gap allowance, the colours, the layers — and a
+// decide before it runs — the gap allowance, the layers — and a
 // click that ran the step hid the decision behind it. Opening a step that has
 // not run yet is how the artist gets at those controls; the button inside is
 // what presses. Locked steps stay shut (R6).
@@ -753,25 +734,25 @@ function ownLoss(id) {
         cuts: t("count.cuts", { count: zones.cuts }),
       });
     }
-    case "flats":
-      return state.done.flats && state.segments.snapped
-        ? t("confirm.flats.counted", { count: state.segments.snapped })
-        : null;
+    case "planes":
+      if (!state.done.planes) return null;
+      if (edits.planes === null) return t("confirm.planes.unknown");
+      return edits.planes ? t("confirm.planes.counted", { count: edits.planes }) : null;
     default:
       return null;
   }
 }
 
 // What the server clears downstream: panels and bubbles both invalidate the
-// zones, and with them the flats. The traced balloons survive new panels.
+// zones, and with them the planes. The traced balloons survive new panels.
 // Whole sentences rather than a list of nouns, so no language has to fit the
 // nouns into an English list.
 function laterLoss(id) {
   const done = state.done;
   if ((id === "panels" || id === "bubbles") && done.zones) {
-    return done.flats ? t("confirm.later.all") : t("confirm.later.zones");
+    return done.planes ? t("confirm.later.all") : t("confirm.later.zones");
   }
-  if (id === "zones" && done.flats) return t("confirm.later.flats");
+  if (id === "zones" && done.planes) return t("confirm.later.planes");
   return null;
 }
 
@@ -779,6 +760,7 @@ function question(id) {
   switch (id) {
     case "panels": return t("confirm.panels.ask");
     case "bubbles": return t("confirm.bubbles.ask");
+    case "planes": return t("confirm.planes.ask");
     default: return t("confirm.zones.ask");
   }
 }
@@ -808,7 +790,7 @@ function askLabel(id) {
     case "panels": return t("ask.panels");
     case "bubbles": return t("ask.bubbles");
     case "zones": return t("ask.zones");
-    case "flats": return t("ask.flats");
+    case "planes": return t("ask.planes");
     default: return t("ask.delete_page");
   }
 }
@@ -846,8 +828,8 @@ function askBlock(id) {
 async function runStep(id) {
   asking = null;
   const run = RUNS[id];
-  // Some steps have two ends (detect balloons or say there are none; generate
-  // the colours or continue without). Both are presses of the same step.
+  // Some steps have two ends (detect balloons or say there are none). Both
+  // are presses of the same step.
   const step = run.step || id;
   renderRail();
   try {
@@ -855,12 +837,13 @@ async function runStep(id) {
     forgetCanvasSelection();
     traces.clear();
     if (step === "panels" || step === "bubbles") edits[step] = 0;
-    // Flats leave the zones as they were, merges and cuts included.
-    if (step !== "flats") edits.zones = { merges: 0, cuts: 0 };
+    // The planes leave the zones as they were, merges and cuts included.
+    if (step !== "planes") edits.zones = { merges: 0, cuts: 0 };
+    edits.planes = 0;
     state = next;
-    // A correction stage opens on itself: detecting is what moves the artist
-    // onto the geometry. Colours open on snapping, which is what comes next.
-    current = step === "flats" ? "snap" : step;
+    // A step opens on itself: detecting is what moves the artist onto what
+    // they correct.
+    current = step;
     shelf = null;
     await reloadLayers();
     renderAll();
@@ -869,9 +852,6 @@ async function runStep(id) {
     renderAll();
     say(error.message, true);
   }
-  // A press of step 5 spends a page or a generation, or was refused for a reason
-  // that may have changed: either way the line above the button is stale.
-  if (step === "flats") refreshGpu();
 }
 
 // Uploading adds a page: the one on screen stays in the project as it was
@@ -902,32 +882,13 @@ async function uploadBlob(file, path, label, extra = {}) {
 // ---- dropping a file on the window ------------------------------------------
 //
 // The file dialog is still there; this is the gesture an artist reaches for
-// first, and the tester did. What a drop means is read off the step the artist
-// is in — a page on step 1, a reference or a palette while that book is open —
-// so a drop never has to be aimed at a particular strip of the window.
-function dropTarget() {
-  if (shelf === "references" || (!shelf && current === "flats")) return { path: "/api/reference", label: t("work.reference"), extra: { kind: "sheet" } };
-  if (shelf === "palette" || (!shelf && current === "snap")) return { path: "/api/palette/image", label: t("work.palette"), extra: {} };
-  return { path: "/api/page", label: t("work.page"), extra: {} };
-}
-
+// first. Whatever step is open, a dropped image is a new page.
 async function dropFile(file) {
   if (!file || !file.type.startsWith("image/")) return say(t("error.not_an_image"), true);
-  const { path, label, extra } = dropTarget();
-  const next = await uploadBlob(file, path, label, extra);
+  const next = await uploadBlob(file, "/api/page", t("work.page"));
   if (!next) return;
-  if (path === "/api/page") {
-    await enterPage(next);
-    say(t("done.page", { name: next.page.name }));
-    return;
-  }
-  await adopt(next);
-  if (path !== "/api/reference") return say(t("done.palette"));
-  say(
-    next.result.panels
-      ? t("done.reference.page", { count: next.result.panels })
-      : t("done.reference", { kind: kindName(next.result.kind) }),
-  );
+  await enterPage(next);
+  say(t("done.page", { name: next.page.name }));
 }
 
 for (const name of ["dragenter", "dragover"]) {
@@ -955,19 +916,24 @@ async function enterPage(next) {
   forgetCanvasSelection();
   traces.clear();
   state = next;
-  edits = {
-    panels: state.done.panels ? null : 0,
-    bubbles: state.done.bubbles ? null : 0,
-    zones: state.done.zones ? null : { merges: 0, cuts: 0 },
-  };
+  edits = knownEdits();
+  controls.extract = state.extract_lines;
   current = furthest();
   shelf = null;
   zoom = 1;
   pan = { x: 0, y: 0 };
   await reloadLayers();
   renderAll();
-  // Another page is another count: counted this month or not.
-  refreshGpu();
+}
+
+// What a reopened page holds was corrected in another sitting: unknown here.
+function knownEdits() {
+  return {
+    panels: state.done.panels ? null : 0,
+    bubbles: state.done.bubbles ? null : 0,
+    zones: state.done.zones ? null : { merges: 0, cuts: 0 },
+    planes: state.done.planes ? null : 0,
+  };
 }
 
 $("page-file").addEventListener("change", async () => {
@@ -1001,33 +967,32 @@ async function deletePage() {
   }
 }
 
-async function snapAll() {
-  // `inf` is the artist overriding the guard deliberately — the same override
-  // `luikki flatten --threshold inf` takes.
-  const threshold = controls.ignoreGuard ? "inf" : controls.threshold;
-  try {
-    const next = await working(t("work.snap_all"), false, () =>
-      call(`/api/snap-all?threshold=${threshold}`, { method: "POST" }),
-    );
-    selected = null;
-    await adopt(next);
-    say(t("done.snap_all", { snapped: next.result.snapped, skipped: next.result.skipped }));
-  } catch (error) {
-    say(error.message, true);
-  }
-}
-
 const exportLayers = () => state.export.layers[controls.granularity] ?? 0;
-const heavyExport = () => exportLayers() > state.export.warn_at;
 
 async function exportPsd() {
   const granularity = controls.granularity;
   const count = exportLayers();
   try {
+    // The layers are named in the artist's language.
+    const names = {
+      balloons: t("layer.balloons"),
+      characters: t("layer.characters"),
+      near: t("layer.near"),
+      middle: t("layer.middle"),
+      far: t("layer.far"),
+      flats: t("layer.flats"),
+      colour: t("layer.colour"),
+      lines: t("layer.lines"),
+      support: t("layer.support"),
+    };
     const blob = await working(t("work.export"), false, async () => {
       const response = await fetch(
         `/api/export?granularity=${granularity}&support_grey=${controls.supportGrey}`,
-        { method: "POST" },
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ names }),
+        },
       );
       if (!response.ok) throw failure(await response.json().catch(() => ({})), response.statusText);
       return response.blob();
@@ -1059,6 +1024,10 @@ function renderAll() {
 function renderHeader() {
   $("page-name").textContent = state.page ? state.page.name : t("header.no_page");
   document.title = state.page ? t("header.title", { page: state.page.name }) : "Luikki";
+  // The account sits in the header, where tester 3 looked for it.
+  const account = $("account");
+  account.textContent = state.account.email ?? t("header.sign_in");
+  account.setAttribute("aria-pressed", String(shelf === "account"));
   renderUpdate();
 }
 
@@ -1103,9 +1072,7 @@ async function installUpdate() {
 function renderRail() {
   keepFocus(() => {
     $("steps").replaceChildren(...STEPS.map(stepRow));
-    // References and the palette live in steps 5 and 6, where the colour work
-    // starts: at the foot of the rail tester 2 never found them.
-    $("books").replaceChildren(bookRow("pages"), bookRow("account"));
+    $("books").replaceChildren(bookRow("pages"));
   });
 }
 
@@ -1160,7 +1127,6 @@ function stepBody(id) {
         state.page
           ? note(t("upload.page", { name: state.page.name, width: String(state.page.width), height: String(state.page.height) }))
           : note(t("upload.hint")),
-        note(t("upload.engine", { extractor: state.extractor, proposer: state.proposer })),
         askBlock("delete"),
         h(
           "div",
@@ -1207,105 +1173,66 @@ function stepBody(id) {
     case "zones":
       return [
         askBlock("zones"),
+        note(state.editable.zones ? t("hint.zones") : t("about.zones")),
+        // What the artist rarely turns, folded away: the dial made tester 3
+        // doubt the whole step.
         h(
-          "label",
-          { class: "field", title: t("zones.gap_tip") },
-          h("span", {}, t("zones.gap")),
-          h("input", {
-            type: "number",
-            min: 0,
-            max: 100,
-            step: 1,
-            value: controls.gap,
-            "data-key": "gap",
-            oninput: (event) => {
-              controls.gap = Number(event.target.value);
-            },
-          }),
+          "details",
+          { class: "advanced" },
+          h("summary", {}, t("zones.advanced")),
+          h(
+            "label",
+            { class: "field", title: t("zones.gap_tip") },
+            h("span", {}, t("zones.gap")),
+            h("input", {
+              type: "number",
+              min: 0,
+              max: 100,
+              step: 1,
+              value: controls.gap,
+              "data-key": "gap",
+              oninput: (event) => {
+                controls.gap = Number(event.target.value);
+              },
+            }),
+          ),
+          h(
+            "label",
+            { class: "check", title: t("zones.extract_tip") },
+            h("input", {
+              type: "checkbox",
+              checked: controls.extract,
+              "data-key": "extract",
+              onchange: (event) => {
+                controls.extract = event.target.checked;
+              },
+            }),
+            h("span", {}, t("zones.extract")),
+          ),
+          note(t("zones.advanced_note")),
         ),
-        note(state.editable.zones ? t("hint.zones") : done.zones ? t("closed.zones") : t("about.zones")),
         runButton("zones", t("run.zones"), t("run.zones.again")),
       ];
-    case "flats":
+    case "planes":
       return [
-        referencesBlock(),
-        askBlock("flats"),
-        state.flats_stale ? note(t("flats.stale"), true) : null,
-        note(done.flats ? t("flats.done", { count: state.segments.count }) : t("about.flats")),
-        // Said before the press, never as a refusal after it. Most artists
-        // have no reference sheets at all — the way on is right beside it.
-        wantsReferences() ? note(t("flats.no_reference"), true) : null,
-        ...gpuNotes(),
+        askBlock("planes"),
+        note(done.planes ? t("hint.planes") : t("about.planes")),
         h(
           "div",
           { class: "row" },
-          button(done.flats ? t("run.flats.again") : t("run.flats"), {
-            kind: done.flats ? "" : "primary",
-            key: "run-flats",
-            disabled: Boolean(gpuBlock()),
-            why: gpuBlock(),
-            onclick: () => requestRun("flats"),
+          button(done.planes ? t("run.planes.again") : t("run.planes"), {
+            kind: done.planes ? "" : "primary",
+            key: "run-planes",
+            onclick: () => requestRun("planes"),
           }),
-          button(t("run.flats.plain"), {
-            kind: "quiet",
-            key: "run-flats-plain",
-            onclick: () => requestRun("flats_plain"),
-          }),
-        ),
-        gpu?.remote ? monthLeft(gpu.quota) : null,
-      ];
-    case "snap": {
-      const snappable = state.segments.snappable;
-      return [
-        paletteBlock(),
-        note(snappable ? t("snap.hint") : t("snap.no_palette"), !snappable),
-        note(t("snap.zones_hint")),
-        h(
-          "label",
-          { class: "check" },
-          h("input", {
-            type: "checkbox",
-            checked: controls.ignoreGuard,
-            "data-key": "guard",
-            onchange: (event) => {
-              controls.ignoreGuard = event.target.checked;
-              renderRail();
-            },
-          }),
-          h("span", {}, t("snap.ignore_guard")),
-        ),
-        h(
-          "label",
-          { class: "field" },
-          h("span", {}, t("snap.threshold")),
-          h("input", {
-            type: "number",
-            min: 0,
-            step: 0.5,
-            value: controls.threshold,
-            disabled: controls.ignoreGuard,
-            "data-key": "threshold",
-            oninput: (event) => {
-              controls.threshold = Number(event.target.value);
-            },
-          }),
-        ),
-        h(
-          "div",
-          { class: "row" },
-          button(t("run.snap_all"), {
-            kind: "primary",
-            key: "run-snap",
-            disabled: !snappable,
-            why: t("snap.no_palette"),
-            onclick: snapAll,
-          }),
+          // Optional: the export takes the zones as one layer of flats.
+          done.planes
+            ? null
+            : button(t("run.planes.skip"), { kind: "quiet", key: "skip-planes", onclick: () => open("export") }),
         ),
       ];
-    }
     default: {
       const count = exportLayers();
-      const heavy = heavyExport();
       return [
         h(
           "label",
@@ -1320,11 +1247,13 @@ function stepBody(id) {
                 renderAll();
               },
             },
+            h("option", { value: "plane", selected: controls.granularity === "plane" }, t("export.per_plane")),
             h("option", { value: "colour", selected: controls.granularity === "colour" }, t("export.per_colour")),
-            h("option", { value: "panel", selected: controls.granularity === "panel" }, t("export.per_panel")),
           ),
         ),
-        heavy ? note(t("export.warning", { count }), true) : note(t("export.count", { count })),
+        note(controls.granularity === "colour" ? t("export.per_colour_note") : t("export.per_plane_note")),
+        note(t("export.count", { count })),
+        state.done.planes ? null : note(t("export.no_planes")),
         // The one thing that puts the artist's ink in an export, asked for by
         // name. Off by default: the flats carry no line (rule 7).
         h(
@@ -1345,62 +1274,19 @@ function stepBody(id) {
         h(
           "div",
           { class: "row" },
-          button(heavy ? t("run.export.anyway", { count }) : t("run.export"), {
-            kind: "primary",
-            key: "run-export",
-            onclick: exportPsd,
-          }),
+          button(t("run.export"), { kind: "primary", key: "run-export", onclick: exportPsd }),
         ),
       ];
     }
   }
 }
 
-// The way into the colour work, at the top of the step that needs it. The
-// thumbnails and chips themselves are in the inspector, which this step opens
-// on.
-function referencesBlock() {
-  const count = state.references.length;
-  return h(
-    "div",
-    { class: "block" },
-    h("div", { class: "ins-row" }, h("span", { class: "label" }, t("book.references")), h("span", { class: "step-meta num" }, t("meta.references", { count }))),
-    count
-      ? h("div", { class: "thumbs" }, state.references.map((reference) => h("img", { src: `/api/reference/${reference.id}.png`, alt: reference.label })))
-      : null,
-    h("div", { class: "row" }, button(t("refs.add"), { kind: count ? "" : "primary", key: "rail-add-ref", onclick: () => $("ref-file").click() })),
-  );
+function bookName() {
+  return t("book.pages");
 }
 
-function paletteBlock() {
-  const colours = paletteColours();
-  return h(
-    "div",
-    { class: "block" },
-    h("div", { class: "ins-row" }, h("span", { class: "label" }, t("book.palette")), h("span", { class: "step-meta num" }, t("meta.colours", { count: colours.length }))),
-    colours.length
-      ? h("div", { class: "chips" }, colours.map((entry) => h("i", { class: "chip solid", title: entry.label, style: { background: rgb(entry.rgb) } })))
-      : null,
-    h("div", { class: "row" }, button(t("palette.add_image"), { key: "rail-add-palette", onclick: () => $("pal-file").click() })),
-  );
-}
-
-function bookName(which) {
-  switch (which) {
-    case "pages": return t("book.pages");
-    case "references": return t("book.references");
-    case "account": return t("book.account");
-    default: return t("book.palette");
-  }
-}
-
-function bookMeta(which) {
-  switch (which) {
-    case "pages": return t("meta.pages", { count: state.pages.length });
-    case "references": return t("meta.references", { count: state.references.length });
-    case "account": return state.account.email ?? t("meta.signed_out");
-    default: return t("meta.colours", { count: paletteColours().length });
-  }
+function bookMeta() {
+  return t("meta.pages", { count: state.pages.length });
 }
 
 function bookRow(which) {
@@ -1417,8 +1303,7 @@ function bookRow(which) {
         "aria-pressed": String(pressed),
         onclick: () => {
           shelf = pressed ? null : which;
-          renderRail();
-          renderInspector();
+          renderAll();
         },
       },
       h("span", {}, bookName(which)),
@@ -1433,8 +1318,6 @@ function renderFooter() {
   lines.disabled = !layers.lines;
   lines.parentElement.title = layers.lines ? "" : t("toggle.lines_why");
   $("v-neutral").checked = controls.neutral;
-  $("v-left").checked = controls.left;
-  $("v-left-label").hidden = !(current === "snap" && state.done.flats);
   $("shell").classList.toggle("neutral", controls.neutral);
 }
 
@@ -1455,30 +1338,21 @@ function renderInspector() {
     $("inspector-body").replaceChildren(...body.filter(Boolean));
     $("inspector-footer").replaceChildren(...footer.filter(Boolean));
   });
-  renderNear();
 }
 
 const heading = (text) => h("h2", { class: "ins-title" }, text);
 const rgb = (colour) => `rgb(${colour.join(",")})`;
-const hex = (colour) => "#" + colour.map((part) => part.toString(16).padStart(2, "0")).join("");
-const paletteById = () => new Map(state.palette.map((entry) => [entry.id, entry]));
-// The artist's half of the palette. The other half is one private entry per
-// segment — hundreds on a real page, and not one a colour anybody chose.
-const paletteColours = () => state.palette.filter((entry) => entry.source === "palette");
 
 function inspectorContent() {
   if (!state) return [[], []];
   if (shelf === "pages") return pagesView();
-  if (shelf === "references") return referencesView();
-  if (shelf === "palette") return paletteView();
   if (shelf === "account") return accountView();
   switch (current) {
     case "upload": return uploadView();
     case "panels":
     case "bubbles": return shapeView();
     case "zones": return zonesView();
-    case "flats": return flatsView();
-    case "snap": return snapView();
+    case "planes": return planesView();
     default: return exportView();
   }
 }
@@ -1505,7 +1379,7 @@ function stageName(stage) {
     case "panels": return t("pages.stage.panels");
     case "bubbles": return t("pages.stage.bubbles");
     case "zones": return t("pages.stage.zones");
-    default: return t("pages.stage.flats");
+    default: return t("pages.stage.planes");
   }
 }
 
@@ -1554,9 +1428,9 @@ function accountView() {
         heading(t("book.account")),
         note(t("account.signed_in", { email: state.account.email })),
         note(t("account.stays")),
-        ...planNotes(),
+        ...licenceNotes(),
       ],
-      [...planButtons(), button(t("account.sign_out"), { key: "account-out", onclick: signOut })],
+      [...licenceButtons(), button(t("account.sign_out"), { key: "account-out", onclick: signOut })],
     ];
   }
   const input = (name, label, props) =>
@@ -1609,45 +1483,33 @@ function accountView() {
   ];
 }
 
-// The account's rights, as `my_status` tells them (`gpu.quota`). Unknown says
-// nothing: the GPU server decides at the press either way.
-function planNotes() {
-  const quota = gpu?.quota;
-  if (!quota) return [];
-  let plan = note(t("account.plan_none"));
-  if (quota.plan === "tester") plan = note(t("account.plan_tester"));
-  if (quota.plan === "studio") plan = note(t("account.plan_studio"));
-  if (quota.plan === "luikki") plan = note(t("account.plan_luikki", { date: fmt.date(quota.colours_until) }));
-  return [plan, totalCases(quota), monthLeft(quota), quota.plan === "tester" ? null : note(t("account.code_hint"))];
+// The licence, as `my_status` tells it (`/api/account/status`). Unknown says
+// nothing: a server that does not answer is no reason to refuse anyone.
+function licenceNotes() {
+  if (!licence) return [];
+  if (!licence.active) return [note(t("account.licence_none"))];
+  if (licence.plan === "tester") return [note(t("account.licence_tester"))];
+  if (licence.plan === "studio") return [note(t("account.licence_studio"))];
+  return [note(t("account.licence_until", { date: fmt.date(licence.until) }))];
 }
 
-// What this account can buy now. Stripe's page shows the price.
-function planButtons() {
-  const quota = gpu?.quota;
-  if (!quota) return [];
-  const buy = (line, label, primary = false) =>
-    button(label, {
-      kind: primary ? "primary" : "",
-      key: `account-buy-${line}`,
-      onclick: () => openBilling("/api/account/buy", { line }),
-    });
-  const buttons = [];
-  if (quota.plan !== "tester") {
-    if (quota.plan !== "studio") {
-      buttons.push(quota.bought ? buy("pass", t("account.buy_pass"), !quota.plan) : buy("luikki", t("account.buy_luikki"), true));
-    }
-    buttons.push(buy("pack", t("account.buy_pack")));
-    if (quota.plan !== "studio") buttons.push(buy("studio", t("account.buy_studio")));
-    if (!quota.bought) buttons.push(buy("founder", t("account.buy_founder")));
+// One licence, 10 € a year: buying it again adds a year. Stripe's page shows
+// the price.
+function licenceButtons() {
+  if (!licence || licence.plan === "tester" || licence.plan === "studio") {
+    return licence?.customer ? [manageButton()] : [];
   }
-  if (quota.customer) {
-    buttons.push(button(t("account.manage"), { key: "account-manage", onclick: () => openBilling("/api/account/manage") }));
-  }
-  return buttons;
+  const buy = button(licence.active ? t("account.extend") : t("account.buy"), {
+    kind: licence.active ? "" : "primary",
+    key: "account-buy",
+    onclick: () => openBilling("/api/account/buy", { line: "base" }),
+  });
+  return licence.customer ? [buy, manageButton()] : [buy];
 }
 
-// Stripe's page opens in the browser. What it changes is read again when the
-// artist comes back to this window (the `focus` listener).
+const manageButton = () =>
+  button(t("account.manage"), { key: "account-manage", onclick: () => openBilling("/api/account/manage") });
+
 async function openBilling(path, body) {
   try {
     await accountCall(t("work.billing"), path, "POST", body);
@@ -1657,74 +1519,15 @@ async function openBilling(path, body) {
   }
 }
 
-function openAccount() {
-  shelf = "account";
-  renderRail();
-  renderInspector();
-}
+let licence = null;
 
-// What step 5 will meet on the GPU server, asked before it is pressed:
-// `/api/account/status`. null until known, and unknown is never a refusal —
-// an account server that does not answer is no reason to stop an artist
-// whose subscription is fine. The GPU server decides at the press either way.
-let gpu = null;
-
-async function refreshGpu() {
-  if (!state || state.proposer !== "remote") {
-    gpu = null;
-    return;
-  }
+async function refreshLicence() {
   try {
-    gpu = await call("/api/account/status");
+    licence = (await call("/api/account/status")).licence;
   } catch {
-    gpu = null;
+    licence = null;
   }
-  renderRail();
   if (shelf === "account") renderInspector();
-}
-
-// Why the GPU server would refuse step 5, or null. Running out of panels does
-// not block the button: the server refuses the panel, and says why.
-function gpuBlock() {
-  if (!gpu || !gpu.remote) return null;
-  if (gpu.needs_sign_in) return t("flats.sign_in");
-  if (gpu.quota && !gpu.quota.active) return t("flats.no_colours");
-  return null;
-}
-
-// Counts, not sentences: the month's panels left, and every panel the account
-// can still generate (the month's, then bought ones). Every panel generated is
-// one panel, a second try included.
-const monthCases = (quota) => (quota.plan ? Math.max(0, quota.cases_per_month - quota.cases_used) : 0);
-
-function monthLeft(quota) {
-  if (!quota || !quota.plan) return null;
-  return note(t("flats.month_left", { left: fmt.number(monthCases(quota)), limit: fmt.number(quota.cases_per_month) }));
-}
-
-function totalCases(quota) {
-  return note(t("account.total_cases", { total: fmt.number(monthCases(quota) + Math.max(0, quota.credits)) }));
-}
-
-function gpuNotes() {
-  if (!gpu || !gpu.remote) return [];
-  const blocked = gpuBlock();
-  if (blocked) {
-    const next = gpu.needs_sign_in ? t("account.sign_in") : t("account.buy");
-    return [note(blocked, true), h("div", { class: "row" }, button(next, { key: "flats-account", onclick: openAccount }))];
-  }
-  return gpu.signed_in && !gpu.quota ? [note(t("flats.quota_unknown"))] : [];
-}
-
-// "Distinct" was a word on screen and nobody knew what it meant — and the
-// picture it made was the one step 4 had already drawn, so pressing it looked
-// like nothing happening. Step 5 offers two ends instead, named for what the
-// artist gets: generate the colours, or continue without. The proposer is a
-// setting of the machine now, not a choice in the interface (ROADMAP B2 still
-// holds: nothing falls back to distinct behind the artist's back — they press
-// the other button themselves).
-function wantsReferences() {
-  return state.proposer !== "distinct" && !state.references.length;
 }
 
 function accountCall(label, path, method, body) {
@@ -1757,7 +1560,7 @@ async function signIn() {
     signingIn = { email: "", sent: false, code: "" };
     renderAll();
     say(t("status.signed_in", { email: state.account.email }));
-    refreshGpu();
+    refreshLicence();
   } catch (error) {
     renderAll();
     say(error.message, true);
@@ -1769,7 +1572,7 @@ async function signOut() {
     state = await accountCall(t("work.sign_out"), "/api/account", "DELETE");
     renderAll();
     say(t("status.signed_out"));
-    refreshGpu();
+    licence = null;
   } catch (error) {
     renderAll();
     say(error.message, true);
@@ -1808,7 +1611,6 @@ function shapeView() {
 
 function zonesView() {
   if (!state.done.zones) return [[note(t("inspect.zones.not_run"))], []];
-  if (!state.editable.zones) return [[note(t("closed.zones"))], []];
   if (cutting) {
     return [
       [note(t("inspect.zones.cutting"))],
@@ -1864,816 +1666,83 @@ function zonesView() {
   ];
 }
 
-// Step 5 opens on the references: they are what the flats are made from.
-function flatsView() {
-  const [references, footer] = referencesView();
-  if (!state.done.flats) return [references, footer];
-  const { count, snapped } = state.segments;
-  return [
-    [
-      heading(t("inspect.flats.title")),
-      h("div", { class: "ins-row num" }, t("inspect.flats.segments", { count })),
-      h("div", { class: "ins-row num" }, t("inspect.flats.private", { count: count - snapped })),
-      ...references,
-    ],
-    footer,
-  ];
-}
-
-// Step 6's inspector keeps the count and nothing else. What belongs to the
-// zone under the pointer goes next to the zone, in `renderNear` below: the
-// tester could not find the buttons, and they were right — the zone was under
-// their hand and the decision about it was at the other end of the screen.
-function snapView() {
-  // Zones picked for a merge or a cut: step 4's inspector, over the colours.
-  if (zonesOverColour() && (cutting || picked.size)) return zonesView();
-  const { count, snapped } = state.segments;
-  // And step 6 on the palette, which is what the zones are snapped to.
-  const [palette, footer] = paletteView();
-  if (!state.done.flats) return [[note(t("inspect.flats.not_run")), ...palette], footer];
-  return [
-    [
-      heading(t("inspect.snap.title_all")),
-      h("div", { class: "ins-row num" }, t("inspect.snap.left", { count: count - snapped })),
-      h("div", { class: "ins-row num" }, t("inspect.flats.segments", { count })),
-      selected ? null : note(t("inspect.snap.empty")),
-      ...palette,
-    ],
-    footer,
-  ];
-}
-
-function snapPanel() {
-  if (!state.done.flats || !selected) return null;
-
-  const holding = paletteById().get(selected.palette_entry_id);
-  const suggestion = selected.suggestion;
-  // Measured against what the segment holds now, so after a snap the nearest
-  // colour is that same colour at ΔE 0. Saying so beats offering a zero.
-  const taken = Boolean(suggestion) && suggestion.palette_entry_id === selected.palette_entry_id;
-  const colours = paletteColours();
-
-  const body = [
-    // A label is a name, not a quantity: no digit grouping.
-    heading(t("inspect.snap.title", { panel: selected.panel + 1, zone: String(selected.label) })),
-    h("div", { class: "ins-row num" }, t("inspect.area", { count: selected.area })),
-    note(selected.snapped ? t("inspect.snap.by_you") : t("inspect.snap.by_model")),
+// The planes first, the zones inside them. A selection here is put on a
+// plane, or called characters — which only the artist does.
+function planesView() {
+  if (!state.done.planes) {
+    return state.done.zones ? [[note(t("inspect.planes.not_run"))], []] : [[note(t("inspect.zones.not_run"))], []];
+  }
+  if (cutting) return zonesView();
+  const legend = PLANES.map((plane) =>
     h(
       "div",
       { class: "ins-row" },
-      h("i", { class: "ins-swatch", style: { background: holding ? rgb(holding.rgb) : "transparent" } }),
-      h(
-        "span",
-        { class: "label" },
-        !holding
-          ? t("inspect.snap.no_colour")
-          : holding.source === "proposed"
-            ? t("inspect.snap.proposed")
-            : t("inspect.snap.held", { name: holding.label }),
-      ),
+      h("i", { class: "ins-swatch", style: { background: tokens.planes[plane] } }),
+      h("span", { class: "label" }, planeName(plane)),
+      h("span", { class: "step-meta num" }, t("meta.zones", { count: state.planes.counts[plane] })),
     ),
-  ];
-
-  if (suggestion) {
-    const delta = fmt.number(suggestion.delta, 1);
-    body.push(
+  );
+  if (!picked.size) return [[heading(t("inspect.planes.title")), ...legend, note(t("inspect.planes.empty"))], zonesView()[1]];
+  const [zoneBody, zoneButtons] = zonesView();
+  return [
+    [
+      ...zoneBody,
+      note(t("inspect.planes.move")),
       h(
         "div",
-        { class: "ins-row" },
-        h("i", { class: "ins-swatch", style: { background: rgb(suggestion.rgb) } }),
-        h("span", { class: "label" }, t("inspect.snap.nearest")),
-      ),
-      // The number the old automatic pass decided on in silence. It orders the
-      // artist's attention; it refuses nothing (§9).
-      taken
-        ? note(t("inspect.snap.taken"))
-        : h(
-            "p",
-            { class: suggestion.within_threshold ? "note num delta" : "note num delta far" },
-            suggestion.within_threshold
-              ? t("inspect.snap.delta_close", { delta })
-              : t("inspect.snap.delta_far", { delta }),
-          ),
-    );
-  } else {
-    body.push(note(t("inspect.snap.no_suggestion")));
-  }
-
-  // The palette is there from the start. Behind a "pick another" toggle the
-  // tester never found it, and could not tell what the window wanted of them.
-  if (!colours.length) body.push(note(t("snap.no_palette")));
-  else {
-    body.push(
-      note(t("inspect.snap.palette")),
-      h(
-        "div",
-        { class: "swatches" },
-        colours.map((entry) =>
-          h(
-            "button",
-            {
-              type: "button",
-              class: "swatch",
-              "data-key": `pick-${entry.id}`,
-              "aria-pressed": String(entry.id === selected.palette_entry_id),
-              title: entry.label,
-              onclick: () => snapSelected(entry.id),
-            },
-            h("i", { style: { background: rgb(entry.rgb) } }),
-            h("span", {}, String(entry.id)),
+        { class: "plane-buttons" },
+        PLANES.map((plane) =>
+          button(
+            [h("i", { class: "ins-swatch", style: { background: tokens.planes[plane] } }), planeName(plane)],
+            { key: `plane-${plane}`, onclick: () => setPlane(plane) },
           ),
         ),
       ),
-    );
-  }
-
-  body.push(
-    h(
-      "div",
-      { class: "row" },
-      button(t("inspect.snap.snap"), {
-        kind: "primary",
-        key: "snap",
-        disabled: !suggestion || taken,
-        why: taken ? t("inspect.snap.taken") : t("inspect.snap.no_suggestion"),
-        onclick: () => snapSelected(),
-      }),
-      button(t("inspect.snap.unsnap"), {
-        kind: "quiet",
-        key: "unsnap",
-        disabled: !selected.snapped,
-        why: t("inspect.snap.not_snapped"),
-        onclick: unsnapSelected,
-      }),
-    ),
-  );
-  // The zone itself is wrong, not its colour: cut it here, or Shift-pick
-  // others to merge it with.
-  if (state.editable.zones) {
-    body.push(
-      h("div", { class: "row" }, button(t("menu.cut"), { kind: "quiet", key: "near-cut", onclick: () => startCut(selected) })),
-      note(t("snap.zones_hint")),
-    );
-  }
-  return body;
-}
-
-// The window that follows the zone. Placed beside the zone's own box, then
-// kept inside the canvas — a panel clipped by the edge hides the button it
-// exists to offer. It covers artwork, which `UI.md` R7 forbade: the rule was
-// written against pop-ups that interrupt, and this one is the opposite, the
-// decision brought to where the artist is already looking. Recorded as a
-// deviation in `UI.md`, with the logo and the zoom.
-// Built when the *contents* change, and only then. `render()` runs twelve
-// times a second while the selection marches, and rebuilding the buttons on
-// every frame made them impossible to press: the button under the pointer was
-// replaced between the press and the release, so the browser never saw a whole
-// click on one element. Moving the window is `placeNear`, below.
-function renderNear() {
-  const panel = $("near");
-  const body = current === "snap" ? snapPanel() : null;
-  if (!body) {
-    panel.hidden = true;
-    panel.replaceChildren();
-    return;
-  }
-  keepFocus(() => panel.replaceChildren(...body.filter(Boolean)));
-  panel.hidden = false;
-  placeNear();
-}
-
-// Where the window sits, and nothing else. Cheap enough for every frame, so
-// the window keeps up with the page under zoom and pan.
-function placeNear() {
-  const panel = $("near");
-  // A `render()` can follow the selection being dropped — the window is
-  // hidden by then, and there are no bounds left to read.
-  if (panel.hidden || current !== "snap" || !selected) return;
-  const [left, top, right, bottom] = selected.bounds;
-  const [sx, sy] = view.toScreen(right, top);
-  const [bx] = view.toScreen(left, bottom);
-  const width = panel.offsetWidth;
-  const height = panel.offsetHeight;
-  // To the right of the zone when there is room, to its left when there is
-  // not: the window never sits on top of what it is describing.
-  const x = sx + 12 + width <= stage.clientWidth - 4 ? sx + 12 : bx - 12 - width;
-  panel.style.left = `${Math.max(4, Math.min(x, stage.clientWidth - width - 4))}px`;
-  panel.style.top = `${Math.max(4, Math.min(sy, stage.clientHeight - height - 4))}px`;
+    ],
+    zoneButtons,
+  ];
 }
 
 function exportView() {
-  if (!state.done.flats) return [[note(t("inspect.flats.not_run"))], []];
+  if (!state.done.zones) return [[note(t("inspect.zones.not_run"))], []];
   return [
     [
       heading(t("inspect.export.title")),
+      h("div", { class: "ins-row num" }, t("inspect.export.per_plane", { count: state.export.layers.plane ?? 0 })),
       h("div", { class: "ins-row num" }, t("inspect.export.per_colour", { count: state.export.layers.colour ?? 0 })),
-      h("div", { class: "ins-row num" }, t("inspect.export.per_panel", { count: state.export.layers.panel ?? 0 })),
     ],
     [],
   ];
 }
 
-function kindName(kind) {
-  switch (kind) {
-    case "sheet": return t("kind.sheet");
-    case "page": return t("kind.page");
-    case "panel": return t("kind.panel");
-    default: return kind;
-  }
-}
-
-// A reference is an image: the model is shown it, and colours are found in
-// it. The palette is the artist's list, and nothing lands in it without a
-// click. The chips under a thumbnail are that click.
-function referencesView() {
-  const body = [heading(t("book.references"))];
-  if (!state.references.length) {
-    body.push(note(t("refs.empty")));
-  } else {
-    body.push(
-      note(t("refs.about")),
-      h(
-        "div",
-        { class: "refs" },
-        state.references.map((reference) =>
-          h(
-            "figure",
-            { class: "ref" },
-            h("img", { src: `/api/reference/${reference.id}.png`, alt: reference.label }),
-            h(
-              "figcaption",
-              {},
-              h(
-                "div",
-                { class: "ref-head" },
-                h("span", {}, kindName(reference.kind)),
-                button(icon("close"), {
-                  kind: "quiet icon",
-                  key: `remove-ref-${reference.id}`,
-                  label: t("refs.remove", { name: reference.label }),
-                  onclick: () => removeReference(reference.id, false),
-                }),
-              ),
-              h("div", { class: "ref-name" }, reference.label),
-              h("div", { class: "chips" }, reference.candidates.map((candidate) => chip(reference, candidate))),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-  return [
-    body,
-    [
-      h(
-        "select",
-        {
-          "aria-label": t("refs.kind"),
-          "data-key": "ref-kind",
-          onchange: (event) => {
-            controls.refKind = event.target.value;
-          },
-        },
-        h("option", { value: "sheet", selected: controls.refKind === "sheet" }, t("kind.sheet")),
-        h("option", { value: "page", selected: controls.refKind === "page" }, t("kind.page")),
-        h("option", { value: "panel", selected: controls.refKind === "panel" }, t("kind.panel")),
-      ),
-      button(t("refs.add"), { key: "add-ref", onclick: () => $("ref-file").click() }),
-    ],
-  ];
-}
-
-function chip(reference, candidate) {
-  const taken = candidate.entry_id !== null;
-  const label = taken ? t("chip.remove") : t("chip.add");
-  return h(
-    "button",
-    {
-      type: "button",
-      class: "chip",
-      "aria-pressed": String(taken),
-      "aria-label": label,
-      title: label,
-      style: { background: rgb(candidate.rgb) },
-      onclick: () => (taken ? dropColour(candidate.entry_id) : takeColour(reference.id, candidate.rgb)),
-    },
-    taken ? tick() : null,
-  );
-}
-
-// ---- the colour box ---------------------------------------------------------
-//
-// Until this existed a colour could only come out of an image, and the first
-// tester had a palette in their head and no way to put it in the app. Four
-// ways in, because colourists do not all think in the same numbers: the wheel,
-// RGB, HSL and a hexadecimal field. CMYK is shown too, and is *arithmetic* —
-// no profile, no colour management, so it is marked as indicative rather than
-// pretending to be a press. The eyedropper reads the artwork itself.
-//
-// One box serves both doors: mixing a new colour, and changing one the palette
-// already holds. `mixing.target` says which.
-
-let mixing = null; // {target: "new" | entryId, rgb: [r, g, b], picking: bool}
-
-const WHEEL = 152; // px across, the inspector's usable width
-
-function toHsv([r, g, b]) {
-  const max = Math.max(r, g, b);
-  const min = Math.min(r, g, b);
-  const span = max - min;
-  let hue = 0;
-  if (span) {
-    if (max === r) hue = ((g - b) / span + 6) % 6;
-    else if (max === g) hue = (b - r) / span + 2;
-    else hue = (r - g) / span + 4;
-    hue *= 60;
-  }
-  return [hue, max ? span / max : 0, max / 255];
-}
-
-function fromHsv(hue, saturation, value) {
-  const c = value * saturation;
-  const x = c * (1 - Math.abs(((hue / 60) % 2) - 1));
-  const m = value - c;
-  const sixth = Math.floor(hue / 60) % 6;
-  const [r, g, b] = [
-    [c, x, 0],
-    [x, c, 0],
-    [0, c, x],
-    [0, x, c],
-    [x, 0, c],
-    [c, 0, x],
-  ][sixth];
-  return [r, g, b].map((part) => Math.round((part + m) * 255));
-}
-
-function toHsl([r, g, b]) {
-  const [hue, , value] = toHsv([r, g, b]);
-  const min = Math.min(r, g, b) / 255;
-  const light = (value + min) / 2;
-  const span = value - min;
-  const saturation = span === 0 ? 0 : span / (1 - Math.abs(2 * light - 1));
-  return [Math.round(hue), Math.round(saturation * 100), Math.round(light * 100)];
-}
-
-function fromHsl(hue, saturation, light) {
-  const s = saturation / 100;
-  const l = light / 100;
-  const value = l + s * Math.min(l, 1 - l);
-  return fromHsv(hue, value ? 2 * (1 - l / value) : 0, value);
-}
-
-// Arithmetic, and only arithmetic. No profile is embedded and none is meant:
-// these numbers are a way of *thinking* about a colour, not a way of printing
-// it, and the line under them says so.
-function toCmyk([r, g, b]) {
-  const k = 1 - Math.max(r, g, b) / 255;
-  if (k === 1) return [0, 0, 0, 100];
-  const at = (part) => Math.round(((1 - part / 255 - k) / (1 - k)) * 100);
-  return [at(r), at(g), at(b), Math.round(k * 100)];
-}
-
-// The wheel: hue around, saturation out from the middle, at the value the
-// slider holds. Drawn once per render into a detached canvas, which costs one
-// pass over 152² pixels and saves a dependency (R9).
-function wheelCanvas(value) {
-  const canvas = document.createElement("canvas");
-  canvas.width = WHEEL;
-  canvas.height = WHEEL;
-  canvas.className = "wheel";
-  const paint = canvas.getContext("2d");
-  const image = paint.createImageData(WHEEL, WHEEL);
-  const middle = WHEEL / 2;
-  for (let y = 0; y < WHEEL; y++) {
-    for (let x = 0; x < WHEEL; x++) {
-      const dx = x - middle + 0.5;
-      const dy = y - middle + 0.5;
-      const radius = Math.hypot(dx, dy);
-      const at = (y * WHEEL + x) * 4;
-      if (radius > middle) continue;
-      const [r, g, b] = fromHsv((Math.atan2(dy, dx) * 180) / Math.PI + 180, Math.min(1, radius / middle), value);
-      image.data[at] = r;
-      image.data[at + 1] = g;
-      image.data[at + 2] = b;
-      // One pixel of feather on the rim, so the disc has no staircase edge.
-      image.data[at + 3] = Math.round(255 * Math.min(1, middle - radius));
-    }
-  }
-  paint.putImageData(image, 0, 0);
-  return canvas;
-}
-
-function wheelPick(canvas, event) {
-  const rect = canvas.getBoundingClientRect();
-  const middle = WHEEL / 2;
-  const dx = ((event.clientX - rect.left) / rect.width) * WHEEL - middle;
-  const dy = ((event.clientY - rect.top) / rect.height) * WHEEL - middle;
-  const [, , value] = toHsv(mixing.rgb);
-  const hue = (Math.atan2(dy, dx) * 180) / Math.PI + 180;
-  setMixed(fromHsv(hue, Math.min(1, Math.hypot(dx, dy) / middle), value));
-}
-
-function setMixed(rgb) {
-  mixing.rgb = rgb.map((part) => Math.max(0, Math.min(255, Math.round(part))));
-  renderInspector();
-}
-
-function numberField(label, value, min, max, onset) {
-  return h(
-    "label",
-    { class: "part" },
-    h("span", {}, label),
-    h("input", {
-      type: "number",
-      min,
-      max,
-      step: 1,
-      value: String(value),
-      onchange: (event) => onset(Number(event.target.value)),
-    }),
-  );
-}
-
-function colourBox() {
-  const rgb = mixing.rgb;
-  const [hue, saturation, value] = toHsv(rgb);
-  const hsl = toHsl(rgb);
-  const cmyk = toCmyk(rgb);
-  const wheel = wheelCanvas(value || 1);
-  wheel.addEventListener("pointerdown", (event) => {
-    wheel.setPointerCapture(event.pointerId);
-    wheelPick(wheel, event);
-  });
-  wheel.addEventListener("pointermove", (event) => {
-    if (wheel.hasPointerCapture(event.pointerId)) wheelPick(wheel, event);
-  });
-
-  const middle = WHEEL / 2;
-  const angle = ((hue - 180) * Math.PI) / 180;
-  return h(
-    "div",
-    { class: "box" },
-    h(
-      "div",
-      { class: "wheel-wrap" },
-      wheel,
-      // Where the colour sits on the disc. A ring, not a dot: §11 keeps hue
-      // off anything drawn over what is being judged.
-      h("i", {
-        class: "wheel-mark",
-        style: {
-          left: `${((middle + Math.cos(angle) * saturation * middle) / WHEEL) * 100}%`,
-          top: `${((middle + Math.sin(angle) * saturation * middle) / WHEEL) * 100}%`,
-        },
-      }),
-    ),
-    h(
-      "label",
-      { class: "field" },
-      h("span", {}, t("palette.value")),
-      h("input", {
-        type: "range",
-        min: 0,
-        max: 100,
-        value: String(Math.round(value * 100)),
-        oninput: (event) => setMixed(fromHsv(hue, saturation, Number(event.target.value) / 100)),
-      }),
-    ),
-    h(
-      "div",
-      { class: "parts" },
-      numberField(t("palette.r"), rgb[0], 0, 255, (n) => setMixed([n, rgb[1], rgb[2]])),
-      numberField(t("palette.g"), rgb[1], 0, 255, (n) => setMixed([rgb[0], n, rgb[2]])),
-      numberField(t("palette.b"), rgb[2], 0, 255, (n) => setMixed([rgb[0], rgb[1], n])),
-    ),
-    h(
-      "div",
-      { class: "parts" },
-      numberField(t("palette.h"), hsl[0], 0, 360, (n) => setMixed(fromHsl(n, hsl[1], hsl[2]))),
-      numberField(t("palette.s"), hsl[1], 0, 100, (n) => setMixed(fromHsl(hsl[0], n, hsl[2]))),
-      numberField(t("palette.l"), hsl[2], 0, 100, (n) => setMixed(fromHsl(hsl[0], hsl[1], n))),
-    ),
-    h(
-      "label",
-      { class: "field" },
-      h("span", {}, t("palette.hex")),
-      h("input", {
-        type: "text",
-        value: hex(rgb),
-        spellcheck: "false",
-        onchange: (event) => {
-          const read = /^#?([0-9a-f]{6})$/i.exec(event.target.value.trim());
-          if (!read) return renderInspector();
-          setMixed([0, 2, 4].map((at) => parseInt(read[1].slice(at, at + 2), 16)));
-        },
-      }),
-    ),
-    h("div", { class: "ins-row num" }, t("palette.cmyk", { c: cmyk[0], m: cmyk[1], y: cmyk[2], k: cmyk[3] })),
-    note(t("palette.cmyk_note")),
-    h(
-      "div",
-      { class: "row" },
-      button(mixing.picking ? t("palette.picking") : t("palette.pick"), {
-        kind: "quiet",
-        key: "pick-colour",
-        onclick: () => {
-          mixing.picking = !mixing.picking;
-          renderInspector();
-          render();
-        },
-      }),
-      button(mixing.target === "new" ? t("palette.keep_new") : t("palette.keep"), {
-        kind: "primary",
-        key: "keep-colour",
-        onclick: keepMixed,
-      }),
-      button(t("palette.cancel"), {
-        kind: "quiet",
-        key: "cancel-colour",
-        onclick: () => {
-          mixing = null;
-          renderInspector();
-          render();
-        },
-      }),
-    ),
-  );
-}
-
-async function keepMixed() {
-  const { target, rgb } = mixing;
-  mixing = null;
-  try {
-    if (target === "new") {
-      const next = await call("/api/palette/colour", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ rgb }),
-      });
-      entrySelected = next.entry_id;
-      await adopt(next);
-      say(t("status.colour_added"));
-    } else {
-      await recolour(target, hex(rgb));
-    }
-  } catch (error) {
-    say(error.message, true);
-  }
-  render();
-}
-
-// The eyedropper reads the artwork as it is on screen — the page, and the
-// colours already laid on it. One offscreen canvas, redrawn from the layer the
-// step is showing, so what the artist points at is what they get.
-function sampleAt(x, y) {
-  const source = layers.flats && shows().flats ? layers.flats : layers.page;
-  if (!source) return null;
-  const sheet = document.createElement("canvas");
-  sheet.width = 1;
-  sheet.height = 1;
-  const paint = sheet.getContext("2d", { willReadFrequently: true });
-  paint.drawImage(source, x, y, 1, 1, 0, 0, 1, 1);
-  const [r, g, b, a] = paint.getImageData(0, 0, 1, 1).data;
-  return a ? [r, g, b] : null;
-}
-
-// The id under a swatch never changes, whatever colour it holds — that is what
-// makes "change the hair colour everywhere" one row (rule 1), and the
-// interface shows it.
-let entrySelected = null;
-
-function paletteView() {
-  const colours = paletteColours();
-  const body = [heading(t("book.palette")), note(colours.length ? t("palette.about") : t("palette.empty"))];
-  if (colours.length) {
-    body.push(
-      h(
-        "div",
-        { class: "swatches" },
-        colours.map((entry) =>
-          h(
-            "button",
-            {
-              type: "button",
-              class: "swatch",
-              "data-key": `swatch-${entry.id}`,
-              "aria-pressed": String(entry.id === entrySelected),
-              title: entry.label,
-              onclick: () => {
-                entrySelected = entry.id === entrySelected ? null : entry.id;
-                renderInspector();
-              },
-            },
-            h("i", { style: { background: rgb(entry.rgb) } }),
-            h("span", {}, String(entry.id)),
-          ),
-        ),
-      ),
-    );
-  }
-  const entry = colours.find((candidate) => candidate.id === entrySelected);
-  if (mixing) {
-    body.push(
-      h(
-        "div",
-        { class: "editor" },
-        h("h3", { class: "ins-sub" }, mixing.target === "new" ? t("palette.new") : t("palette.colour", { id: String(mixing.target) })),
-        colourBox(),
-      ),
-    );
-  } else if (entry) {
-    body.push(
-      h(
-        "div",
-        { class: "editor" },
-        h(
-          "div",
-          { class: "ins-row" },
-          h("i", { class: "ins-swatch", style: { background: rgb(entry.rgb) } }),
-          h("span", {}, t("palette.colour", { id: String(entry.id) })),
-        ),
-        h(
-          "div",
-          { class: "row" },
-          button(t("palette.change"), {
-            key: "change-colour",
-            onclick: () => {
-              mixing = { target: entry.id, rgb: entry.rgb, picking: false };
-              renderInspector();
-            },
-          }),
-          button(t("palette.remove"), {
-            kind: "destructive",
-            key: "remove-colour",
-            onclick: () => dropColour(entry.id),
-          }),
-        ),
-      ),
-    );
-  }
-  if (state.palettes.length) {
-    body.push(
-      h("h3", { class: "ins-sub" }, t("palette.images")),
-      h(
-        "div",
-        { class: "refs" },
-        state.palettes.map((image) =>
-          h(
-            "figure",
-            { class: "ref strip" },
-            h("img", { src: `/api/reference/${image.id}.png`, alt: image.label }),
-            h(
-              "figcaption",
-              {},
-              h(
-                "div",
-                { class: "ref-head" },
-                h("span", { class: "num" }, t("palette.image_colours", { count: image.colours.length })),
-                button(icon("close"), {
-                  kind: "quiet icon",
-                  key: `remove-pal-${image.id}`,
-                  label: t("palette.image_remove", { name: image.label }),
-                  onclick: () => removeReference(image.id, true),
-                }),
-              ),
-              h("div", { class: "ref-name" }, image.label),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-  return [
-    body,
-    [
-      button(t("palette.mix"), {
-        kind: "primary",
-        key: "mix-colour",
-        onclick: () => {
-          entrySelected = null;
-          mixing = { target: "new", rgb: [228, 162, 128], picking: false };
-          renderInspector();
-        },
-      }),
-      button(t("palette.add_image"), { key: "add-palette", onclick: () => $("pal-file").click() }),
-    ],
-  ];
-}
-
-// ---- the palette and the references, over the wire --------------------------
-
-async function takeColour(referenceId, colour) {
-  try {
-    await adopt(
-      await call("/api/palette", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ reference_id: referenceId, rgb: colour }),
-      }),
-    );
-    say(t("status.colour_added"));
-  } catch (error) {
-    say(error.message, true);
-  }
-}
-
-async function dropColour(entryId) {
-  try {
-    if (entrySelected === entryId) entrySelected = null;
-    await adopt(await call(`/api/palette/${entryId}`, { method: "DELETE" }));
-    say(t("status.colour_removed"));
-  } catch (error) {
-    say(error.message, true);
-  }
-}
-
-// Changing a colour here changes it on every zone holding that entry: one row,
-// the whole page (rule 1).
-async function recolour(entryId, value) {
-  const colour = [1, 3, 5].map((at) => parseInt(value.slice(at, at + 2), 16));
-  try {
-    await adopt(
-      await call(`/api/palette/${entryId}`, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ rgb: colour }),
-      }),
-    );
-    say(t("status.colour_changed"));
-  } catch (error) {
-    say(error.message, true);
-  }
-}
-
-// Deleting a reference deletes the image, not the colours taken from it; the
-// flats go stale all the same, because they came from an image now gone.
-async function removeReference(id, palette) {
-  try {
-    await adopt(await call(`/api/reference/${id}`, { method: "DELETE" }));
-    say(palette ? t("done.palette_removed") : t("done.reference_removed"));
-  } catch (error) {
-    say(error.message, true);
-  }
-}
-
-$("ref-file").addEventListener("change", async () => {
-  const next = await uploadFile($("ref-file"), "/api/reference", t("work.reference"), {
-    kind: controls.refKind,
-  });
-  if (!next) return;
-  // Steps 5 and 6 show their book already; anywhere else, open it.
-  if (current !== "flats") shelf = "references";
-  await adopt(next);
-  // A finished page is kept whole and cut into its panels: one press, several
-  // references, and the count is the honest answer.
-  say(
-    next.result.panels
-      ? t("done.reference.page", { count: next.result.panels })
-      : t("done.reference", { kind: kindName(next.result.kind) }),
-  );
-});
-
-$("pal-file").addEventListener("change", async () => {
-  const next = await uploadFile($("pal-file"), "/api/palette/image", t("work.palette"));
-  if (!next) return;
-  if (current !== "snap") shelf = "palette";
-  await adopt(next);
-  say(t("done.palette"));
-});
-
 // ---- the canvas: what each step shows ---------------------------------------
 
 function shows() {
-  const colour = current === "flats" || current === "snap" || current === "export";
+  const planes = current === "planes" && state.done.planes;
   return {
-    zones: current === "zones" || (current === "flats" && !state.done.flats),
-    flats: colour,
+    // The zones are the fake flats the PSD carries.
+    zones: current === "zones" || current === "export" || (current === "planes" && !planes),
+    planes,
     panels: current === "panels" || current === "bubbles" || current === "zones",
     bubbles: current === "bubbles" || current === "zones",
-    left: current === "snap" && controls.left,
   };
 }
 
 // Which geometry the pointer corrects: the open step's, while it is still open
 // to correction. Nothing else on the canvas takes a click.
+// The planes step picks zones the way step 4 does: to put them on a plane,
+// and to merge or cut them, which stays open over the planes.
 function activeLayer() {
   if (!state || !state.page) return null;
+  if (current === "planes" && state.editable.zones) return "zones";
   return CORRECTED.includes(current) && state.editable[current] ? current : null;
 }
 
-const picking = () => Boolean(state && current === "snap" && state.done.flats);
-
-// Step 4's merge and cut, over the colours. The second tester saw what was
-// wrong with a zone only once it was coloured, so step 6 corrects zones too:
-// Shift + press or sweep picks zones, the right click merges or cuts. A plain
-// click still picks the segment for its colour.
-const zonesOverColour = () => picking() && state.editable.zones;
-const zoneGesture = () => activeLayer() === "zones" || zonesOverColour();
+const zoneGesture = () => activeLayer() === "zones";
 
 function applyCanvasMode() {
   const editing = Boolean(activeLayer());
   stage.classList.toggle("editing", editing);
-  stage.classList.toggle("pickable", picking());
   if (!editing) stage.classList.remove("on-corner", "on-edge");
 }
 
@@ -2706,7 +1775,7 @@ function render() {
   // order the PSD stacks in. A colourist cannot judge a colour without the
   // lines that bound it.
   if (layers.zones && show.zones) ctx.drawImage(layers.zones, ...box);
-  if (layers.flats && show.flats) ctx.drawImage(layers.flats, ...box);
+  if (layers.planes && show.planes) ctx.drawImage(layers.planes, ...box);
 
   // Multiply is what makes ink over colour behave like ink: black stays black,
   // paper drops out, grey holds its weight.
@@ -2715,8 +1784,6 @@ function render() {
   // What segmentation actually saw, against the artist's own ink.
   if (layers.lines && controls.lines) ctx.drawImage(layers.lines, ...box);
   ctx.globalCompositeOperation = "source-over";
-
-  if (layers.left && show.left) ctx.drawImage(layers.left, ...box);
 
   // The page border: 1px, no shadow, no gradient (§10).
   ctx.save();
@@ -2740,11 +1807,7 @@ function render() {
 
   drawHandles(editing);
   drawDraft(editing);
-  if (editing === "zones" || zonesOverColour()) drawPicked();
-  if (picking()) drawSegment();
-  // The window beside the zone moves with the picture it is pinned to. Moved,
-  // never rebuilt: see `renderNear`.
-  placeNear();
+  if (editing === "zones") drawPicked();
   startMarching();
 }
 
@@ -2998,8 +2061,7 @@ let lastMarch = 0;
 function selectionShown() {
   const editing = activeLayer();
   if (editing === "zones") return picked.size > 0;
-  if (editing === "panels" || editing === "bubbles") return shapeSelected !== null;
-  return picking() && Boolean(selected && selected.trace);
+  return (editing === "panels" || editing === "bubbles") && shapeSelected !== null;
 }
 
 function march(time) {
@@ -3150,7 +2212,6 @@ function forgetCanvasSelection() {
   picked.clear();
   sweep = null;
   cutting = null;
-  selected = null;
   closeMenu();
 }
 
@@ -3240,8 +2301,7 @@ async function closeDraft() {
 //
 // Trapped-ball leaks a garment into the background wherever the ink is open,
 // and returns forty scraps wherever the drawing is busy. Merging and cutting
-// are the corrections, and they happen between the cut and the colour because
-// they are permanent: there is no unmerge.
+// are the corrections; Ctrl+Z takes the last few back.
 //
 // One rule runs the selection: a zone is selected while the button is pressed
 // over it. A press toggles one; holding and moving adds everything the pointer
@@ -3347,7 +2407,6 @@ async function mergePicked() {
     });
     picked.clear();
     traces.clear();
-    selected = null;
     if (edits.zones) edits.zones.merges++;
     await adopt(next);
     say(t("status.merged", { count: next.result.merged }));
@@ -3361,7 +2420,6 @@ async function undoZones() {
     const next = await call("/api/zones/undo", { method: "POST" });
     picked.clear();
     traces.clear();
-    selected = null;
     await adopt(next);
     say(t("status.undone"));
   } catch (error) {
@@ -3396,7 +2454,6 @@ async function applyCut() {
     });
     picked.clear();
     traces.clear();
-    selected = null;
     if (edits.zones) edits.zones.cuts++;
     await adopt(next);
     say(t("status.cut", { count: next.result.pieces }));
@@ -3408,65 +2465,20 @@ async function applyCut() {
   }
 }
 
-// ---- step 6: one segment at a time ------------------------------------------
+// ---- step 5: zones onto planes ---------------------------------------------
 
-let selected = null; // the /api/segment payload, plus its traced outline
-
-async function pickSegment(x, y) {
+async function setPlane(plane) {
+  const zones = [...picked.values()].map(({ panel, label }) => ({ panel, label }));
   try {
-    selected = await call(`/api/segment?x=${Math.round(x)}&y=${Math.round(y)}`);
-    attachTrace(selected);
-  } catch {
-    selected = null;
-    say(t("status.no_zone"));
-  }
-  renderInspector();
-  render();
-}
-
-function attachTrace(segment) {
-  traceOf(segment.panel, segment.label).then((trace) => {
-    segment.trace = trace;
-    if (selected === segment) render();
-  });
-}
-
-function drawSegment() {
-  if (!selected || !selected.trace) return;
-  ctx.beginPath();
-  traceZone(selected);
-  strokeTwice(DASH.selected, -marching);
-}
-
-// A snap changes one row, but the flats raster and the counts derive from it,
-// so both are re-read rather than patched here.
-async function afterSegmentChange(message) {
-  state = await call("/api/state");
-  const [flats, left] = await Promise.all([loadImage("/api/flats.png"), loadImage("/api/unsnapped.png")]);
-  layers.flats = flats;
-  layers.left = luminanceOnly(left);
-  renderAll();
-  say(message);
-}
-
-async function snapSelected(entryId) {
-  if (!selected) return;
-  const { panel, label, trace } = selected;
-  const query = entryId === undefined ? "" : `?entry_id=${entryId}`;
-  try {
-    selected = { ...(await call(`/api/segment/${panel}/${label}/snap${query}`, { method: "POST" })), trace };
-    await afterSegmentChange(t("status.snapped", { zone: String(label) }));
-  } catch (error) {
-    say(error.message, true);
-  }
-}
-
-async function unsnapSelected() {
-  if (!selected) return;
-  const { panel, label, trace } = selected;
-  try {
-    selected = { ...(await call(`/api/segment/${panel}/${label}/unsnap`, { method: "POST" })), trace };
-    await afterSegmentChange(t("status.unsnapped", { zone: String(label) }));
+    const next = await call("/api/planes", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ zones, plane }),
+    });
+    picked.clear();
+    edits.planes = bump(edits.planes);
+    await adopt(next);
+    say(t("status.planes_set", { count: zones.length, plane: planeName(plane) }));
   } catch (error) {
     say(error.message, true);
   }
@@ -3478,12 +2490,11 @@ stage.addEventListener("pointerdown", (event) => {
   if (event.button !== 0 || !state || !state.page) return;
   closeMenu();
   const which = activeLayer();
-  const overColour = zonesOverColour() && (cutting || event.shiftKey);
-  if (!which && !overColour) return;
+  if (!which) return;
   const [sx, sy] = local(event);
   const point = onPage(view.toImage(sx, sy));
 
-  if (which === "zones" || overColour) {
+  if (which === "zones") {
     if (cutting) {
       cutting.stroke.push(point);
       render();
@@ -3551,11 +2562,10 @@ stage.addEventListener("pointerdown", (event) => {
 
 stage.addEventListener("pointermove", (event) => {
   const which = activeLayer();
-  const overColour = zonesOverColour() && (cutting || sweep);
-  if (!which && !overColour) return;
+  if (!which) return;
   const [sx, sy] = local(event);
 
-  if (which === "zones" || overColour) {
+  if (which === "zones") {
     if (cutting) {
       // Only the rubber band follows the hand; the line itself is the nodes.
       cursor = view.toImage(sx, sy);
@@ -3599,7 +2609,6 @@ stage.addEventListener("pointermove", (event) => {
   const corner = hitCorner(sx, sy);
   const moved = (corner && (!hover || hover.index !== corner.index || hover.corner !== corner.corner)) || (!corner && hover);
   hover = corner;
-  stage.classList.toggle("sampling", Boolean(mixing && mixing.picking));
   stage.classList.toggle("on-corner", Boolean(corner));
   stage.classList.toggle("on-edge", !corner && Boolean(hitEdge(sx, sy)));
   if (moved) render();
@@ -3608,7 +2617,7 @@ stage.addEventListener("pointermove", (event) => {
 stage.addEventListener("pointerup", (event) => {
   const which = activeLayer();
   if (stage.hasPointerCapture(event.pointerId)) stage.releasePointerCapture(event.pointerId);
-  if (which === "zones" || (zonesOverColour() && (cutting || sweep))) {
+  if (which === "zones") {
     if (cutting) return;
     if (sweep) {
       const path = sweep.points.slice(Math.max(0, sweep.sent - 1));
@@ -3625,24 +2634,9 @@ stage.addEventListener("pointerup", (event) => {
   else if (index === -1) render();
 });
 
-stage.addEventListener("click", (event) => {
-  if (panned) {
-    panned = false;
-    return;
-  }
-  const [x, y] = view.toImage(...local(event));
-  if (x < 0 || y < 0 || x >= state.page.width || y >= state.page.height) return;
-  if (mixing && mixing.picking) {
-    const sampled = sampleAt(Math.round(x), Math.round(y));
-    if (sampled) {
-      mixing.picking = false;
-      setMixed(sampled);
-      render();
-    }
-    return;
-  }
-  if (!picking() || cutting || event.shiftKey) return;
-  pickSegment(x, y);
+// A drag that panned ends in a click, which is not a press of anything.
+stage.addEventListener("click", () => {
+  panned = false;
 });
 
 // ---- the right-click menu ---------------------------------------------------
@@ -3680,7 +2674,7 @@ function closeMenu() {
 }
 
 stage.addEventListener("contextmenu", (event) => {
-  const which = zoneGesture() ? "zones" : activeLayer();
+  const which = activeLayer();
   if (!which) return;
   event.preventDefault();
   const [sx, sy] = local(event);
@@ -3693,14 +2687,16 @@ stage.addEventListener("contextmenu", (event) => {
       return openMenu(event, cut);
     }
     const items = [];
+    // At the planes step the first thing a selection is for is its plane.
+    if (current === "planes" && state.done.planes && picked.size) {
+      for (const plane of PLANES) {
+        items.push({ label: t("menu.plane", { plane: planeName(plane) }), action: () => setPlane(plane) });
+      }
+    }
     if (picked.size >= 2) items.push({ label: t("menu.merge", { count: picked.size }), action: mergePicked });
     // Cutting is one zone's business: with several selected there is no
     // saying which one the stroke belongs to.
     if (picked.size === 1) items.push({ label: t("menu.cut"), action: startCut });
-    // At step 6 the zone in hand is the selected segment.
-    else if (!picked.size && selected && current === "snap") {
-      items.push({ label: t("menu.cut"), action: () => startCut(selected) });
-    }
     if (picked.size) items.push({ label: t("menu.clear"), action: clearPicked });
     if (state.undo) items.push({ label: t("menu.undo"), action: undoZones });
     if (items.length) openMenu(event, items);
@@ -3829,16 +2825,15 @@ document.addEventListener("keydown", (event) => {
     if (cutting) return stopCut();
     if (draft) return discardDraft();
     if (picked.size) return clearPicked();
-    if (selected || shapeSelected !== null) {
-      selected = null;
+    if (shapeSelected !== null) {
       shapeSelected = null;
       renderInspector();
       render();
     }
     return;
   }
-  // Undo belongs to merge and cut, at step 4 or over the colours at step 6:
-  // they are the only corrections the app can put back.
+  // Undo belongs to merge and cut, at step 4 or over the planes: they are the
+  // only corrections the app can put back.
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
     if (!zoneGesture() || cutting) return;
     event.preventDefault();
@@ -3893,9 +2888,10 @@ $("v-neutral").addEventListener("change", (event) => {
   renderFooter();
 });
 
-$("v-left").addEventListener("change", (event) => {
-  controls.left = event.target.checked;
-  render();
+$("account").addEventListener("click", () => {
+  shelf = shelf === "account" ? null : "account";
+  renderAll();
+  if (shelf === "account") refreshLicence();
 });
 
 function setupLanguages() {
@@ -3942,21 +2938,19 @@ new ResizeObserver(resize).observe(stage);
     say(error.message, true);
     return;
   }
-  controls.threshold = state.segments.threshold;
   controls.gap = Math.round(state.leak_gap * 100);
-  controls.granularity = state.export.granularity || "colour";
+  controls.extract = state.extract_lines;
+  controls.granularity = state.export.granularity || "plane";
   controls.supportGrey = Boolean(state.export.support_grey);
-  edits = {
-    panels: state.done.panels ? null : 0,
-    bubbles: state.done.bubbles ? null : 0,
-    zones: state.done.zones ? null : { merges: 0, cuts: 0 },
-  };
+  edits = knownEdits();
   current = furthest();
   await reloadLayers();
   renderAll();
   say(state.page ? t("status.ready") : t("status.start"));
-  refreshGpu();
+  refreshLicence();
   checkUpdate();
-  // Back from a Stripe page in the browser: read the plan again.
-  window.addEventListener("focus", () => refreshGpu());
+  // Back from a Stripe page in the browser: read the licence again.
+  window.addEventListener("focus", () => {
+    if (state.account.email) refreshLicence();
+  });
 })();

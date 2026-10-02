@@ -1,23 +1,16 @@
-"""Who is asking, and whether their account may spend GPU time (ROADMAP §B: B2, B5b).
+"""Who is asking the billing server (`cloud/billing.py`).
 
-Two halves, both on the server:
+`TokenVerifier` reads the Supabase session token the app sends. The project
+signs with an asymmetric key (ES256), so the check is local: the public key is
+fetched once from the project's JWKS and cached. The secret key that reaches
+the database lives in the Modal secret `luikki-supabase` and nowhere else.
 
-- `TokenVerifier` reads the Supabase session token the app sends. The project
-  signs with an asymmetric key (ES256), so the check is local: the public key
-  is fetched once from the project's JWKS and cached, and a panel never waits
-  on Supabase to learn who sent it.
-- `Ledger` asks the database the rest — rights, panels left, seats, the job
-  lock — through `start_panel` and `finish_panel` (`schema.sql`), one
-  transaction each, with the secret key. That key lives in the Modal secret
-  `luikki-supabase` and nowhere else.
-
-`jwt` and `httpx` are imported where they are used, so `server.py` imports
-without them and a test can stand its own verifier in.
+`jwt` and `httpx` are imported where they are used, so a test can stand its
+own verifier in.
 """
 
 from __future__ import annotations
 
-import ipaddress
 import logging
 from collections.abc import Callable
 from typing import Any
@@ -47,20 +40,6 @@ class Refused(Exception):
         self.status = status
         self.code = code
         self.params = params
-
-
-def client_ip(forwarded: str | None, peer: str | None) -> str:
-    """The caller's address for the job lock's log, never trusted for more.
-
-    The first `x-forwarded-for` hop when there is one — the proxy in front of
-    the container is not the artist — else the peer, else a placeholder.
-    """
-    for candidate in ((forwarded or "").split(",")[0].strip(), peer or ""):
-        try:
-            return str(ipaddress.ip_address(candidate))
-        except ValueError:
-            continue
-    return "0.0.0.0"
 
 
 def supabase_headers(secret_key: str) -> dict:
@@ -105,85 +84,3 @@ class TokenVerifier:
         except jwt.PyJWTError as exc:
             raise Refused(401, "unauthorized") from exc
         return claims["sub"]
-
-
-class Ledger:
-    """`start_panel` and `finish_panel`, over the Data API with the secret key."""
-
-    def __init__(self, project_url: str, secret_key: str, client: Any = None, attempts: int = 3):
-        import httpx
-
-        self.base = project_url.rstrip("/") + "/rest/v1/rpc/"
-        self.headers = supabase_headers(secret_key)
-        self.client = client or httpx.Client(timeout=15.0)
-        self.attempts = attempts
-
-    def start(self, user: str, page: str, generation: str, device: str, ip: str) -> str:
-        """Take a job lock for this device, or raise `Refused` with the reason.
-
-        Returns what pays for the panel, `month` or `credits`; `finish` writes
-        it down. Every panel painted is one panel paid, a second try included.
-        """
-        response = self._post(
-            "start_panel",
-            {
-                "p_user": user,
-                "p_page": page,
-                "p_generation": generation,
-                "p_device": device,
-                "p_ip": ip,
-                "p_device_days": DEVICE_DAYS,
-                "p_job_seconds": JOB_SECONDS,
-            },
-        )
-        if response is None:
-            raise Refused(503, "accounts_unreachable")
-        code = str(response.json())
-        if code.startswith("ok:"):
-            return code[len("ok:") :]
-        if code == "job_elsewhere":
-            # Refused either way; logged because it is what a shared login
-            # looks like.
-            logger.warning("job_elsewhere: account %s, another request from %s", user, ip)
-        raise Refused(_STATUS.get(code, 403), code)
-
-    def finish(
-        self,
-        user: str,
-        page: str,
-        generation: str,
-        device: str,
-        source: str,
-        painted: bool,
-    ) -> None:
-        """Lift this device's lock, and charge the panel if it was painted.
-
-        Never raises: the GPU time is already spent, and a lock left behind
-        expires on its own after `JOB_SECONDS`.
-        """
-        arguments = {
-            "p_user": user,
-            "p_page": page,
-            "p_generation": generation,
-            "p_device": device,
-            "p_source": source,
-            "p_succeeded": painted,
-        }
-        for _ in range(self.attempts):
-            if self._post("finish_panel", arguments) is not None:
-                return
-        logger.warning("finish_panel failed for account %s; its lock expires in %s s", user, JOB_SECONDS)
-
-    def _post(self, function: str, arguments: dict):
-        """The database's answer, or None when it could not be asked."""
-        import httpx
-
-        try:
-            response = self.client.post(self.base + function, json=arguments, headers=self.headers)
-        except httpx.TransportError as exc:
-            logger.warning("%s: %s", function, type(exc).__name__)
-            return None
-        if response.status_code >= 300:
-            logger.warning("%s answered %s: %s", function, response.status_code, response.text[:200])
-            return None
-        return response

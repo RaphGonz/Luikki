@@ -1,18 +1,18 @@
-"""Selling colours and panels: Stripe Checkout, the Customer Portal, Stripe's webhook (B5, B5b).
+"""Selling the licence: Stripe Checkout, the Customer Portal, Stripe's webhook (B5, G4).
 
 A FastAPI of its own, on a Modal function without a GPU (`modal_app.py`).
-Opening a payment page or taking a webhook must never wake the L4, and a
-webhook left waiting on a GPU cold start would time out.
 
 The app never pays inside its window: it asks here, with the artist's session,
 for a Stripe page, and opens it in the system browser (`luikki/billing.py`).
 What the account is then allowed is written by the webhook alone, through the
-functions of `schema.sql` that `start_panel` reads. The client is never
-believed about a payment.
+functions of `schema.sql`. The client is never believed about a payment.
 
-What is sold is `LINES` (business-plan.md §4.3): colours for a year, bought
-once; panels that never expire; and Studio, the one subscription. A code is a
-Stripe promotion code, typed on the payment page.
+What is sold is `LINES`: one licence, 10 € a year (ROADMAP G4). Buying it again
+extends it by a year. What was sold before — Luikki with Cobra's colours, the
+colour pass, panel packs, founder licences, Studio — is `ARCHIVED`: no longer
+for sale, but a payment that arrives late for one is still recorded, and what
+was bought stays valid. A code is a Stripe promotion code, typed on the
+payment page.
 """
 
 from __future__ import annotations
@@ -40,7 +40,6 @@ PORTAL_METADATA = ("luikki", "portal")
 # Access runs this long past the period's end, so a paying studio is never
 # refused in between; a cancellation still ends it at once, through `status`.
 PERIOD_GRACE = timedelta(days=1)
-FOUNDERS = 100
 
 
 @dataclass(frozen=True)
@@ -53,19 +52,26 @@ class Line:
     product: str
     name: str
     cents: int
-    # Years of Cobra's colours, and bought panels, which never expire.
+    # Years of licence, and (archived lines only) panels.
     years: int = 0
     cases: int = 0
     monthly: bool = False
 
 
 LINES = {
+    "base": Line("luikki_base_year", "luikki_base", "Luikki", 1000, years=1),
+}
+
+ARCHIVED = {
     "luikki": Line("luikki_colours_year", "luikki_colours", "Luikki", 6900, years=1),
     "pass": Line("luikki_pass_year", "luikki_pass", "Luikki colour pass", 3900, years=1),
     "pack": Line("luikki_pack_1000", "luikki_pack", "Luikki panel pack (1 000 panels)", 1900, cases=1000),
     "founder": Line("luikki_founder", "luikki_founder", "Luikki founder licence", 24900, years=1, cases=5000),
     "studio": Line("luikki_studio_monthly", "luikki_studio", "Luikki Studio", 14900, monthly=True),
 }
+
+# Everything a webhook may record: what is sold now, and what was.
+RECORDED = {**ARCHIVED, **LINES}
 
 DONE_PAGE = """<!doctype html>
 <html lang="fr">
@@ -97,7 +103,7 @@ def checkout_options(line: str, price: str, user: str, base_url: str, customer: 
     """The Checkout Session a purchase starts from. `stripe_setup` opens one
     per line with these same options, so what Stripe refuses shows at setup,
     not when an artist presses Buy."""
-    sold = LINES[line]
+    sold = RECORDED[line]
     options: dict = {
         "mode": "subscription" if sold.monthly else "payment",
         "line_items": [{"price": price, "quantity": 1}],
@@ -125,18 +131,6 @@ def refusal(line: str, buyer: dict) -> tuple[int, str] | None:
     """Why this account may not buy this line now, or None."""
     if line not in LINES:
         return 400, "bad_line"
-    if line == "studio" and buyer.get("studio"):
-        return 409, "already_subscribed"
-    if line == "luikki" and buyer.get("bought"):
-        return 409, "already_bought"
-    if line == "pass" and not buyer.get("bought"):
-        # 39 € extends Luikki; it is not a cheaper way in.
-        return 409, "needs_luikki"
-    if line == "founder":
-        if buyer.get("founder"):
-            return 409, "already_bought"
-        if buyer.get("founders_sold", 0) >= FOUNDERS:
-            return 410, "sold_out"
     return None
 
 
@@ -158,7 +152,7 @@ class Store:
         return self._call("buyer_status", {"p_user": user}) or {}
 
     def purchase(self, user: str, line: str, session: str, payment_intent: str | None, customer: str | None) -> bool:
-        sold = LINES[line]
+        sold = RECORDED[line]
         arguments = {
             "p_user": user,
             "p_line": line,
@@ -296,7 +290,7 @@ def create_billing(
             return  # Paid later, by `async_payment_succeeded`, or never.
         metadata = session.get("metadata") or {}
         line, user = metadata.get("line"), metadata.get("user_id")
-        if line not in LINES or LINES[line].monthly or not user:
+        if line not in RECORDED or RECORDED[line].monthly or not user:
             logger.warning("session %s names no Luikki purchase", session_id)
             return
         store.purchase(user, line, session["id"], session.get("payment_intent"), session.get("customer"))

@@ -32,7 +32,13 @@ def load_line_art(
     AA-only lines from dropping out and closing gaps that are not really there.
     """
     path = Path(path)
-    raw = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
+    # Read as bytes, then decoded: `cv2.imread` cannot open a path with an
+    # accent in it on Windows (`teddy_page_compliqué.jpg`).
+    try:
+        data = np.fromfile(str(path), np.uint8)
+    except OSError as exc:
+        raise FileNotFoundError(f"could not read image: {path}") from exc
+    raw = cv2.imdecode(data, cv2.IMREAD_UNCHANGED) if data.size else None
     if raw is None:
         raise FileNotFoundError(f"could not read image: {path}")
 

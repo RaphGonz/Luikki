@@ -38,6 +38,14 @@
   /* Raph's exception: grey outlines vanish in black and white ink. */
   --over-panel:  #3257A4;  /* --action.                              */
   --over-bubble: #7B4F37;  /* --attention's hue at the blue's L 0.47. */
+  /* The planes (step 5): a tint per plane, under the ink, never in the PSD.
+     The three depths are the frame ramp of section 6, plum to peach as they
+     come forward, the middle plane halfway between. The characters leave the
+     ramp for a light grey, so they cannot be taken for a depth. */
+  --plane-far:       #88647E;  /* Frame ramp, step 7: the plum.  */
+  --plane-middle:    #BA7E8A;  /* Frame ramp, step 10: halfway.  */
+  --plane-near:      #E4A280;  /* Frame ramp, step 13: the peach. */
+  --plane-character: #C1C6D1;  /* Type ramp, step 13: light grey. */
 
   /* ---- Space. A 4px grid. Nothing off it. ---- */
   --s-1: 4px;  --s-2: 8px;  --s-3: 12px; --s-4: 16px;
@@ -65,7 +73,7 @@
 * { box-sizing: border-box; }
 
 /* `hidden` means gone, whatever `display` a class sets. Without this, a rule
-   like `.near { display: flex }` beats the browser's own sheet and a hidden
+   like `.menu { display: block }` beats the browser's own sheet and a hidden
    window stays on screen, emptied (tester 2). */
 [hidden] { display: none !important; }
 
@@ -137,11 +145,11 @@ button, input, select { font: inherit; color: inherit; }
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-.header .btn.icon { margin-inline-start: auto; }
-/* A new version, offered once at launch: it takes the free space, and the
-   inspector toggle sits right after it. */
+/* The account sits at the right of the header, where tester 3 looked for it;
+   a new version, offered once at launch, takes the free space before it. */
+.header .account { margin-inline-start: auto; max-width: 24em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .header .update { margin-inline-start: auto; }
-.header .update:not([hidden]) + .btn.icon { margin-inline-start: 0; }
+.header .update:not([hidden]) + .account { margin-inline-start: 0; }
 
 .rail {
   overflow-y: auto;
@@ -362,113 +370,17 @@ input[type="checkbox"] { margin: 0; accent-color: var(--action); }
   border: 1px solid var(--border);
   border-radius: var(--r-control);
 }
-.delta { color: var(--text-dim); }
-.delta.far { color: var(--attention); }
 
-.swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(36px, 1fr)); gap: var(--s-2); }
-.swatch {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--s-1);
-  padding: var(--s-1) 0;
-  border: 0;
-  border-radius: var(--r-control);
-  background: transparent;
-  color: var(--text-dim);
-  cursor: pointer;
-}
-.swatch i {
-  display: block;
-  width: 24px;
-  height: 24px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-control);
-}
-.swatch[aria-pressed="true"] i { box-shadow: 0 0 0 2px var(--action-ring); }
-.swatch span { font-size: var(--fs-num); font-variant-numeric: tabular-nums; }
+/* The planes step: one button per plane, its tint beside its name. */
+.plane-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s-2); }
+.plane-buttons .btn { justify-content: flex-start; }
+.plane-buttons .ins-swatch { width: 14px; height: 14px; }
 
-.editor { display: flex; flex-direction: column; gap: var(--s-2); }
-
-/* The colour box. Four ways into one colour, stacked in the inspector: the
-   wheel, then brightness, then the numbers. No dependency draws any of it. */
-.box { display: flex; flex-direction: column; gap: var(--s-2); }
-.wheel-wrap { position: relative; align-self: center; line-height: 0; }
-.wheel { width: 152px; height: 152px; touch-action: none; cursor: crosshair; }
-/* Where the colour sits on the disc: a ring, never a filled dot — nothing
-   drawn over a colour being judged carries a hue of its own (§11). */
-.wheel-mark {
-  position: absolute;
-  width: 10px;
-  height: 10px;
-  margin: -5px 0 0 -5px;
-  border: 1px solid var(--over-dark);
-  outline: 1px solid var(--over-light);
-  border-radius: 50%;
-  pointer-events: none;
-}
-.parts { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--s-2); }
-.part { display: flex; flex-direction: column; gap: var(--s-1); color: var(--text-dim); font-size: var(--fs-label); }
-.part input { width: 100%; }
-input[type="color"] {
-  width: 48px;
-  height: 28px;
-  padding: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--r-control);
-  background: var(--control);
-  cursor: pointer;
-}
-
-.refs { display: flex; flex-direction: column; gap: var(--s-4); }
-.ref { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: var(--s-3); margin: 0; }
-.ref img {
-  display: block;
-  width: 72px;
-  height: 72px;
-  border: 1px solid var(--separator);
-  border-radius: var(--r-control);
-  background: var(--bg);
-  object-fit: cover;
-}
-.ref.strip img { object-fit: contain; }
-.ref figcaption { display: flex; flex-direction: column; gap: var(--s-1); min-width: 0; }
-.ref-head { display: flex; align-items: center; gap: var(--s-2); }
-.ref-head > span { flex: 1; min-width: 0; }
-.ref-name {
-  overflow: hidden;
-  color: var(--text-dim);
-  font-size: var(--fs-label);
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-/* A colour a reference offers is flat and dashed; taking it lights it. The
-   difference is alpha and border, never hue (§12). */
-.chips { display: flex; flex-wrap: wrap; gap: var(--s-1); }
-.chip {
-  position: relative;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  border: 1px dashed var(--separator);
-  border-radius: var(--r-control);
-  opacity: 0.6;
-  cursor: pointer;
-  transition: opacity 120ms;
-}
-.chip:hover { opacity: 0.85; }
-.chip.solid { border: 1px solid var(--separator); opacity: 1; cursor: default; }
-
-/* A book inside a step (5: references, 6: palette). */
-.block { display: flex; flex-direction: column; gap: var(--s-2); padding-block-end: var(--s-2); border-block-end: 1px solid var(--separator); }
-.thumbs { display: flex; gap: var(--s-1); overflow-x: auto; }
-.thumbs img { height: 40px; border-radius: var(--r-control); background: var(--canvas); }
-.chip[aria-pressed="true"] { border: 1px solid var(--border); opacity: 1; }
-
-.tick svg { position: absolute; inset: 0; margin: auto; width: 14px; height: 14px; fill: none; stroke-linecap: round; stroke-linejoin: round; }
-.tick .under { stroke: var(--over-dark); stroke-width: 3; }
-.tick .over { stroke: var(--over-light); stroke-width: 1.5; }
+/* What the artist rarely turns, folded away (ROADMAP G5). */
+.advanced { display: flex; flex-direction: column; gap: var(--s-2); color: var(--text-dim); font-size: var(--fs-label); }
+.advanced[open] { gap: var(--s-2); }
+.advanced > summary { cursor: pointer; }
+.advanced > * + * { margin-block-start: var(--s-2); }
 
 /* ---- The footer (§6, T7) ------------------------------------------------- */
 
@@ -531,24 +443,6 @@ input[type="color"] {
 }
 .menu button:hover { background: var(--control-hover); }
 
-/* Step 6's decision, beside the zone it is about. The tester looked for it
-   under their hand and it was in the inspector, a screen away. */
-.near {
-  position: absolute;
-  z-index: 8;
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-2);
-  width: 232px;
-  max-height: calc(100% - 8px);
-  overflow-y: auto;
-  padding: var(--s-3);
-  border: 1px solid var(--border);
-  border-radius: var(--r-panel);
-  background: var(--panel);
-}
-.near .ins-title { margin: 0; }
-
 body.busy { cursor: progress; }
 
 /* A file is over the window. One border, in the one attention colour, and no
@@ -561,8 +455,7 @@ body.dropping::after {
   pointer-events: none;
   z-index: 9;
 }
-canvas.editing, canvas.pickable { cursor: crosshair; }
-canvas.sampling { cursor: crosshair; }
+canvas.editing { cursor: crosshair; }
 canvas.on-corner { cursor: move; }
 canvas.on-edge { cursor: copy; }
 canvas.grab { cursor: grab; }

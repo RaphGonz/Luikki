@@ -10,27 +10,31 @@ une fois. C'est attendu.
   et sécurité → « Ouvrir quand même ». Depuis macOS 15, le clic droit → Ouvrir
   ne suffit plus.
 
-## Se connecter et générer
+## Les étapes
+1. Charger la planche (ou la glisser sur la fenêtre).
+2. Cases, 3. Bulles : corrigez les formes si besoin.
+4. Découper en zones : sélectionnez des zones (appui, ou appui maintenu en
+   balayant), clic droit pour fusionner ou couper. Ctrl+Z annule. Les réglages
+   rares sont sous « Avancé ».
+5. Plans (facultatif) : Luikki range les zones en 1er plan, 2e plan et fond
+   d'après la profondeur du dessin. Sélectionnez des zones pour les changer de
+   plan, ou pour en faire des personnages. « Passer » va droit à l'export.
+6. Exporter le PSD : un calque par plan, plus les bulles. Les couleurs sont
+   factices : deux zones qui se touchent n'ont jamais la même, la baguette
+   magique prend donc une zone. Remplacez-les par les vôtres.
 
-Dans l'application : **Compte** (en bas à gauche), votre adresse e-mail, puis
-le code reçu par e-mail. Donnez cette adresse à Raph : il passe votre compte
-en compte testeur, et l'étape 5 génère alors avec Cobra sans rien acheter.
+Luikki ne propose aucune couleur.
 
-À l'étape 5, **Couleurs** choisit entre Cobra (d'après vos références) et les
-couleurs distinctes, sans GPU, qui ne comptent aucune case. Cobra compte en cases : chaque case
-générée en consomme une, deuxième essai compris. **Compte** et l'étape 5
-disent ce qu'il reste.
-
-Les boutons d'achat de **Compte** ouvrent la page de paiement Stripe dans votre
-navigateur. Pendant les tests, Stripe tourne en mode test : aucune somme ne
-peut être prélevée, même avec une vraie carte.
+## Compte et licence
+**Se connecter**, en haut à droite : votre adresse e-mail, puis le code reçu.
+Une seule licence, 10 € par an ; un compte testeur n'a rien à acheter. Le
+bouton d'achat ouvre la page de paiement Stripe dans votre navigateur. Pendant
+les tests, Stripe tourne en mode test : aucune somme ne peut être prélevée,
+même avec une vraie carte.
 
 ## Où vont vos planches
-
-Les étapes 1 à 4, 6 et 7 tournent sur votre ordinateur. Seule l'étape 5 envoie
-quelque chose : chaque case et vos images de référence partent vers le GPU,
-chez Modal, aux États-Unis. Rien n'y est conservé après la génération, et rien
-ne sert à entraîner un modèle.
+Tout tourne sur votre ordinateur : vos planches ne partent nulle part. Seuls
+la connexion et le paiement passent par Internet.
 
 ## Mises à jour
 

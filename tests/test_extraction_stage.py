@@ -70,9 +70,9 @@ def test_segmentation_reads_the_extractor_not_the_raw_ink(tmp_path):
     session = Session(tmp_path / "work", extractor=FakeExtractor(lines))
     session.load_page(page)
     session.detect_panels()
-    session.segment_zones()
+    session.segment_zones(extract_lines=True)
 
-    assert session.extractor.calls == 1
+    assert session.line_extractor.calls == 1
     # The extractor's lines, plus the thick strokes it hollows out (`thick_ink`).
     assert np.array_equal(
         session.structural_mask(), binarise_lines(lines) | thick_ink(session.line_mask)
@@ -85,6 +85,22 @@ def test_segmentation_reads_the_extractor_not_the_raw_ink(tmp_path):
     assert left != right, "the divider the extractor drew did not split the panel"
 
 
+def test_a_page_keeps_all_of_its_ink_unless_extraction_is_asked_for(tmp_path):
+    """ROADMAP G5: the extractor erases small dense detail it takes for
+    hatching, so by default the zones are cut from the ink as drawn."""
+    lines = np.full((300, 400), 255, dtype=np.uint8)
+    session = Session(tmp_path / "work", extractor=FakeExtractor(lines))
+    session.load_page(brush_page(tmp_path))
+    session.detect_panels()
+    session.segment_zones()
+
+    assert session.line_extractor.calls == 0
+    assert session.state()["extract_lines"] is False
+    assert np.array_equal(
+        session.structural_mask(), binarise_lines(session.grey) | thick_ink(session.line_mask)
+    )
+
+
 def test_the_extractor_never_sees_a_second_page_worth_of_work(tmp_path):
     """Cached per page: it is seconds on a GPU and minutes on a CPU."""
     page = brush_page(tmp_path)
@@ -94,15 +110,15 @@ def test_the_extractor_never_sees_a_second_page_worth_of_work(tmp_path):
     session = Session(tmp_path / "work", extractor=FakeExtractor(lines))
     session.load_page(page)
     session.detect_panels()
-    session.segment_zones()
-    session.segment_zones()
+    session.segment_zones(extract_lines=True)
+    session.segment_zones(extract_lines=True)
 
-    assert session.extractor.calls == 1
+    assert session.line_extractor.calls == 1
 
     session.load_page(page)
     session.detect_panels()
-    session.segment_zones()
-    assert session.extractor.calls == 2, "a new page must re-extract"
+    session.segment_zones(extract_lines=True)
+    assert session.line_extractor.calls == 2, "a new page must re-extract"
 
 
 def test_panels_and_bubbles_still_read_the_raw_ink(tmp_path):
@@ -122,7 +138,7 @@ def test_panels_and_bubbles_still_read_the_raw_ink(tmp_path):
 
     assert session.detect_panels(), "panel detection must not depend on the extractor"
     session.detect_bubbles()
-    assert session.extractor.calls == 0, "neither step may pay for extraction"
+    assert session.line_extractor.calls == 0, "neither step may pay for extraction"
 
 
 def test_flats_still_reach_under_the_artists_real_ink(tmp_path):
@@ -139,7 +155,7 @@ def test_flats_still_reach_under_the_artists_real_ink(tmp_path):
     session = Session(tmp_path / "work", extractor=FakeExtractor(lines))
     session.load_page(page)
     session.detect_panels()
-    session.segment_zones()
+    session.segment_zones(extract_lines=True)
 
     panel = session.panels[0]
     stroke = session.line_mask[150, 55:70]
@@ -162,6 +178,7 @@ def test_the_real_extractor_thins_ink(tmp_path):
     page = brush_page(tmp_path)
     session = Session(tmp_path / "work", extractor=MangaLineExtractor())
     session.load_page(page)
+    session.extract_lines = True
 
     raw = ink_fraction(session.line_mask)
     structural = ink_fraction(session.structural_mask())
@@ -224,7 +241,7 @@ def test_a_spot_black_is_not_a_zone_of_its_own(tmp_path):
     session = Session(tmp_path / "work", extractor=FakeExtractor(lines))
     session.load_page(page)
     session.detect_panels()
-    session.segment_zones()
+    session.segment_zones(extract_lines=True)
 
     panel = session.panels[0]
     black = panel.label_map[70:190, 210:320]   # well inside the solid black

@@ -24,6 +24,7 @@
     <span class="rule" aria-hidden="true"></span>
     <span class="page-name" id="page-name"></span>
     <span class="update" id="update" hidden></span>
+    <button class="btn quiet account" id="account" type="button" aria-pressed="false"></button>
     <button class="btn quiet icon" id="toggle-inspector" type="button" aria-pressed="true"
             data-i18n-title="header.inspector" data-i18n-aria-label="header.inspector">
       <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="3" width="11" height="10" rx="1"/><path d="M10 3v10"/></svg>
@@ -39,7 +40,6 @@
   <main class="stage-cell">
     <canvas id="stage" data-i18n-aria-label="stage.label"></canvas>
     <div id="menu" class="menu" role="menu" hidden></div>
-    <div id="near" class="near" hidden></div>
   </main>
 
   <aside class="inspector" data-i18n-aria-label="inspector.label">
@@ -58,7 +58,6 @@
     <div class="toggles">
       <label class="check"><input type="checkbox" id="v-lines"><span data-i18n="toggle.lines"></span></label>
       <label class="check"><input type="checkbox" id="v-neutral"><span data-i18n="toggle.neutral"></span></label>
-      <label class="check" id="v-left-label" hidden><input type="checkbox" id="v-left"><span data-i18n="toggle.left"></span></label>
       <span class="zoom" id="zoom"></span>
       <select id="language" hidden data-i18n-aria-label="footer.language"></select>
     </div>
@@ -67,8 +66,6 @@
 </div>
 
 <input id="page-file" type="file" accept="image/*" hidden>
-<input id="ref-file" type="file" accept="image/*" hidden>
-<input id="pal-file" type="file" accept="image/*" hidden>
 
 <script src="/app.js"></script>
 </body>

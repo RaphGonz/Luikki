@@ -22,7 +22,12 @@ LINEFILLER = ROOT / "third_party" / "LineFiller"
 MAC = sys.platform == "darwin"
 VERSION = re.search(r'__version__ = "(.+)"', (ROOT / "src" / "luikki" / "__init__.py").read_text())[1]
 
-for required in (MODELS / "manga_line.onnx", MODELS / "comic_bubble_detector.onnx", LINEFILLER / "linefiller"):
+for required in (
+    MODELS / "manga_line.onnx",
+    MODELS / "comic_bubble_detector.onnx",
+    MODELS / "depth_small.onnx",
+    LINEFILLER / "linefiller",
+):
     if not required.exists():
         raise SystemExit(f"{required} is missing; see the top of this file")
 
@@ -48,10 +53,11 @@ a = Analysis(
         (str(ROOT / "src" / "luikki" / "web" / "static"), "luikki/web/static"),
         (str(MODELS / "manga_line.onnx"), "models"),
         (str(MODELS / "comic_bubble_detector.onnx"), "models"),
+        (str(MODELS / "depth_small.onnx"), "models"),
     ],
     hiddenimports=["linefiller.trappedball_fill", *collect_submodules("uvicorn")],
     # Development and server-side only. The client never imports them at run
-    # time, but `cobra.py` and `models.py` name them.
+    # time, but `models.py` names them.
     excludes=["torch", "torchvision", "onnx", "onnxscript", "modal", "matplotlib", "tkinter", "pytest", "IPython"],
 )
 pyz = PYZ(a.pure)

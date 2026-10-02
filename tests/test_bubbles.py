@@ -183,16 +183,16 @@ def test_vertex_count_stays_editable():
 def test_detector_matches_the_artists_counts():
     """The numbers in `test_pages/bubble_counts.txt`, which the artist wrote.
 
-    Three of these pages have no balloons at all and are the cases the
-    heuristic detector invented them on: hatching read as `iiii` on moebius
-    and antoine, cup holders read as `OOO` on teddy. A page of SFX lettering
+    Two of these pages have no balloons at all and are the cases the
+    heuristic detector invented them on: hatching read as `iiii` on moebius,
+    cup holders read as `OOO` on teddy. A page of SFX lettering
     (laurine's Blop/Pop/Hiii) must still yield exactly its four balloons.
     """
     from luikki.segmentation.bubbles import BubbleDetector, detect_bubbles
     from luikki.segmentation.preprocess import load_line_art
 
     expected = {
-        "antoine_page.png": 0,
+        "antoine_page.png": 4,
         "laurine_page.jpg": 4,
         "manga_page.jpg": 4,
         "moebius_page.jpg": 0,

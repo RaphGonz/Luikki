@@ -1,4 +1,4 @@
-"""Buying colours and panels, and managing a Studio subscription, from the app (B5, B5b).
+"""Buying the licence, and managing what was bought, from the app (B5, G4).
 
 The app asks the billing server (`cloud/billing.py`) for a Stripe page, with
 the artist's session, and opens it in the system browser — never in the app's

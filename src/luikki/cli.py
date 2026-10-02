@@ -40,7 +40,7 @@ def _dump_steps(session, out: Path) -> list[Path]:
 
     def save(name, image):
         path = out / name
-        cv2.imwrite(str(path), image)
+        cv2.imencode(".png", image)[1].tofile(str(path))
         written.append(path)
 
     def over_page():
@@ -66,29 +66,9 @@ def _dump_steps(session, out: Path) -> list[Path]:
     save("03_bubbles.png", bubbles)
 
     save("04_zones.png", cv2.cvtColor(session.zones_rgba(), cv2.COLOR_RGBA2BGRA))
+    if session.state()["done"]["planes"]:
+        save("05_planes.png", cv2.cvtColor(session.planes_rgba(), cv2.COLOR_RGBA2BGRA))
     return written
-
-
-def _dump_flats(session, out: Path, name: str) -> Path:
-    import cv2
-
-    out.mkdir(parents=True, exist_ok=True)
-    path = out / name
-    cv2.imwrite(str(path), cv2.cvtColor(session.flats_rgba(), cv2.COLOR_RGBA2BGRA))
-    return path
-
-
-def _dump_remaining(session, out: Path, name: str) -> Path:
-    """What the artist is still holding after `snap all`.
-
-    The unsnapped segments in white on black. This is the step-6 workload made
-    visible: everything the machine declined to decide.
-    """
-    import cv2
-
-    path = out / name
-    cv2.imwrite(str(path), session.unsnapped_mask().astype("uint8") * 255)
-    return path
 
 
 def _dump_psd(psd_path, out: Path, name: str) -> Path | None:
@@ -105,41 +85,13 @@ def _dump_psd(psd_path, out: Path, name: str) -> Path | None:
     return path
 
 
-def _app_options(parser: argparse.ArgumentParser, proposer: str | None = None) -> None:
-    """What `serve` and `app` share. `proposer` is the default when neither the
-    flag nor `LUIKKI_PROPOSER` names one."""
+def _app_options(parser: argparse.ArgumentParser) -> None:
+    """What `serve` and `app` share."""
     parser.add_argument(
         "--workdir",
         default=None,
         help="the project folder (default: Luikki in the user's data folder)",
     )
-    parser.add_argument(
-        "--proposer",
-        default=None,
-        choices=["distinct", "cobra", "remote"],
-        help=(
-            "colour proposer; cobra needs an NVIDIA GPU and its weights, remote "
-            "needs a signed-in account"
-            + (f" (default: {proposer})" if proposer else "")
-        ),
-    )
-    parser.add_argument(
-        "--extractor",
-        default=None,
-        choices=["manga", "raw"],
-        help="line extractor before segmentation; raw skips it (§2.2 chose manga)",
-    )
-    parser.set_defaults(default_proposer=proposer)
-
-
-def _apply_app_options(args: argparse.Namespace) -> None:
-    import os
-
-    proposer = args.proposer or os.environ.get("LUIKKI_PROPOSER") or args.default_proposer
-    if proposer:
-        os.environ["LUIKKI_PROPOSER"] = proposer
-    if args.extractor:
-        os.environ["LUIKKI_EXTRACTOR"] = args.extractor
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -184,54 +136,38 @@ def main(argv: list[str] | None = None) -> int:
     window = sub.add_parser(
         "app", help="run the flatting app in its own window, as the installed app does"
     )
-    _app_options(window, proposer="remote")
+    _app_options(window)
     window.add_argument(
         "--debug", action="store_true", help="open the web inspector with the window"
     )
 
     flatten = sub.add_parser(
         "flatten",
-        help="run every step on one page headlessly, snapping all segments",
+        help="run every step on one page headlessly and write the PSD",
     )
     flatten.add_argument("page", help="the line-art page")
-    flatten.add_argument(
-        "-r",
-        "--reference",
-        action="append",
-        default=[],
-        help="character sheet or coloured page; repeatable. Cobra needs one",
-    )
     flatten.add_argument("-o", "--out", default=None, help="where the PSD lands")
     flatten.add_argument(
-        "--proposer",
-        default="distinct",
-        choices=["distinct", "cobra", "remote"],
-        help="remote uses the account signed in from the app, on this computer",
-    )
-    flatten.add_argument(
-        "--threshold",
-        type=float,
-        default=None,
-        help=(
-            "max weighted CIELAB distance to snap; omit to snap every "
-            "segment to its nearest palette colour, pass a number to guard "
-            "(12 was the old default), pass 0 to snap nothing"
-        ),
-    )
-    flatten.add_argument(
         "--layers",
-        default="colour",
-        choices=["colour", "panel"],
+        default="plane",
+        choices=["plane", "colour"],
         help=(
-            "PSD stack: colour = one layer per palette entry over the "
-            "whole page; panel = one group per panel, one layer per "
-            "colour inside it"
+            "PSD stack: plane = one layer per plane; colour = one group per "
+            "plane, one layer per colour inside it"
         ),
     )
     flatten.add_argument(
-        "--no-snap",
+        "--no-planes",
         action="store_true",
-        help="stop after flats, leaving every segment its own colour",
+        help="skip the planes: one Flats layer under the balloons",
+    )
+    flatten.add_argument(
+        "--extract-lines",
+        action="store_true",
+        help=(
+            "cut the zones from MangaLineExtraction's lines rather than from "
+            "the whole of the ink (it erases small dense detail)"
+        ),
     )
     flatten.add_argument(
         "--leak-gap",
@@ -259,21 +195,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "flatten":
         from .web.session import Session
 
-        proposer = None
-        if args.proposer == "cobra":
-            from .colour.cobra import CobraProposer
-
-            proposer = CobraProposer()
-        elif args.proposer == "remote":
-            from .account import Account
-            from .colour.remote import RemoteProposer
-
-            proposer = RemoteProposer(account=Account())
-
         workdir = Path(args.out or ".luikki-work/flatten")
-        session = Session(workdir=workdir, proposer=proposer)
-        for reference in args.reference:
-            session.add_reference(reference, original_name=Path(reference).name)
+        session = Session(workdir=workdir)
         session.load_page(args.page, original_name=Path(args.page).name)
 
         steps_dir = None
@@ -282,67 +205,25 @@ def main(argv: list[str] | None = None) -> int:
 
         session.detect_panels()
         session.detect_bubbles()
-        session.segment_zones(leak_gap=args.leak_gap)
+        session.segment_zones(leak_gap=args.leak_gap, extract_lines=args.extract_lines)
+        if not args.no_planes:
+            session.detect_planes()
         if steps_dir is not None:
             _dump_steps(session, steps_dir)
-
-        from .account import AccountError
-        from .colour.remote import RemoteUnavailable
-
-        try:
-            flats = session.generate_flats()
-        except RemoteUnavailable as exc:
-            if exc.code == "not_signed_in":
-                raise SystemExit("step 5: sign in from Account in the app first") from exc
-            raise SystemExit(f"step 5: {exc}") from exc
-        except AccountError as exc:
-            raise SystemExit(f"step 5: {exc.code}") from exc
-        if steps_dir is not None:
-            _dump_flats(session, steps_dir, "05_flats_unsnapped.png")
-        print(
-            f"{len(session.panels)} panels, {len(session.protected)} bubbles, "
-            f"{flats['segments']} segments, {flats['colours']} palette entries"
-        )
-
-        if args.no_snap:
-            print("not snapping: every segment keeps its own proposed colour")
-        else:
-            # No guard unless the artist asks for one: what they want by
-            # default is their own palette, not five hundred invented colours.
-            threshold = args.threshold
-            if threshold == float("inf"):
-                threshold = None
-            result = session.snap_all(threshold)
-            print(
-                f"snap-all: {result['snapped']} snapped, "
-                f"{result['skipped']} left as proposed "
-                f"(threshold {'none' if threshold is None else threshold})"
-            )
-            if steps_dir is not None:
-                _dump_flats(session, steps_dir, "06_flats_snapped.png")
-                _dump_remaining(session, steps_dir, "07_left_for_the_artist.png")
+        zones = sum(panel.zone_count for panel in session.panels)
+        print(f"{len(session.panels)} panels, {len(session.protected)} bubbles, {zones} zones")
 
         psd = session.export_psd(granularity=args.layers)
-        export = session.state()["export"]
-        layers = export["layers"][args.layers]
-        if layers > export["warn_at"]:
-            print(
-                f"warning: {layers} layers. Most of them are colours "
-                "the model proposed, one per segment — snap them to your "
-                "palette to bring the count down."
-            )
+        layers = session.state()["export"]["layers"][args.layers]
         print(f"PSD: {psd} ({layers} layers, by {args.layers})")
         if steps_dir is not None:
-            _dump_psd(psd, steps_dir, "08_psd_composite.png")
+            _dump_psd(psd, steps_dir, "06_psd_composite.png")
             print(f"steps: {steps_dir}")
         return 0
-
-
 
     if args.command == "serve":
         import uvicorn
 
-        _apply_app_options(args)
         from .web.app import create_app
 
         print(f"Luikki on http://{args.host}:{args.port}")
@@ -350,7 +231,6 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "app":
-        _apply_app_options(args)
         from .desktop import run
         from .web.app import create_app
 
