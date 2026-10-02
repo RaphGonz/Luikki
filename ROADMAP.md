@@ -933,34 +933,15 @@ cible. Résumé en français : `business-canvas.md`.
   génère des cases et reçoit sa facture.
 
 ## C — Après les tests : mesurer, durcir
-
-- [ ] Mesurer sur 10 comptes : s/case, cases/page, cases/mois, pic VRAM,
-      démarrage à froid, coût réel par case, relances par page → ajuster
-      `cases_per_month` et le plafond Studio (5 000, calculé à 20 s/case).
-      Premier point (2026-09-13, 6 cases) : 10,4 s/case à chaud, 30 s de
-      démarrage, 1 $/h tout compris. À 10 s, le calcul autoriserait 12 000
-      cases Studio ; le plafond reste 5 000 jusqu'aux 10 comptes.
 - [ ] Journal des expériences de prix : chaque promo ou semaine à ×2, avec
-      ses dates et ses ventes (`business-plan.md` §4.7).
-- [ ] Comptes d'équipe Studio : plusieurs emails sous un seul paiement (v1 :
-      un email, 3 postes).
-- [ ] Devis au-delà du Studio : facture annuelle, volume (`business-plan.md` §4.5).
-- [ ] Mesurer un épisode avec un coloriste de studio, avec et sans Luikki,
-      **avant la première vente à un studio** : leurs coloristes sont rapides,
-      l'argument « 10× » ne vaut que pour l'auteur qui fait ses aplats
-      (`business-plan.md` §3.1).
-- [ ] Région UE (Modal ×1,5, ou hébergeur UE) quand de vrais clients paient.
-      Jamais d'hôtes tiers (type Community Cloud).
-- [ ] Non-rétention vérifiée chez Modal (entrées, sorties, logs) + DPA signé.
-- [ ] Références envoyées une fois par hash, plus à chaque case.
-- [ ] Cases d'une page en parallèle : latence ÷ N mais N démarrages à froid →
-      plafond de workers par page.
-- [ ] Annulation : relancer l'étape 5 pendant un job annule les cases restantes
-      (sinon elles sont payées).
-- [ ] `model_version` gardé dans le projet : une page régénérée après une mise
-      à jour du modèle doit pouvoir dire pourquoi elle a changé.
-- [ ] Retrieval CLIP côté client (ONNX) seulement si « vos références ne
-      quittent pas votre machine » devient un argument de vente.
+      ses dates et ses ventes (`business-plan.md` §4.1).
+- ~~Comptes d'équipe Studio, devis, mesure d'un épisode de studio~~ : plus de
+  ligne Studio ni de vente aux studios (G4, 2026-10-02).
+- [ ] Mesurer une planche avec les plans et les aplats factices, avec et sans
+      Luikki : les 8 à 16× datent de la couleur au clic (`business-plan.md` §3.1).
+- ~~Mesure GPU sur 10 comptes, région UE, non-rétention Modal, références par
+  hash, cases en parallèle, annulation de l'étape 5, `model_version`, CLIP
+  côté client~~ : tout tenait à Cobra et au GPU, partis en G1 (2026-10-02).
 - [ ] Mise à jour sur Mac sans passer par le navigateur, une fois l'app
       notarisée (B6). Windows l'a déjà (B4).
 - [ ] Tutoriel interactif sur une planche d'exemple dessinée par Raph (retiré
@@ -974,8 +955,8 @@ cible. Résumé en français : `business-canvas.md`.
 - [ ] Démo longue 5–8 min sur vraie page, avec l'artiste, erreurs comprises.
 - [ ] Avant/après sur planche d'album réelle (autorisation écrite).
 - [ ] Bloc « vos couleurs, vos références » sur page tarifs : refs de l'artiste uniquement / sortie brute jamais montrée ni exportée / aucun trait dans l'export / aucun entraînement.
-- [ ] Page tarifs : Base 10 €/an, IA 50 €/an, Studio 150 €/mois ; les packs sous l'IA. Les plafonds en cases dans les conditions, pas sur la page (`business-plan.md` §4.4). « Rien ne quitte votre ordinateur, sauf les cases envoyées à la génération » (§2.3).
-- [ ] Site coréen pour les studios webtoon : une autre vente, pas une traduction. Formulaire de devis, cases montrées en épisodes.
+- [ ] Page tarifs : une ligne, 10 €/an, pas d'offre gratuite. « Rien ne quitte votre ordinateur » (`business-plan.md` §2.2) : c'est vrai maintenant.
+- ~~Site coréen pour les studios webtoon~~ : plus de vente aux studios (G4, 2026-10-02).
 - [ ] **[€]** Hébergement vidéo : YouTube non répertorié au début, Bunny/Mux ensuite.
 - [x] **[€]** Email transactionnel : Resend, le même compte que le SMTP Supabase (B2). Compte et domaine du site faits (2026-09-12).
 - [ ] 2 emails liste d'attente : démo vidéo → ouverture publique.
@@ -1069,9 +1050,9 @@ Refaire un Cobra sur Qwen coûterait environ 10 k€ : écarté.
 En interne, rien ne change : une zone stocke toujours un `palette_entry_id`,
 jamais un RGB.
 
-Fait le 2026-10-01, branche `g-decoupage-pur` (non poussée) : G1 à G5 dans le
-code, les tests (270 verts ; seul `test_detector_matches_the_artists_counts`
-échoue, comme avant) et la doc. Rendus de toutes les planches de test :
+Fait le 2026-10-01, branche `g-decoupage-pur`, testé par Raph et fusionné dans
+`main` le 2026-10-02 (non poussé) : G1 à G5 dans le code, les tests (272 verts ;
+`antoine_page` porte maintenant 4 bulles) et la doc. Rendus de toutes les planches de test :
 `reports/g2_plans/<planche>/steps/` (zones, plans, PSD recomposé).
 
 Décisions prises en route, à revoir si besoin :
@@ -1116,9 +1097,9 @@ Reste à faire par Raph (rien n'a été déployé ni modifié en ligne) :
 - [x] App : les étapes 5 (flats) et 6 (snap), les références, la palette, la
       boîte de couleur, le compteur de cases. Les clés de `locales/*.json`
       partent avec (`test_locales` refuse une clé inutilisée).
-- [ ] Ce qui reste du cloud : le compte (Supabase) et le paiement (fonction
-      Modal sans GPU). À revoir en G4 : Supabase Pro à 25 $/mois pour une
-      licence à 10 €/an.
+- [x] Ce qui reste du cloud : le compte (Supabase) et le paiement (fonction
+      Modal sans GPU). Décidé (2026-10-02) : Supabase reste en gratuit ; Pro
+      (25 $/mois = 30 licences) seulement si le projet se met en pause.
 - [x] Docs : `CLAUDE.md`, `SPEC.md`, `ARCHITECTURE.md`, `UI.md`, `README.md`,
       `business-plan.md`, `business-canvas.md`, `packaging/TESTEURS.md`. La
       clause OpenRAIL++-M des CGU disparaît avec PixArt.
@@ -1175,6 +1156,10 @@ une entrée par zone tant que personne ne peint. Proposition :
       de 956.
 
 ### G4 — Offre unique à 10 €/an (remplace B5c)
+Décidé (Raph, 2026-10-02) : une appli locale et simple, vendue en ligne, sans
+travail de vente. Plus de studios en cible, plus de site coréen, plus de démos
+(`business-plan.md` draft 4). La décision se rouvre si des studios demandent
+factures et volume, ou si beaucoup de clients demandent la même chose.
 
 - [x] `cloud/billing.py` et `stripe_setup.py` : une seule ligne `base` ;
       archiver IA, packs et Studio. Les achats déjà faits restent valides.
