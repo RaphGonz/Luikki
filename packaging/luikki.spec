@@ -58,7 +58,7 @@ a = Analysis(
     hiddenimports=["linefiller.trappedball_fill", *collect_submodules("uvicorn")],
     # Development and server-side only. The client never imports them at run
     # time, but `models.py` names them.
-    excludes=["torch", "torchvision", "onnx", "onnxscript", "modal", "matplotlib", "tkinter", "pytest", "IPython"],
+    excludes=["torch", "torchvision", "onnx", "onnxscript", "matplotlib", "tkinter", "pytest", "IPython"],
 )
 pyz = PYZ(a.pure)
 exe = EXE(

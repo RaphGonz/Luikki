@@ -1066,13 +1066,25 @@ Décisions prises en route, à revoir si besoin :
   la pile commence donc aux Bulles.
 - Les noms de calques sont dans la langue de l'artiste.
 
-Reste à faire par Raph (rien n'a été déployé ni modifié en ligne) :
-- Supabase : exécuter le bloc G4 de `cloud/schema.sql` (contrainte `line`
-  avec `base`).
-- Stripe : `modal run -m luikki.cloud.modal_app::stripe_setup` (crée la ligne
-  `base` à 10 €, archive les prix des anciennes lignes, nouveau coupon).
-- Modal : `modal deploy -m luikki.cloud.modal_app` (plus que la facturation),
-  puis supprimer le Volume `luikki-weights`.
+Reste à faire par Raph (rien n'a été déployé ni modifié en ligne), d'abord en
+mode test, puis en live :
+- Supabase : exécuter `supabase/schema.sql` dans l'éditeur SQL (contrainte
+  `line` avec `base`, `record_studio` et `buyer_status` supprimées).
+- Stripe, tableau de bord : un produit « Luikki » à 10 €/an (paiement unique),
+  un Payment Link dessus (codes promo autorisés, création du client, facture
+  après paiement, page de confirmation de Stripe), le portail client avec son
+  lien de connexion. Archiver les prix des anciennes lignes.
+- Stripe → Webhooks : l'adresse
+  `https://wuqgjbrkymmvvxftkeyi.supabase.co/functions/v1/stripe-webhook`,
+  événements `checkout.session.completed`,
+  `checkout.session.async_payment_succeeded`, `charge.refunded`.
+- Supabase : `supabase secrets set STRIPE_SECRET_KEY=… STRIPE_WEBHOOK_SECRET=…
+  STRIPE_PAYMENT_LINK=plink_…`, puis
+  `supabase functions deploy stripe-webhook --no-verify-jwt`.
+- Code : les deux liens dans `PAYMENT_URL` et `PORTAL_URL` (`billing.py`) ;
+  en test, `LUIKKI_PAYMENT_URL` et `LUIKKI_PORTAL_URL`.
+- Modal : supprimer l'app `luikki-cobra`, le Volume `luikki-weights` et les
+  secrets, puis fermer le compte.
 - Release : `luikki models` télécharge maintenant aussi `depth_small.onnx`
   (99 Mo, embarqué dans l'installeur).
 
@@ -1097,8 +1109,9 @@ Reste à faire par Raph (rien n'a été déployé ni modifié en ligne) :
 - [x] App : les étapes 5 (flats) et 6 (snap), les références, la palette, la
       boîte de couleur, le compteur de cases. Les clés de `locales/*.json`
       partent avec (`test_locales` refuse une clé inutilisée).
-- [x] Ce qui reste du cloud : le compte (Supabase) et le paiement (fonction
-      Modal sans GPU). Décidé (2026-10-02) : Supabase reste en gratuit ; Pro
+- [x] Ce qui reste du cloud : le compte (Supabase) et le paiement (un
+      Payment Link Stripe, son webhook en Edge Function Supabase ; plus de
+      Modal, 2026-10-02). Décidé (2026-10-02) : Supabase reste en gratuit ; Pro
       (25 $/mois = 30 licences) seulement si le projet se met en pause.
 - [x] Docs : `CLAUDE.md`, `SPEC.md`, `ARCHITECTURE.md`, `UI.md`, `README.md`,
       `business-plan.md`, `business-canvas.md`, `packaging/TESTEURS.md`. La
@@ -1164,6 +1177,11 @@ factures et volume, ou si beaucoup de clients demandent la même chose.
 - [x] `cloud/billing.py` et `stripe_setup.py` : une seule ligne `base` ;
       archiver IA, packs et Studio. Les achats déjà faits restent valides.
 - [x] Compte : statut de la licence et bouton d'achat, rien d'autre.
+- [x] Plus de Modal (2026-10-02) : Acheter ouvre un Payment Link avec l'id du
+      compte (`client_reference_id`) ; le webhook est une Edge Function
+      Supabase (`supabase/functions/stripe-webhook`) ; Factures ouvre le lien
+      de connexion du portail client. `cloud/` supprimé, `schema.sql` dans
+      `supabase/`.
 - [ ] Décider ce que la licence ouvre (installeur, mises à jour, connexion).
       Le contournement par GitHub reste un risque accepté.
 

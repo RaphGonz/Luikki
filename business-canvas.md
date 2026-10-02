@@ -66,8 +66,9 @@ dans `business-plan.md` (draft 4).
 - Tester les prix pendant l'année.
 
 **8. Partenaires clés**
-- Stripe (paiement), Supabase (comptes), Modal (fonction de paiement, sans
-  GPU), Resend (e-mails). Tous en offre gratuite sauf Stripe.
+- Stripe (paiement : un Payment Link), Supabase (comptes, et le webhook de
+  Stripe en Edge Function), Resend (e-mails). Tous en offre gratuite sauf
+  Stripe. Plus de Modal.
 - Les auteurs des modèles open source (LineFiller, MangaLineExtraction,
   détecteur de bulles, Depth Anything).
 

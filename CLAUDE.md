@@ -97,7 +97,7 @@ wrong is one click to fix.
 
 ## Configuration
 
-- No `.env` file. Environment variables, all read at call time: `LUIKKI_SUPABASE_URL` and `LUIKKI_SUPABASE_KEY` to point the sign-in (`account.py`) at another Supabase project; `LUIKKI_BILLING_URL` to point Buy / Invoices (`billing.py`) at another billing server than `BILLING_URL` (`cloud/billing.py` on a CPU Modal function); `LUIKKI_UPDATE_URL` to read another `latest.json` than the latest GitHub release's (`web/update.py`); `LUIKKI_MODELS` for another model folder.
+- No `.env` file. Environment variables, all read at call time: `LUIKKI_SUPABASE_URL` and `LUIKKI_SUPABASE_KEY` to point the sign-in (`account.py`) at another Supabase project; `LUIKKI_PAYMENT_URL` and `LUIKKI_PORTAL_URL` to open other Stripe pages than `PAYMENT_URL` (a Payment Link) and `PORTAL_URL` (the Customer Portal's login link) in `billing.py`, test mode's for instance; `LUIKKI_UPDATE_URL` to read another `latest.json` than the latest GitHub release's (`web/update.py`); `LUIKKI_MODELS` for another model folder.
 - Otherwise configuration is CLI arguments only (see `src/luikki/cli.py`)
 - `pyproject.toml` - Standard Python project configuration, defines dependencies, entry point, test paths
 - CLI: `luikki = "luikki.cli:main"` - Command-line entry point in `src/luikki/cli.py`
@@ -135,7 +135,7 @@ wrong is one click to fix.
 - For GUI/visualization: OpenCV with headless mode (cv2 works without display server)
 - Python 3.11+ runtime
 - No torch at runtime: the whole local pipeline runs on numpy, OpenCV and onnxruntime
-- No external service for the pipeline: only the account and the licence (Supabase, Stripe through `cloud/billing.py`) are online
+- No external service for the pipeline: only the account and the licence (Supabase; Stripe's Payment Link, whose webhook is a Supabase Edge Function in `supabase/functions/stripe-webhook`) are online. No Modal, no server of our own
 - Storage: Local filesystem for SQLite database and image outputs
 
 ## Deployment Path

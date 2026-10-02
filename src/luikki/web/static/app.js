@@ -1489,20 +1489,19 @@ function licenceNotes() {
   if (!licence) return [];
   if (!licence.active) return [note(t("account.licence_none"))];
   if (licence.plan === "tester") return [note(t("account.licence_tester"))];
-  if (licence.plan === "studio") return [note(t("account.licence_studio"))];
   return [note(t("account.licence_until", { date: fmt.date(licence.until) }))];
 }
 
 // One licence, 10 € a year: buying it again adds a year. Stripe's page shows
 // the price.
 function licenceButtons() {
-  if (!licence || licence.plan === "tester" || licence.plan === "studio") {
+  if (!licence || licence.plan === "tester") {
     return licence?.customer ? [manageButton()] : [];
   }
   const buy = button(licence.active ? t("account.extend") : t("account.buy"), {
     kind: licence.active ? "" : "primary",
     key: "account-buy",
-    onclick: () => openBilling("/api/account/buy", { line: "base" }),
+    onclick: () => openBilling("/api/account/buy"),
   });
   return licence.customer ? [buy, manageButton()] : [buy];
 }
@@ -1510,9 +1509,9 @@ function licenceButtons() {
 const manageButton = () =>
   button(t("account.manage"), { key: "account-manage", onclick: () => openBilling("/api/account/manage") });
 
-async function openBilling(path, body) {
+async function openBilling(path) {
   try {
-    await accountCall(t("work.billing"), path, "POST", body);
+    await accountCall(t("work.billing"), path, "POST");
     say(t("status.billing_opened"));
   } catch (error) {
     say(error.message, true);

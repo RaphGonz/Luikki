@@ -418,13 +418,12 @@ No colour is in `app.js`. Each colour is a token in the `:root` block of
       export/
         flat_colours.py       eight fake flats, no two touching zones alike
         psd.py                zones -> a PSD, one layer per plane
-      cloud/
-        billing.py            the licence: Stripe Checkout, portal, webhook
-        stripe_setup.py       the Stripe objects, made once per mode
-        schema.sql            the Supabase tables and functions
-        modal_app.py          the billing endpoint on a CPU Modal function
       model/                  the SQLite store. Not used by the web app.
       spike/                  the A/B experiments. Reports are in `reports/`.
+
+      supabase/              (at the root of the repository)
+        schema.sql            the tables and functions: licences, refunds, `my_status`
+        functions/stripe-webhook/Stripe's webhook: a paid link adds a year
 
 ## 7. Facts that you must not lose
 

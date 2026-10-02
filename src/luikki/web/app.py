@@ -64,12 +64,6 @@ class Cut(BaseModel):
     stroke: list[tuple[int, int]]
 
 
-class Purchase(BaseModel):
-    """One line of `cloud/billing.py`'s `LINES`."""
-
-    line: str
-
-
 class Zone(BaseModel):
     panel: int
     label: int
@@ -193,12 +187,12 @@ def create_app(
         session.account.sign_out()
         return session.state()
 
-    # Stripe's pages open in the system browser, asked for from here: this
-    # process holds the session they are asked for with.
+    # Stripe's pages open in the system browser, from here: this process holds
+    # the session that names the account.
 
     @app.post("/api/account/buy")
-    def buy(body: Purchase):
-        billing.buy(session.account, body.line)
+    def buy():
+        billing.buy(session.account)
         return {}
 
     @app.post("/api/account/manage")

@@ -1,9 +1,9 @@
 """The artist's account on this machine: a code by email once, then stay signed in.
 
 The app signs in without a password. Supabase emails a code, the artist types
-it here, and the session that comes back is what the billing server checks
-(`cloud/billing.py`). Only the refresh token is kept, in the system's own
-password store through `keyring` (Credential Manager, Keychain): closing the
+it here, and the session that comes back reads the licence (`my_status`) and
+names the account a purchase is for (`billing.py`). Only the refresh token is
+kept, in the system's own password store through `keyring` (Credential Manager, Keychain): closing the
 app signs nobody out, and nothing readable sits in the project folder. The
 access token lives in memory and is renewed shortly before it lapses.
 
@@ -14,6 +14,8 @@ every copy of the app carries them anyway.
 
 from __future__ import annotations
 
+import base64
+import json
 import logging
 import os
 import threading
@@ -154,6 +156,15 @@ class Account:
                 raise AccountError("accounts_unreachable", status=503)
             self._adopt(response.json())
             return self._access
+
+    def user_id(self) -> str:
+        """The account's id, read from the session token without checking its
+        signature: it only names who a purchase is for."""
+        token = self.access_token()
+        if not token:
+            raise AccountError("signed_out")
+        claims = token.split(".")[1]
+        return json.loads(base64.urlsafe_b64decode(claims + "=" * (-len(claims) % 4)))["sub"]
 
     def sign_out(self) -> None:
         with self._lock:

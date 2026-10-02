@@ -70,7 +70,8 @@ colours in their own software.
 All the work runs on the computer of the artist. The pages, the zones and the
 PSD stay there. Nothing goes to a server.
 
-Only the account and the payment are on line.
+Only the account and the payment are on line: a Stripe Payment Link, and
+its webhook on Supabase. There is no server of our own.
 
 Say this on the web site: "Nothing leaves your computer." It is true.
 
@@ -172,7 +173,7 @@ sales. The prices are experiments.
 | Apple Developer | 99 $ (approximately 90 €) | Each year |
 | Windows code signature | approximately 10 $ each month (110 € each year) | Each month |
 | Trademark "Luikki" at the INPI | approximately 200 € | One time |
-| Accounts, payment, e-mail (Supabase, Modal without GPU, Resend) | Free tiers | Each month |
+| Accounts, the Stripe webhook, e-mail (Supabase, Resend) | Free tiers | Each month |
 | The time of the founder | Not counted | — |
 
 One licence gives 9,25 € net. The fixed costs are approximately 200 € each
@@ -254,7 +255,7 @@ decision is open again in these conditions:
 | One licence runs on many machines | Loss of revenue | Accept it at 10 € |
 | Nobody talks about Luikki | No sales | Make the videos (ROADMAP D) |
 | The low price says "low value" | Some professionals do not trust the tool | Test a higher price |
-| Supabase or Modal end the free tier | A fixed cost of 25 $ to 30 $ each month | 30 licences pay for it |
+| Supabase ends the free tier | A fixed cost of 25 $ to 30 $ each month | 30 licences pay for it |
 
 ### 6.1 The free tools
 
@@ -276,7 +277,7 @@ artist gets planes and zones, and colours them.
 | Step | Status on 2 October 2026 |
 |---|---|
 | 1. Finish the local application with the planes. | Done (ROADMAP G) |
-| 2. Change the payment to one line at 10 €. | Code done. Supabase, Stripe and Modal to change on line |
+| 2. Change the payment to one line at 10 €. | Code done. Stripe and Supabase to change on line |
 | 3. Package the application. Sign the Windows build. | Package done. Signature to do |
 | 4. Measure the time of one page with the planes. | To do, with the test users |
 | 5. Make the web site and the videos. | To do (ROADMAP D) |

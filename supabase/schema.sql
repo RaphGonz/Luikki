@@ -1,20 +1,20 @@
--- Luikki accounts, rights, panels and the job lock (ROADMAP §B: B2, B5, B5b).
+-- Luikki accounts and licences (ROADMAP §B: B2, B5, B5b; G4).
 --
 -- Paste into the Supabase SQL editor. Safe to run twice, and safe on the
 -- tables B2 made: it migrates them in place.
 --
--- Only the Modal servers touch these tables, with the secret key, which
--- bypasses RLS. The app holds the publishable key and reads its own rights
--- through `my_status` (below), never from the tables: RLS is on with no
--- policy, so `anon` and `authenticated` get nothing, and the grants are
--- revoked as well in case RLS is ever switched off by hand.
+-- Only Stripe's webhook (`supabase/functions/stripe-webhook`) writes these
+-- tables, with the service role key, which bypasses RLS. The app holds the
+-- publishable key and reads its own rights through `my_status` (below), never
+-- from the tables: RLS is on with no policy, so `anon` and `authenticated` get
+-- nothing, and the grants are revoked as well in case RLS is ever switched
+-- off by hand.
 --
--- What is sold is panels, not pages (business-plan.md §4.2): the GPU paints one
--- panel at a time, and a webtoon episode is 60 to 80 of them.
+-- The panels, seats and job lock below served Cobra's GPU, gone in G1. They
+-- stay so the rows they hold stay readable; nothing writes them any more.
 
--- Studio subscriptions and testers, one row per account. Testers are set by
--- hand: plan 'tester', status 'active', a period_end. A Studio row is written
--- by Stripe's webhook (`record_studio`).
+-- Testers, one row per account, set by hand: plan 'tester', status
+-- 'active', a period_end. Studio rows came from a webhook that is gone.
 create table if not exists public.subscriptions (
     user_id            uuid primary key references auth.users (id) on delete cascade,
     status             text not null check (status in (
@@ -323,41 +323,9 @@ begin
 end;
 $$;
 
--- A Studio subscription as Stripe holds it now.
-create or replace function public.record_studio(
-    p_user uuid, p_status text, p_period_end timestamptz, p_customer text
-) returns void
-language sql
-set search_path = ''
-as $$
-    insert into public.subscriptions (user_id, status, plan, period_end, stripe_customer_id)
-    values (p_user, p_status, 'studio', p_period_end, p_customer)
-    on conflict (user_id) do update
-    set status = excluded.status, plan = 'studio', period_end = excluded.period_end,
-        stripe_customer_id = excluded.stripe_customer_id;
-    insert into public.customers (user_id, stripe_customer_id) values (p_user, p_customer)
-    on conflict (user_id) do update set stripe_customer_id = excluded.stripe_customer_id;
-$$;
-
--- What the billing server needs to know before opening a payment page.
-create or replace function public.buyer_status(p_user uuid) returns jsonb
-language sql
-stable
-set search_path = ''
-as $$
-    select jsonb_build_object(
-        'customer', (select stripe_customer_id from public.customers where user_id = p_user),
-        'studio', public.current_plan(p_user) = 'studio',
-        'bought', exists (
-            select 1 from public.purchases
-            where user_id = p_user and line in ('luikki', 'founder') and not refunded
-        ),
-        'founder', exists (
-            select 1 from public.purchases where user_id = p_user and line = 'founder' and not refunded
-        ),
-        'founders_sold', (select count(*) from public.purchases where line = 'founder' and not refunded)
-    );
-$$;
+-- Studio and the billing server are gone (G4, then Modal): nothing calls these.
+drop function if exists public.record_studio(uuid, text, timestamptz, text);
+drop function if exists public.buyer_status(uuid);
 
 -- Supabase lets `anon` and `authenticated` call any new function in `public`
 -- through the Data API. These are the servers' alone.
@@ -371,9 +339,7 @@ begin
         'public.start_panel(uuid, uuid, uuid, uuid, inet, int, int)',
         'public.finish_panel(uuid, uuid, uuid, uuid, text, boolean)',
         'public.record_purchase(uuid, text, text, text, text, int, int)',
-        'public.record_refund(text)',
-        'public.record_studio(uuid, text, timestamptz, text)',
-        'public.buyer_status(uuid)'
+        'public.record_refund(text)'
     ] loop
         execute format('revoke execute on function %s from public, anon, authenticated', signature);
         execute format('grant execute on function %s to service_role', signature);
