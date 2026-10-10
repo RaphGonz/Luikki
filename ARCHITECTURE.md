@@ -357,6 +357,15 @@ upstream's answer, pixel for pixel (`tests/test_linefiller_fast.py`), without
 the whole-page scan upstream makes per zone. The Windows build ships
 `onnxruntime-directml`, so the line extractor runs on the GPU.
 
+A scan at 800 dpi is 66 Mpx, and one panel can be 55 Mpx. At that size a
+pass over the whole panel costs seconds, so no step does one for each zone.
+The leak audit gives its crumbs their labels in one write, and grows its
+residue piece by piece in each piece's own box. `PanelState.boxes()` keeps
+the box of every zone. A press, a sweep, a merge, a cut and a vote again
+work inside those boxes, never on the whole panel. A merge and a cut keep
+the boxes up to date; a new map (a run, an undo, a page that opens) is read
+again. The answers are the same as before, pixel for pixel.
+
 `src/luikki/model/store.py` is a full SQLite store with the same shape.
 This version of the app **does not use it**. Persistence is not the purpose of
 this version.
@@ -376,6 +385,12 @@ converts coordinates. Each hit test goes through `view.toImage` and then asks
 the server what is there. The browser never holds a second copy of the
 segmentation. The outline of a selected zone comes from the mask that the
 server sends for that zone (`/api/zone/{panel}/{label}.png`).
+
+The canvas draws the artwork (paper, flats or planes, ink) into a canvas of
+its own when the view or a layer changes. Every other frame copies that
+canvas: the marching ants ask for a frame every 80 ms. A layer longer than
+4096 px also keeps a reduced copy, which the canvas uses when the page is
+shown no larger than that copy. The ink layer is loaded one time for each page.
 
 No word that the artist reads is in `index.html` or in `app.js`. Each word is a
 key in `static/locales/en.json`, and `t("key")` looks it up. A new language is

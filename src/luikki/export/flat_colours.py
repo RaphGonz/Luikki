@@ -50,8 +50,12 @@ def adjacency(page: np.ndarray) -> np.ndarray:
         (page[:-1, :-1], page[1:, 1:]),
         (page[:-1, 1:], page[1:, :-1]),
     ):
-        touching = (a != b) & (a != UNASSIGNED) & (b != UNASSIGNED)
-        left, right = a[touching].astype(np.int64), b[touching].astype(np.int64)
+        # Where the label changes first, then the zero test on those few: the
+        # same pairs, with one whole-page comparison instead of three.
+        differ = a != b
+        left, right = a[differ], b[differ]
+        touching = (left != UNASSIGNED) & (right != UNASSIGNED)
+        left, right = left[touching].astype(np.int64), right[touching].astype(np.int64)
         low, high = np.minimum(left, right), np.maximum(left, right)
         pairs.append(np.unique(low << 32 | high))
     if not pairs:
@@ -108,19 +112,20 @@ def assign_flat_colours(
         patch = labels[:rows, :cols].astype(np.int32)
         window = page[y : y + rows, x : x + cols]
         inside = patch != UNASSIGNED
-        window[inside] = patch[inside] + offset
+        np.copyto(window, patch + offset, where=inside)
         offsets.append(offset)
         offset += int(labels.max()) + 1 if labels.size else 1
 
+    # The labels each panel holds, in order: what `np.unique` gave, without
+    # sorting the whole map.
+    held = [np.flatnonzero(np.bincount(labels.ravel())) for _, _, labels in panels]
     nodes = []
-    for (_, _, labels), base in zip(panels, offsets):
-        present = np.unique(labels)
+    for present, base in zip(held, offsets):
         nodes += [int(label) + base for label in present if label != UNASSIGNED]
     chosen = colour_graph(nodes, adjacency(page))
 
     result = []
-    for (_, _, labels), base in zip(panels, offsets):
-        present = np.unique(labels)
+    for present, base in zip(held, offsets):
         result.append(
             {
                 int(label): FLAT_PALETTE[chosen[int(label) + base]].id

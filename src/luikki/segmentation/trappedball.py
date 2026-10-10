@@ -180,31 +180,45 @@ def _absorb_residue(labels: np.ndarray, unfilled: np.ndarray) -> None:
     this safe to do before regions are counted.
     """
     kernel = np.ones((3, 3), np.uint8)
-    # cv2.dilate has no int32 path; float32 is exact well past any plausible
-    # region count.
-    work = labels.astype(np.float32)
-
-    while unfilled.any():
-        grown = cv2.dilate(work, kernel)
-        newly = unfilled & (grown > 0)
-        if not newly.any():
-            break
-        work[newly] = grown[newly]
-        unfilled[newly] = False
-
-    labels[:] = work.astype(np.int32)
+    height, width = labels.shape
+    # A piece of residue (8-connected, the reach of one dilation) grows only
+    # from the labels that touch it, so each piece grows in its own box. The
+    # answer is the whole-map loop's, pixel for pixel, without a whole-map
+    # dilation per step: on a 55 Mpx panel that loop took a minute.
+    count, pieces, stats, _ = cv2.connectedComponentsWithStats(
+        unfilled.astype(np.uint8), connectivity=8
+    )
+    for piece in range(1, count):
+        x, y, w, h = (int(value) for value in stats[piece, :4])
+        x0, y0 = max(0, x - 1), max(0, y - 1)
+        x1, y1 = min(width, x + w + 1), min(height, y + h + 1)
+        mine = pieces[y0:y1, x0:x1] == piece
+        # cv2.dilate has no int32 path; float32 is exact well past any
+        # plausible region count.
+        work = labels[y0:y1, x0:x1].astype(np.float32)
+        left = mine.copy()
+        while left.any():
+            grown = cv2.dilate(work, kernel)
+            newly = left & (grown > 0)
+            if not newly.any():
+                break
+            work[newly] = grown[newly]
+            left[newly] = False
+        reached = mine & ~left
+        labels[y0:y1, x0:x1][reached] = work[reached].astype(np.int32)
+        unfilled[y0:y1, x0:x1][reached] = False
 
 
 def _fill_remainder(labels: np.ndarray, unfilled: np.ndarray, next_label: int) -> int:
     if not unfilled.any():
         return next_label
     count, comps = cv2.connectedComponents(unfilled.astype(np.uint8), connectivity=4)
-    for comp in range(1, count):
-        mask = comps == comp
-        labels[mask] = next_label
-        next_label += 1
+    # One write for every component, numbered in the order connectedComponents
+    # found them. A mask per component was a whole-map scan each: 6000 crumbs
+    # on a 55 Mpx panel took four minutes.
+    labels[unfilled] = comps[unfilled] + (next_label - 1)
     unfilled[:] = False
-    return next_label
+    return next_label + count - 1
 
 
 def merge_small_regions(labels: np.ndarray, params: SegmentationParams) -> np.ndarray:
@@ -291,7 +305,9 @@ def expand_under_lines(
         return labels
 
     # Nearest filled pixel for every pixel, then read its label through.
-    _, indices = ndimage.distance_transform_edt(~filled, return_indices=True)
+    indices = ndimage.distance_transform_edt(
+        ~filled, return_distances=False, return_indices=True
+    )
     expanded = labels[tuple(indices)]
 
     out = labels.copy()

@@ -23,6 +23,7 @@ import inspect
 import threading
 import time
 import uuid
+import weakref
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -95,13 +96,33 @@ class PanelState:
     # An alarm, not a score, like the zone count: it should read 0, and it read
     # in the thousands in silence until the export showed white.
     orphans: int = 0
+    # The map `boxes` was read off, and what it read. Kept between presses:
+    # on a 55 Mpx panel one pass over the map is two seconds, and a press
+    # needs one box. A merge or a cut keeps it up to date (`Session`); a new
+    # map — a run, an undo, a reopened page — is noticed and read again.
+    _boxes: tuple | None = field(default=None, repr=False, compare=False)
 
     @property
     def zone_count(self) -> int:
         if self.label_map is None:
             return 0
-        present = np.unique(self.label_map)
-        return int((present != UNASSIGNED).sum())
+        return int(np.count_nonzero(np.bincount(self.label_map.ravel())[1:]))
+
+    def boxes(self) -> dict[int, tuple[int, int, int, int]]:
+        """Panel-local `(left, top, right, bottom)` of every zone, inclusive."""
+        if self.label_map is None:
+            return {}
+        if self._boxes is None or self._boxes[0]() is not self.label_map:
+            self._boxes = (
+                weakref.ref(self.label_map),
+                {
+                    label: (x, y, x + width - 1, y + height - 1)
+                    for label, (_, (x, y, width, height)) in region_stats(
+                        self.label_map
+                    ).items()
+                },
+            )
+        return self._boxes[1]
 
 
 # How many merges and cuts the zones can take back. Each one holds one panel's
@@ -169,6 +190,17 @@ def flatten_polygon(polygon) -> list[tuple[int, int]]:
                 )
             )
     return points
+
+
+def _window(box: tuple[int, int, int, int]) -> tuple[slice, slice]:
+    """The array window of an inclusive `(left, top, right, bottom)` box."""
+    left, top, right, bottom = box
+    return slice(top, bottom + 1), slice(left, right + 1)
+
+
+def _union(boxes) -> tuple[int, int, int, int]:
+    lefts, tops, rights, bottoms = zip(*boxes)
+    return min(lefts), min(tops), max(rights), max(bottoms)
 
 
 def _overshoot(points: np.ndarray, margin: int) -> np.ndarray:
@@ -686,6 +718,8 @@ class Session:
                 panel.planes = {}
                 panel.depth_groups = None
                 panel.orphans = orphans
+                # Read now, inside the long step, not on the artist's first press.
+                panel.boxes()
 
             self._learn(measured)
             self._assign_colours()
@@ -879,18 +913,9 @@ class Session:
         """
         with self.lock:
             panel = self._panel_for(panel_order)
-            if panel.label_map is None:
-                return {}
             return {
-                int(label): (
-                    int(x) + panel.x,
-                    int(y) + panel.y,
-                    int(x) + int(width) - 1 + panel.x,
-                    int(y) + int(height) - 1 + panel.y,
-                )
-                for label, (_, (x, y, width, height)) in region_stats(
-                    panel.label_map
-                ).items()
+                label: (left + panel.x, top + panel.y, right + panel.x, bottom + panel.y)
+                for label, (left, top, right, bottom) in panel.boxes().items()
             }
 
 
@@ -955,11 +980,13 @@ class Session:
             if panel.label_map is None:
                 raise StepError("panel_no_zones", panel=panel_order + 1)
 
-            wanted = {int(label) for label in labels}
+            # Read inside each zone's own box, never over the whole panel: a
+            # 55 Mpx panel made every merge a second of scanning.
+            boxes = panel.boxes()
             present = {
-                label: int(area)
-                for label, area in zip(*np.unique(panel.label_map, return_counts=True))
-                if int(label) in wanted and int(label) != UNASSIGNED
+                label: int(np.count_nonzero(panel.label_map[_window(boxes[label])] == label))
+                for label in sorted({int(label) for label in labels})
+                if label != UNASSIGNED and label in boxes
             }
             if len(present) < 2:
                 raise StepError("merge_too_few")
@@ -967,7 +994,12 @@ class Session:
             survivor = max(present, key=lambda label: present[label])
             others = [label for label in present if label != survivor]
             self._remember_zones(panel)
-            panel.label_map[np.isin(panel.label_map, others)] = survivor
+            around = _union([boxes[label] for label in present])
+            window = panel.label_map[_window(around)]
+            window[np.isin(window, others)] = survivor
+            for label in others:
+                del boxes[label]
+            boxes[survivor] = around
             # The merged zone votes again on the depth under all of it, unless
             # the artist called it a character, which no depth says.
             kept = panel.planes.get(survivor)
@@ -998,9 +1030,14 @@ class Session:
             if panel.label_map is None:
                 raise StepError("panel_no_zones", panel=panel_order + 1)
 
-            mask = panel.label_map == int(label)
-            if not mask.any():
+            boxes = panel.boxes()
+            if int(label) not in boxes:
                 raise StepError("zone_missing", zone=int(label), panel=panel_order + 1)
+            # Everything below happens inside the zone's box, in its frame:
+            # the zone is all there, and the rest of the panel is not touched.
+            left, top, _, _ = box = boxes[int(label)]
+            zone_map = panel.label_map[_window(box)]
+            mask = zone_map == int(label)
 
             points = np.array(
                 [[int(x) - panel.x, int(y) - panel.y] for x, y in stroke], np.int32
@@ -1013,10 +1050,14 @@ class Session:
             # pixels short is the commonest way a cut fails — while the
             # overshoot itself can do no harm, since the wall is only ever
             # applied inside this zone's own mask.
-            points = _overshoot(points, max(mask.shape) // 20 + 10)
+            points = _overshoot(points, max(panel.label_map.shape) // 20 + 10)
 
-            wall = np.zeros(mask.shape, np.uint8)
+            # Drawn over the whole panel and then cropped: OpenCV clips a line
+            # to its canvas, and a stroke clipped to the zone's box lands a
+            # pixel off here and there.
+            wall = np.zeros(panel.label_map.shape, np.uint8)
             cv2.polylines(wall, [points.reshape(-1, 1, 2)], False, 1, max(1, width))
+            wall = wall[_window(box)]
             remaining = mask & (wall == 0)
 
             # **A cut divides only what the stroke crossed.** A zone the artist
@@ -1053,11 +1094,11 @@ class Session:
             # In each piece the stroke broke, the largest part keeps the label,
             # for the reason the largest zone survives a merge: the anchor
             # stays in the body of the trousers rather than in a scrap.
-            next_label = int(panel.label_map.max()) + 1
+            next_label = max(boxes) + 1
             made = [int(label)]
             for parts in broken.values():
                 for fragment in sorted(parts, key=lambda part: -areas[part])[1:]:
-                    panel.label_map[pieces == fragment] = next_label
+                    zone_map[pieces == fragment] = next_label
                     made.append(next_label)
                     next_label += 1
 
@@ -1066,10 +1107,14 @@ class Session:
             # around.
             seam = mask & (wall != 0)
             if seam.any():
-                _, (rows, cols) = ndimage.distance_transform_edt(
-                    ~remaining, return_indices=True
+                rows, cols = ndimage.distance_transform_edt(
+                    ~remaining, return_distances=False, return_indices=True
                 )
-                panel.label_map[seam] = panel.label_map[rows[seam], cols[seam]]
+                zone_map[seam] = zone_map[rows[seam], cols[seam]]
+            found = region_stats(np.where(mask, zone_map, UNASSIGNED))
+            for piece in made:
+                _, (x, y, width, height) = found[piece]
+                boxes[piece] = (left + x, top + y, left + x + width - 1, top + y + height - 1)
 
             # Every piece votes again on the depth under it: the plane belongs
             # to the pixels, not to the zone they came from. A character stays
@@ -1095,14 +1140,12 @@ class Session:
             panel = self._panel_for(panel_order)
             if panel.label_map is None:
                 raise StepError("panel_no_zones", panel=panel_order + 1)
-            mask = panel.label_map == int(label)
-            rows, cols = np.nonzero(mask)
-            if not len(rows):
+            box = panel.boxes().get(int(label))
+            if box is None:
                 raise StepError("zone_missing", zone=int(label), panel=panel_order + 1)
 
-            top, bottom = int(rows.min()), int(rows.max())
-            left, right = int(cols.min()), int(cols.max())
-            window = mask[top : bottom + 1, left : right + 1]
+            left, top, right, bottom = box
+            window = panel.label_map[_window(box)] == int(label)
             rgba = np.zeros((*window.shape, 4), dtype=np.uint8)
             # A wash plus a hard edge. The wash alone disappears against a
             # zone map that is already saturated colour, and "which zones are
@@ -1273,7 +1316,13 @@ class Session:
         """
         if not self._planes_done or panel.depth_groups is None or panel.label_map is None:
             return
-        voted = planes_from(panel.label_map, panel.depth_groups)
+        boxes = panel.boxes()
+        held = [boxes[int(label)] for label in labels if int(label) in boxes]
+        if not held:
+            return
+        # Inside the box of the zones that vote: every pixel of theirs is in it.
+        window = _window(_union(held))
+        voted = planes_from(panel.label_map[window], panel.depth_groups[window])
         for label in labels:
             if int(label) in voted:
                 panel.planes[int(label)] = voted[int(label)]
@@ -1378,7 +1427,7 @@ class Session:
                 patch[edge & (cropped != UNASSIGNED), :3] //= 2
                 window = canvas[panel.y : panel.y + rows, panel.x : panel.x + cols]
                 painted = patch[:, :, 3] > 0
-                window[painted] = patch[painted]
+                np.copyto(window, patch, where=painted[..., None])
             return canvas
 
     # -- bookkeeping -----------------------------------------------------
@@ -1407,6 +1456,8 @@ class Session:
                 if self.line_mask is None
                 else {
                     "name": self.original_name,
+                    # Which page this is, so the browser keeps its ink layer.
+                    "uid": self.page_uid,
                     "width": self.width,
                     "height": self.height,
                 },

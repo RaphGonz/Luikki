@@ -251,7 +251,7 @@ def _flats_layer(psd, page_size, by_order, chosen, palette, name: str):
         patch = table[panel.label_map[:rows, :cols]]
         painted = patch[:, :, 3] > 0
         window = rgba[panel.y : panel.y + rows, panel.x : panel.x + cols]
-        window[painted] = patch[painted]
+        np.copyto(window, patch, where=painted[..., None])
     covered = rgba[:, :, 3] > 0
     if not covered.any():
         return None
@@ -371,6 +371,6 @@ def flats_preview(
         patch = table[labels]
         window = canvas[panel.y : panel.y + rows, panel.x : panel.x + cols]
 
-        window[painted] = patch[painted]
+        np.copyto(window, patch, where=painted[..., None])
 
     return canvas

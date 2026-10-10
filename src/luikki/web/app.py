@@ -360,7 +360,7 @@ def create_app(
         if found is None:
             raise HTTPException(404, "no zone at that point")
         panel, label = found
-        _, bounds = session.zone_mask_rgba(panel, label)
+        bounds = session.zone_bounds(panel)[label]
         return {
             "panel": panel,
             "label": label,

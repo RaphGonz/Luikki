@@ -526,10 +526,17 @@ function loadImage(url) {
   });
 }
 
+// Which page `layers.page` shows. The ink does not change while a page is
+// open, and a 66 Mpx page is seconds to encode and to decode again after every
+// merge.
+let loadedPage = null;
+
 async function reloadLayers() {
   const done = state.done;
+  const pageKey = state.page ? `${state.page_id}:${state.page.uid}` : null;
+  const samePage = layers.page && pageKey === loadedPage;
   [layers.page, layers.lines, layers.zones, layers.planes] = await Promise.all([
-    done.page ? loadImage("/api/page.png") : null,
+    done.page ? (samePage ? layers.page : loadImage("/api/page.png")) : null,
     // Extraction happens inside Segment zones, and only on a page that asks.
     done.zones && state.extract_lines ? loadImage("/api/lines.png") : null,
     done.zones ? loadImage("/api/zones.png") : null,
@@ -538,6 +545,34 @@ async function reloadLayers() {
       ? loadImage(`/api/planes.png?tints=${tokens.planes.map((tint) => tint.replace("#", "")).join(",")}`)
       : null,
   ]);
+  loadedPage = layers.page ? pageKey : null;
+  for (const image of Object.values(layers)) if (image && !reductions.has(image)) reductions.set(image, reduce(image));
+  layersVersion++;
+}
+
+// Past this many pixels on its long side, a layer keeps a reduced copy too,
+// drawn whenever the view shows the page no larger than it. A scan at 800 dpi
+// is 66 Mpx, and scaling three of those down on every frame was the lag.
+const REDUCED_SIDE = 4096;
+const reductions = new WeakMap(); // image -> canvas | null
+let layersVersion = 0;
+
+function reduce(image) {
+  const scale = REDUCED_SIDE / Math.max(image.naturalWidth, image.naturalHeight);
+  if (scale >= 1) return null;
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(image.naturalWidth * scale);
+  canvas.height = Math.round(image.naturalHeight * scale);
+  const paint = canvas.getContext("2d");
+  paint.imageSmoothingQuality = "high";
+  paint.drawImage(image, 0, 0, canvas.width, canvas.height);
+  return canvas;
+}
+
+// The image to draw a layer from at `width` device pixels wide.
+function sourceFor(image, width) {
+  const small = reductions.get(image);
+  return small && width <= small.width ? small : image;
 }
 
 async function adopt(next) {
@@ -1753,6 +1788,12 @@ function resize() {
   render();
 }
 
+// The artwork — paper, flats or planes, ink — is drawn into a canvas of its
+// own whenever the view or a layer changes, and copied on every other frame:
+// the marching ants ask for one every 80 ms, and each traced zone for another.
+const artwork = document.createElement("canvas");
+let artworkKey = null;
+
 function render() {
   ctx.clearRect(0, 0, stage.clientWidth, stage.clientHeight);
   showZoom();
@@ -1763,32 +1804,14 @@ function render() {
   const box = [view.ox, view.oy, page.width * view.scale, page.height * view.scale];
   const show = shows();
 
-  // Past 1:1 the artist is inspecting ink, and interpolation turns a hard edge
-  // into a smear. Magnified, draw the pixels.
-  ctx.imageSmoothingEnabled = view.scale <= 1;
-
-  ctx.fillStyle = PAPER;
-  ctx.fillRect(...box);
-
-  // Colour underneath, ink on top — the order the artist works in and the
-  // order the PSD stacks in. A colourist cannot judge a colour without the
-  // lines that bound it.
-  if (layers.zones && show.zones) ctx.drawImage(layers.zones, ...box);
-  if (layers.planes && show.planes) ctx.drawImage(layers.planes, ...box);
-
-  // Multiply is what makes ink over colour behave like ink: black stays black,
-  // paper drops out, grey holds its weight.
-  ctx.globalCompositeOperation = "multiply";
-  if (layers.page) ctx.drawImage(layers.page, ...box);
-  // What segmentation actually saw, against the artist's own ink.
-  if (layers.lines && controls.lines) ctx.drawImage(layers.lines, ...box);
-  ctx.globalCompositeOperation = "source-over";
-
-  // The page border: 1px, no shadow, no gradient (§10).
+  const key = [stage.width, stage.height, ...box, show.zones, show.planes, controls.lines, layersVersion].join();
+  if (key !== artworkKey) {
+    paintArtwork(box, show);
+    artworkKey = key;
+  }
   ctx.save();
-  ctx.strokeStyle = tokens.edge;
-  ctx.lineWidth = 1;
-  ctx.strokeRect(Math.round(box[0]) - 0.5, Math.round(box[1]) - 0.5, Math.round(box[2]) + 1, Math.round(box[3]) + 1);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.drawImage(artwork, 0, 0);
   ctx.restore();
 
   const editing = activeLayer();
@@ -1808,6 +1831,41 @@ function render() {
   drawDraft(editing);
   if (editing === "zones") drawPicked();
   startMarching();
+}
+
+function paintArtwork(box, show) {
+  const ratio = window.devicePixelRatio || 1;
+  artwork.width = stage.width;
+  artwork.height = stage.height;
+  const paint = artwork.getContext("2d");
+  paint.setTransform(ratio, 0, 0, ratio, 0, 0);
+  const draw = (image) => paint.drawImage(sourceFor(image, box[2] * ratio), ...box);
+
+  // Past 1:1 the artist is inspecting ink, and interpolation turns a hard edge
+  // into a smear. Magnified, draw the pixels.
+  paint.imageSmoothingEnabled = view.scale <= 1;
+
+  paint.fillStyle = PAPER;
+  paint.fillRect(...box);
+
+  // Colour underneath, ink on top — the order the artist works in and the
+  // order the PSD stacks in. A colourist cannot judge a colour without the
+  // lines that bound it.
+  if (layers.zones && show.zones) draw(layers.zones);
+  if (layers.planes && show.planes) draw(layers.planes);
+
+  // Multiply is what makes ink over colour behave like ink: black stays black,
+  // paper drops out, grey holds its weight.
+  paint.globalCompositeOperation = "multiply";
+  if (layers.page) draw(layers.page);
+  // What segmentation actually saw, against the artist's own ink.
+  if (layers.lines && controls.lines) draw(layers.lines);
+  paint.globalCompositeOperation = "source-over";
+
+  // The page border: 1px, no shadow, no gradient (§10).
+  paint.strokeStyle = tokens.edge;
+  paint.lineWidth = 1;
+  paint.strokeRect(Math.round(box[0]) - 0.5, Math.round(box[1]) - 0.5, Math.round(box[2]) + 1, Math.round(box[3]) + 1);
 }
 
 // ---- lines on the artwork (§11) ---------------------------------------------
