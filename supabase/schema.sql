@@ -323,6 +323,52 @@ begin
 end;
 $$;
 
+-- The licence is a yearly subscription. Its first invoice comes with the
+-- Checkout session, which names the account (`record_purchase`); each renewal
+-- invoice names only the Stripe customer, recorded then. Keyed on the invoice,
+-- so Stripe sending it twice adds one year.
+create or replace function public.record_renewal(p_customer text, p_invoice text) returns boolean
+language plpgsql
+set search_path = ''
+as $$
+declare
+    buyer uuid;
+begin
+    select user_id into buyer from public.customers where stripe_customer_id = p_customer;
+    if buyer is null then
+        return false;
+    end if;
+    return public.record_purchase(buyer, 'base', p_invoice, null, null, 0, 1);
+end;
+$$;
+
+-- A subscription's payments carry no payment intent Luikki keeps: a full refund
+-- takes back the customer's latest year still standing.
+create or replace function public.record_customer_refund(p_customer text) returns boolean
+language plpgsql
+set search_path = ''
+as $$
+declare
+    bought public.purchases%rowtype;
+begin
+    update public.purchases set refunded = true
+    where id = (
+        select p.id from public.purchases p
+        join public.customers c on c.user_id = p.user_id
+        where c.stripe_customer_id = p_customer and p.years > 0 and not p.refunded
+        order by p.created_at desc
+        limit 1
+    )
+    returning * into bought;
+    if not found then
+        return false;
+    end if;
+    update public.colours set until = until - make_interval(years => bought.years)
+    where user_id = bought.user_id;
+    return true;
+end;
+$$;
+
 -- Studio and the billing server are gone (G4, then Modal): nothing calls these.
 drop function if exists public.record_studio(uuid, text, timestamptz, text);
 drop function if exists public.buyer_status(uuid);
@@ -339,7 +385,9 @@ begin
         'public.start_panel(uuid, uuid, uuid, uuid, inet, int, int)',
         'public.finish_panel(uuid, uuid, uuid, uuid, text, boolean)',
         'public.record_purchase(uuid, text, text, text, text, int, int)',
-        'public.record_refund(text)'
+        'public.record_refund(text)',
+        'public.record_renewal(text, text)',
+        'public.record_customer_refund(text)'
     ] loop
         execute format('revoke execute on function %s from public, anon, authenticated', signature);
         execute format('grant execute on function %s to service_role', signature);

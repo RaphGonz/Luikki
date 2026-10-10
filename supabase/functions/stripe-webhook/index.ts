@@ -1,10 +1,12 @@
 // Stripe's webhook: the one piece of Luikki that runs on a server (ROADMAP G4).
 //
-// A paid Payment Link adds a year of licence to the account named by its
-// `client_reference_id`, which the app puts in the link (`luikki/billing.py`).
-// A full refund takes the year back. Both go through `record_purchase` and
-// `record_refund` in `supabase/schema.sql`, which record a session once
-// however often Stripe sends it. A forged id only gives a year to someone
+// The licence is a yearly subscription sold through a Payment Link. Its first
+// payment adds a year to the account named by the link's `client_reference_id`,
+// which the app puts in it (`luikki/billing.py`), and ties the Stripe customer
+// to that account; each renewal (`invoice.paid`, `subscription_cycle`) adds a
+// year to the customer's account. A cancelled subscription simply stops
+// renewing. A full refund takes a year back. All go through `supabase/schema.sql`,
+// which records an invoice once however often Stripe sends it. A forged id only gives a year to someone
 // else's account: the app is never believed about a payment, Stripe is.
 //
 //   supabase secrets set STRIPE_SECRET_KEY=… STRIPE_WEBHOOK_SECRET=… STRIPE_PAYMENT_LINK=plink_…
@@ -53,7 +55,8 @@ Deno.serve(async (request) => {
     const { error } = await database.rpc("record_purchase", {
       p_user: session.client_reference_id,
       p_line: "base",
-      p_session: session.id,
+      // Keyed on the first invoice, which `invoice.paid` below leaves to this.
+      p_session: (session.invoice as string | null) ?? session.id,
       p_payment_intent: session.payment_intent,
       p_customer: session.customer,
       p_cases: 0,
@@ -66,13 +69,32 @@ Deno.serve(async (request) => {
       console.error(`record_purchase: ${error.code} ${error.message}`);
       return new Response("not recorded", { status: 500 });
     }
+  } else if (event.type === "invoice.paid") {
+    const invoice = event.data.object;
+    // The first invoice is the Checkout session's, recorded above: it can
+    // arrive before the session ties the customer to an account.
+    if (invoice.billing_reason !== "subscription_cycle") return received();
+    const { data, error } = await database.rpc("record_renewal", {
+      p_customer: invoice.customer,
+      p_invoice: invoice.id,
+    });
+    if (error) {
+      console.error(`record_renewal: ${error.code} ${error.message}`);
+      return new Response("not recorded", { status: 500 });
+    }
+    if (data === false) console.error(`invoice ${invoice.id}: customer ${invoice.customer} has no account`);
   } else if (event.type === "charge.refunded") {
     const charge = event.data.object;
-    // A partial refund takes nothing back.
+    // A partial refund takes nothing back. A one-off payment of before the
+    // subscription is found by its payment intent, a subscription's by customer.
     if (charge.refunded && charge.payment_intent) {
-      const { error } = await database.rpc("record_refund", { p_payment_intent: charge.payment_intent });
-      if (error) {
-        console.error(`record_refund: ${error.code} ${error.message}`);
+      const { data, error } = await database.rpc("record_refund", { p_payment_intent: charge.payment_intent });
+      let failed = error;
+      if (!error && data === false && charge.customer) {
+        ({ error: failed } = await database.rpc("record_customer_refund", { p_customer: charge.customer }));
+      }
+      if (failed) {
+        console.error(`refund: ${failed.code} ${failed.message}`);
         return new Response("not recorded", { status: 500 });
       }
     }

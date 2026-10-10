@@ -27,8 +27,10 @@ Luikki ne propose aucune couleur.
 
 ## Compte et licence
 **Se connecter**, en haut à droite : votre adresse e-mail, puis le code reçu.
-Une seule licence, 10 € par an ; un compte testeur n'a rien à acheter. Le
-bouton d'achat ouvre la page de paiement Stripe dans votre navigateur.
+Une seule licence : un abonnement à 10 € par an, résiliable à tout moment ;
+un compte testeur n'a rien à acheter. « S'abonner » ouvre la page de paiement
+Stripe dans votre navigateur, « Gérer mon abonnement » la page où le résilier
+et retrouver vos factures.
 
 ## Où vont vos planches
 Tout tourne sur votre ordinateur : vos planches ne partent nulle part. Seuls

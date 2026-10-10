@@ -1527,18 +1527,19 @@ function licenceNotes() {
   return [note(t("account.licence_until", { date: fmt.date(licence.until) }))];
 }
 
-// One licence, 10 € a year: buying it again adds a year. Stripe's page shows
-// the price.
+// One licence, a subscription at 10 € a year: subscribed, the artist only
+// manages it (renewal, cancellation, invoices) on Stripe's portal. Stripe's
+// page shows the price.
 function licenceButtons() {
-  if (!licence || licence.plan === "tester") {
+  if (!licence || licence.plan === "tester" || licence.active) {
     return licence?.customer ? [manageButton()] : [];
   }
-  const buy = button(licence.active ? t("account.extend") : t("account.buy"), {
-    kind: licence.active ? "" : "primary",
+  const subscribe = button(t("account.buy"), {
+    kind: "primary",
     key: "account-buy",
     onclick: () => openBilling("/api/account/buy"),
   });
-  return licence.customer ? [buy, manageButton()] : [buy];
+  return licence.customer ? [subscribe, manageButton()] : [subscribe];
 }
 
 const manageButton = () =>

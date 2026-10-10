@@ -406,7 +406,7 @@ No colour is in `app.js`. Each colour is a token in the `:root` block of
       cli.py                  the `luikki` command
       desktop.py              `luikki app`: the server in a thread, a window on it
       account.py              sign-in by email code; the licence (`my_status`)
-      billing.py              Buy and Invoices: a Stripe page in the browser
+      billing.py              Subscribe and Manage: a Stripe page in the browser
       models.py               the model files, sha256-pinned; `luikki models`
       web/session.py          all state, the six buttons      <- start here
       web/app.py              the HTTP routes
@@ -438,7 +438,7 @@ No colour is in `app.js`. Each colour is a token in the `:root` block of
 
       supabase/              (at the root of the repository)
         schema.sql            the tables and functions: licences, refunds, `my_status`
-        functions/stripe-webhook/Stripe's webhook: a paid link adds a year
+        functions/stripe-webhook/Stripe's webhook: each paid year adds a year
 
 ## 7. Facts that you must not lose
 
