@@ -23,8 +23,8 @@ from .account import Account, AccountError
 
 # Made once in Stripe's dashboard (Payment Links; Settings → Customer portal).
 # `LUIKKI_PAYMENT_URL` and `LUIKKI_PORTAL_URL` point at test mode's.
-PAYMENT_URL = ""
-PORTAL_URL = ""
+PAYMENT_URL = "https://buy.stripe.com/fZu5kE0rB2JAgr59sEcjS00"
+PORTAL_URL = "https://billing.stripe.com/p/login/fZu5kE0rB2JAgr59sEcjS00"
 
 
 def buy(account: Account, open_url: Callable[[str], Any] = webbrowser.open) -> None:
